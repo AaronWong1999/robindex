@@ -370,8 +370,10 @@ needs the `CFGATEWAYKEY` secret; `OPENROUTER_KEY` is now *optional* (`gatewayHea
 (CFGATEWAYKEY, CLOUDFLARE_API_TOKEN, ADMIN_KEY) and as Worker secrets. Verified: `deepseek-v4-flash`
 returns `finish_reason: tool_calls` on the `…/robin/openrouter/v1/chat/completions` route.
 
-1. **Deploy:** `cd app && npx wrangler deploy` (uses `CLOUDFLARE_API_TOKEN`). Live domains: robindex.ai,
-   www.robindex.ai. Confirm `CFGATEWAYKEY` is set: `npx wrangler secret list`.
+1. **Deploy:** needs **Node ≥22** (use nvm: `export PATH="$HOME/.nvm/versions/node/v22.22.2/bin:$PATH"`)
+   and **Global API Key** auth, not a token: `export CLOUDFLARE_API_KEY=<guard.CLOUDFLARE_API_KEY>
+   CLOUDFLARE_EMAIL=<guard.expectedEmail>` (unset `CLOUDFLARE_API_TOKEN`), then `cd app && npx wrangler
+   deploy`. Live domains: robindex.ai, www.robindex.ai. Confirm secrets: `npx wrangler secret list`.
 2. **Smoke-test (no deploy needed for data layer):**
    - `/api/news?q=AAPL` and `/api/macro` → headlines.
    - `/api/kline?code=sh600519&period=m1&limit=5` → minute candles.
