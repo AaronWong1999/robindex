@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#06080b" />
+  <title>每日简报 — Robindex</title>
+  <meta name="description" content="盘前早报、盘后晚报与推特 KOL 日报：实时市场快照 + 博主最新公开动态。" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body data-page="briefings">
+  <header class="nav"></header>
+  <main class="page">
+    <div class="wrap">
+      <div class="page-head">
+        <p class="eyebrow" id="brEyebrow">每日简报</p>
+        <h1 class="h1" id="brTitle">每日简报</h1>
+        <p class="lead" id="brLead"></p>
+      </div>
+      <div class="tabs">
+        <a class="tab" data-type="morning" href="/briefings?type=morning">盘前早报</a>
+        <a class="tab" data-type="evening" href="/briefings?type=evening">盘后晚报</a>
+        <a class="tab" data-type="kol" href="/briefings?type=kol">KOL 日报</a>
+      </div>
+      <div id="brBody"></div>
+    </div>
+  </main>
+  <script src="/nav.js"></script>
+  <script src="/pages.js"></script>
+</body>
+</html>

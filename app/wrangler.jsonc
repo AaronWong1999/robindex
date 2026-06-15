@@ -1,0 +1,42 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "robindex",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "account_id": "686bee522c90d03e13ba35077f04ff49",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none",
+    "not_found_handling": "single-page-application"
+  },
+  "observability": { "enabled": true },
+  "routes": [
+    { "pattern": "robindex.ai", "custom_domain": true },
+    { "pattern": "www.robindex.ai", "custom_domain": true }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "robindex-db",
+      "database_id": "a4f1e62d-2899-4fb3-aaa8-1a904711dc0e"
+    }
+  ],
+  "kv_namespaces": [
+    { "binding": "CACHE", "id": "83cb63c5b0dd47a79e60fb0e6b7b8a7f" }
+  ],
+  "r2_buckets": [
+    { "binding": "RAW", "bucket_name": "robindex-raw" }
+  ],
+  "ai": { "binding": "AI" },
+  "triggers": {
+    "crons": ["0 9 * * *", "30 9 * * 1"]
+  },
+  "vars": {
+    "GATEWAY_URL": "https://gateway.ai.cloudflare.com/v1/686bee522c90d03e13ba35077f04ff49/robin/openrouter/v1/chat/completions",
+    "MODEL_FLASH": "deepseek/deepseek-v4-flash",
+    "MODEL_PRO": "deepseek/deepseek-v4-pro"
+  }
+}

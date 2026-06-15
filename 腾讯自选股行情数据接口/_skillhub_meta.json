@@ -1,0 +1,18 @@
+{
+  "name": "WeStock Data",
+  "installedAt": 1780879606798,
+  "source": "marketplace",
+  "version": "1.0.5",
+  "skillId": "skill_2053083170922696704",
+  "examples_zh": [
+    "查询贵州茅台近一年日K线、成交量和MACD指标，并列出最近三次放量上涨日期",
+    "对比腾讯控股、阿里巴巴和Apple最近四个季度的利润表、资产负债表和现金流指标",
+    "查看沪深300ETF的持仓明细、最新净值和近30日资金流向"
+  ],
+  "examples_en": [
+    "Query Kweichow Moutai's daily K-line, volume, and MACD for the past year, then list the last three high-volume up days",
+    "Compare Tencent Holdings, Alibaba, and Apple across the latest four quarters of income statement, balance sheet, and cash-flow metrics",
+    "Show holdings, latest NAV, and 30-day capital flow for a CSI 300 ETF"
+  ],
+  "iconSource": "letter:auto"
+}
