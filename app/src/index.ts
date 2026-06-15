@@ -1,8 +1,10 @@
 import { Hono } from "hono";
 import type { Env, KolRow } from "./env";
 import { getQuotesCached, getKlineCached, resolveSymbolCached } from "./finance";
-import { retrieve, embedBatch } from "./rag";
-import { gatherMarketData, buildMessages, streamChat } from "./chat";
+import { retrieve, embedBatch, indexVectors } from "./rag";
+import { gatherMarketData, buildMessages, streamChat, maybeUpdateSummary, resolveToolPhase } from "./chat";
+import { getKolUniverse } from "./entities";
+import { getStockNews, getMarketNews } from "./marketdata";
 import { runDailyIngest, runWeeklyPersonaRefresh } from "./ingest";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -50,6 +52,24 @@ app.get("/api/tweets", async (c) => {
   });
 });
 
+// News for a symbol (?q=/?code=) and/or market/macro fast-news (?market=1).
+app.get("/api/news", async (c) => {
+  const q = c.req.query("q") || c.req.query("code");
+  const n = Math.min(parseInt(c.req.query("limit") || "8", 10), 20);
+  const out: any = { stock: [], market: [] };
+  if (q) {
+    const hit = await resolveSymbolCached(c.env.CACHE, q);
+    if (hit) out.stock = await getStockNews(c.env, hit, n);
+  }
+  if (!q || c.req.query("market")) out.market = await getMarketNews(c.env, n);
+  return c.json(out);
+});
+
+app.get("/api/macro", async (c) => {
+  const n = Math.min(parseInt(c.req.query("limit") || "12", 10), 30);
+  return c.json({ news: await getMarketNews(c.env, n) });
+});
+
 app.get("/api/kline", async (c) => {
   const code = c.req.query("code");
   if (!code) return c.json({ error: "provide ?code=" }, 400);
@@ -95,6 +115,11 @@ app.post("/api/chat", async (c) => {
     .all();
   const history = (hist.results || []) as { role: string; content: string }[];
 
+  // Rolling long-term memory: inject the summary of earlier (truncated) turns, if any.
+  const conv = await c.env.DB.prepare(`SELECT summary FROM conversations WHERE id=?`)
+    .bind(convId)
+    .first<{ summary: string | null }>();
+
   // Save user message.
   await c.env.DB.prepare(
     `INSERT INTO messages (id,conversation_id,role,content) VALUES (?,?,?,?)`
@@ -103,7 +128,8 @@ app.post("/api/chat", async (c) => {
     .run();
 
   // Live market data + retrieval (hard-scoped to this KOL).
-  const market = await gatherMarketData(c.env, body.message);
+  const kolUniverse = await getKolUniverse(c.env, kol.id);
+  const market = await gatherMarketData(c.env, body.message, { kolUniverse });
   const tickers = market.quotes.map((q) => q.symbol);
   const { citations, knowledge } = await retrieve(c.env, kol.id, kol.handle, body.message, tickers);
 
@@ -115,17 +141,26 @@ app.post("/api/chat", async (c) => {
     market,
     history,
     userMessage: body.message,
+    summary: conv?.summary || undefined,
   });
 
-  const res = await streamChat(c.env, model, messages, citations, market.primary, async (full) => {
+  // Hybrid: let the model fetch anything the pre-fetch missed (1-min K-line, fresh news, …) via tools.
+  const toolMessages = await resolveToolPhase(c.env, model, messages);
+
+  const res = await streamChat(c.env, model, toolMessages, citations, market.primary, async (full) => {
+    // Faithfulness: persist only the citations the answer actually referenced ([T#]).
+    const usedRefs = new Set(Array.from(full.matchAll(/\[(T\d+)\]/g)).map((m) => m[1]));
+    const usedCitations = usedRefs.size ? citations.filter((cc) => usedRefs.has(cc.ref)) : [];
     await c.env.DB.prepare(
       `INSERT INTO messages (id,conversation_id,role,content,citations) VALUES (?,?,?,?,?)`
     )
-      .bind(crypto.randomUUID(), convId!, "assistant", full, JSON.stringify(citations))
+      .bind(crypto.randomUUID(), convId!, "assistant", full, JSON.stringify(usedCitations))
       .run();
     await c.env.DB.prepare(`UPDATE conversations SET updated_at=datetime('now') WHERE id=?`)
       .bind(convId!)
       .run();
+    // Refresh rolling summary in the background once the thread is long enough.
+    c.executionCtx.waitUntil(maybeUpdateSummary(c.env, convId!, model));
   });
   // Surface the conversation id to the client.
   res.headers.set("X-Conversation-Id", convId!);
@@ -195,6 +230,11 @@ app.post("/api/admin/tweets", async (c) => {
     );
   });
   if (batch.length) await c.env.DB.batch(batch);
+  await indexVectors(
+    c.env,
+    "tweet",
+    tweets.map((t, i) => (vecs[i] ? { id: String(t.id), kolId: body.kol_id, values: vecs[i]! } : null)).filter(Boolean) as any
+  );
   return c.json({ ok: true, inserted: batch.length, embedded: vecs.filter(Boolean).length });
 });
 
@@ -213,6 +253,11 @@ app.post("/api/admin/knowledge", async (c) => {
     batch.push(stmt.bind(k.id, body.kol_id, k.source, k.title || null, k.text || "", v ? JSON.stringify(v) : null, v ? 1 : 0));
   });
   if (batch.length) await c.env.DB.batch(batch);
+  await indexVectors(
+    c.env,
+    "knowledge",
+    chunks.map((k, i) => (vecs[i] ? { id: String(k.id), kolId: body.kol_id, values: vecs[i]! } : null)).filter(Boolean) as any
+  );
   return c.json({ ok: true, inserted: batch.length, embedded: vecs.filter(Boolean).length });
 });
 
@@ -239,6 +284,11 @@ app.post("/api/admin/embed", async (c) => {
     }
   });
   if (batch.length) await c.env.DB.batch(batch);
+  await indexVectors(
+    c.env,
+    "tweet",
+    rows.map((row, i) => (vecs[i] ? { id: String(row.id), kolId, values: vecs[i]! } : null)).filter(Boolean) as any
+  );
   const rem = await c.env.DB.prepare(
     `SELECT COUNT(*) c FROM tweets WHERE kol_id=? AND embedded=0 AND is_retweet=0`
   )

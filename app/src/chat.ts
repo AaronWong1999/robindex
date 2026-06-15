@@ -1,21 +1,12 @@
 import type { Env, KolRow } from "./env";
 import { retrieve, type Citation } from "./rag";
-import { resolveSymbolCached, getKlineCached, type Quote } from "./finance";
+import { getKlineCached, type Quote } from "./finance";
+import { detectInstruments, type DetectOptions } from "./entities";
+import { getStockNews, getMarketNews, type NewsItem } from "./marketdata";
+import { TOOLS, executeTool } from "./tools";
 
-const COMMON_WORDS = new Set([
-  "THE","AND","FOR","ARE","BUT","NOT","YOU","ALL","CAN","HER","WAS","ONE","OUR","OUT","DAY","GET","HAS","HIM","HOW","NOW","SEE","TWO","WHO","BOY","DID","ITS","LET","PUT","SAY","SHE","TOO","USE","ETF","CEO","CFO","USD","CPI","GDP","FED","IPO","ATH","YOY","QOQ","EPS","WSB","DCA","FYI","LOL","IMO","TBH",
-]);
-
-// Detect candidate tickers from a message: $cashtags (strong) + bare UPPER tokens (weak).
-function detectTickers(message: string): string[] {
-  const out = new Set<string>();
-  for (const m of message.matchAll(/\$([A-Za-z]{1,6})\b/g)) out.add(m[1].toUpperCase());
-  for (const m of message.matchAll(/\b([A-Z]{2,5})\b/g)) {
-    const w = m[1];
-    if (!COMMON_WORDS.has(w)) out.add(w);
-  }
-  return Array.from(out).slice(0, 4);
-}
+// User is asking about news / macro / what's happening — pull fast-news into context.
+const NEWS_INTENT = /(news|headline|macro|happening|宏观|新闻|消息|资讯|事件|最近|发生|利好|利空|政策|加息|降息|cpi|fed|联储|财报)/i;
 
 function fmtQuote(q: Quote): string {
   const sign = q.change >= 0 ? "+" : "";
@@ -26,20 +17,15 @@ export interface MarketData {
   quotes: Quote[];
   klineText: string;
   primary: Quote | null;
+  news: NewsItem[];
 }
 
-export async function gatherMarketData(env: Env, message: string): Promise<MarketData> {
-  const tokens = detectTickers(message);
-  const quotes: Quote[] = [];
-  const seen = new Set<string>();
-  for (const tk of tokens) {
-    if (quotes.length >= 2) break;
-    const q = await resolveSymbolCached(env.CACHE, tk);
-    if (q && !seen.has(q.code)) {
-      seen.add(q.code);
-      quotes.push(q);
-    }
-  }
+export async function gatherMarketData(
+  env: Env,
+  message: string,
+  opts: DetectOptions = {}
+): Promise<MarketData> {
+  const quotes = await detectInstruments(env, message, { max: 2, ...opts });
   let klineText = "";
   let primary: Quote | null = quotes[0] || null;
   if (primary) {
@@ -51,7 +37,15 @@ export async function gatherMarketData(env: Env, message: string): Promise<Marke
         .join("\n");
     } catch {}
   }
-  return { quotes, klineText, primary };
+
+  // News: per-stock for the primary US name, plus market/macro fast-news when the question is news/macro.
+  const news: NewsItem[] = [];
+  try {
+    const wantMacro = NEWS_INTENT.test(message);
+    if (primary) news.push(...(await getStockNews(env, primary, 4)));
+    if (wantMacro) news.push(...(await getMarketNews(env, 8)));
+  } catch {}
+  return { quotes, klineText, primary, news };
 }
 
 export function buildMessages(opts: {
@@ -62,8 +56,9 @@ export function buildMessages(opts: {
   market: MarketData;
   history: { role: string; content: string }[];
   userMessage: string;
+  summary?: string;
 }) {
-  const { kol, persona, knowledge, citations, market, history, userMessage } = opts;
+  const { kol, persona, knowledge, citations, market, history, userMessage, summary } = opts;
 
   // ---- STABLE PREFIX (cache-friendly): persona pack first, never changes per turn. ----
   const personaBlock =
@@ -94,13 +89,127 @@ export function buildMessages(opts: {
       (market.klineText ? `\n\nRecent daily candles for ${market.primary?.symbol}:\n${market.klineText}` : "")
     : `LIVE MARKET DATA: (no specific instrument detected in the question)`;
 
+  const newsBlock = market.news.length
+    ? `\n\nRECENT NEWS (use only if relevant; cite source/time, don't fabricate):\n` +
+      market.news.map((n) => `- (${n.time}) ${n.title}${n.digest ? ` — ${n.digest}` : ""} [${n.source}]`).join("\n")
+    : "";
+
+  const summaryBlock = summary ? `=== CONVERSATION SO FAR (earlier turns, summarized) ===\n${summary}\n\n` : "";
+
   const messages: { role: string; content: string }[] = [{ role: "system", content: system }];
   for (const h of history.slice(-6)) messages.push({ role: h.role, content: h.content });
   messages.push({
     role: "user",
-    content: `${tweetsBlock}\n\n${dataBlock}\n\n=== USER QUESTION ===\n${userMessage}`,
+    content: `${summaryBlock}${tweetsBlock}\n\n${dataBlock}${newsBlock}\n\n=== USER QUESTION ===\n${userMessage}`,
   });
   return messages;
+}
+
+// Rolling long-term memory: once a thread is long, summarize the older turns into conversations.summary
+// (bounded memory that survives history truncation). Cheap, best-effort, run via waitUntil.
+export async function maybeUpdateSummary(env: Env, convId: string, model: string): Promise<void> {
+  const cnt = await env.DB.prepare(`SELECT COUNT(*) c FROM messages WHERE conversation_id=?`)
+    .bind(convId)
+    .first<{ c: number }>();
+  if ((cnt?.c ?? 0) < 14) return; // only worth it for longer threads
+  const rows = await env.DB.prepare(
+    `SELECT role,content FROM messages WHERE conversation_id=? ORDER BY created_at`
+  )
+    .bind(convId)
+    .all();
+  const all = (rows.results || []) as { role: string; content: string }[];
+  const older = all.slice(0, -6); // keep the last 6 raw; summarize the rest
+  if (older.length < 6) return;
+  const prev = await env.DB.prepare(`SELECT summary FROM conversations WHERE id=?`)
+    .bind(convId)
+    .first<{ summary: string | null }>();
+  const convo = older.map((m) => `${m.role}: ${m.content}`).join("\n").slice(0, 8000);
+  const sys =
+    "You compress a finance chat into a factual third-person memo (<=180 words). Capture: the user's situation, tickers/instruments discussed, the persona's stated views/calls and their rationale, and any open threads. No fluff.";
+  const usr = (prev?.summary ? `Previous summary:\n${prev.summary}\n\n` : "") + `Conversation:\n${convo}`;
+  const summary = await completeChat(env, model, [
+    { role: "system", content: sys },
+    { role: "user", content: usr },
+  ], { maxTokens: 300 });
+  if (summary) {
+    await env.DB.prepare(`UPDATE conversations SET summary=? WHERE id=?`).bind(summary, convId).run();
+  }
+}
+
+// Shared AI Gateway headers: governor auth (cf-aig) is always required. The downstream provider key is
+// only sent when present — the gateway has BYOK, so governor-only auth works; an empty Bearer would 401.
+function gatewayHeaders(env: Env): Record<string, string> {
+  const h: Record<string, string> = {
+    "Content-Type": "application/json",
+    "cf-aig-authorization": `Bearer ${env.CFGATEWAYKEY}`,
+    "HTTP-Referer": "https://robindex.ai",
+    "X-Title": "Robindex",
+  };
+  if (env.OPENROUTER_KEY) h.Authorization = `Bearer ${env.OPENROUTER_KEY}`;
+  return h;
+}
+
+// Non-streaming completion (for summaries / weekly distillation). Returns "" on any failure.
+export async function completeChat(
+  env: Env,
+  model: string,
+  messages: { role: string; content: string }[],
+  opts: { temperature?: number; maxTokens?: number } = {}
+): Promise<string> {
+  try {
+    const res = await fetch(env.GATEWAY_URL, {
+      method: "POST",
+      headers: gatewayHeaders(env),
+      body: JSON.stringify({
+        model,
+        messages,
+        temperature: opts.temperature ?? 0.3,
+        max_tokens: opts.maxTokens ?? 600,
+      }),
+    });
+    if (!res.ok) return "";
+    const j: any = await res.json().catch(() => null);
+    return j?.choices?.[0]?.message?.content || "";
+  } catch {
+    return "";
+  }
+}
+
+// Hybrid tool phase: let the model fetch data the pre-fetch missed (1-min K-line, fresh news, a symbol
+// it couldn't resolve) before the streamed answer. Returns the (possibly tool-enriched) message list.
+// Best-effort: on any failure or if the model wants no tools, returns the original messages unchanged.
+export async function resolveToolPhase(
+  env: Env,
+  model: string,
+  messages: { role: string; content: string }[]
+): Promise<any[]> {
+  let msgs: any[] = [...messages];
+  try {
+    for (let i = 0; i < 2; i++) {
+      const res = await fetch(env.GATEWAY_URL, {
+        method: "POST",
+        headers: gatewayHeaders(env),
+        body: JSON.stringify({ model, messages: msgs, tools: TOOLS, tool_choice: "auto", temperature: 0.2, max_tokens: 500 }),
+      });
+      if (!res.ok) break;
+      const j: any = await res.json().catch(() => null);
+      const choice = j?.choices?.[0];
+      const m = choice?.message;
+      if (choice?.finish_reason !== "tool_calls" || !m?.tool_calls?.length) break;
+      msgs.push({ role: "assistant", content: m.content || "", tool_calls: m.tool_calls });
+      for (const tc of m.tool_calls) {
+        let args: any = {};
+        try {
+          args = JSON.parse(tc.function?.arguments || "{}");
+        } catch {}
+        const out = await executeTool(env, tc.function?.name, args);
+        msgs.push({ role: "tool", tool_call_id: tc.id, content: out });
+      }
+    }
+  } catch {
+    return messages;
+  }
+  return msgs;
 }
 
 // Stream a chat completion from the AI Gateway, forwarding deltas to the client as SSE.
@@ -114,15 +223,7 @@ export async function streamChat(
 ): Promise<Response> {
   const upstream = await fetch(env.GATEWAY_URL, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      // Gateway-level auth (governor):
-      "cf-aig-authorization": `Bearer ${env.CFGATEWAYKEY}`,
-      // Provider (OpenRouter) key, passed through by the gateway:
-      Authorization: `Bearer ${env.OPENROUTER_KEY || ""}`,
-      "HTTP-Referer": "https://robindex.ai",
-      "X-Title": "Robindex",
-    },
+    headers: gatewayHeaders(env),
     body: JSON.stringify({ model, messages, stream: true, temperature: 0.6 }),
   });
 

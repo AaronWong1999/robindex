@@ -1,5 +1,6 @@
 import type { Env } from "./env";
-import { embed } from "./rag";
+import { embed, indexVectors } from "./rag";
+import { completeChat } from "./chat";
 
 const APIFY_ACTOR = "apidojo~tweet-scraper";
 const GETXAPI_BASE = "https://api.getxapi.com/twitter/user/tweets";
@@ -176,14 +177,17 @@ export async function embedPending(env: Env, kolId: string, limit = 40): Promise
     .bind(kolId, limit)
     .all();
   let n = 0;
+  const vecs: { id: string; kolId: string; values: number[] }[] = [];
   for (const row of (r.results || []) as any[]) {
     const v = await embed(env, row.text);
     if (!v) continue;
     await env.DB.prepare(`UPDATE tweets SET embedding=?, embedded=1 WHERE id=?`)
       .bind(JSON.stringify(v), row.id)
       .run();
+    vecs.push({ id: row.id, kolId, values: v });
     n++;
   }
+  await indexVectors(env, "tweet", vecs);
   return n;
 }
 
@@ -258,13 +262,63 @@ export async function runDailyIngest(env: Env, opts: { embedLimit?: number } = {
   }
 }
 
+// Weekly refresh: distill each KOL's *new* tweets from the past week into a dated "current stance"
+// knowledge chunk (embedded). The persona pack itself is NOT auto-mutated (anti-drift): identity/voice
+// stay human-curated; only the dated knowledge layer grows so answers stay current.
 export async function runWeeklyPersonaRefresh(env: Env): Promise<number> {
-  const version = `weekly-${new Date().toISOString().slice(0, 10)}`;
-  const r = await env.DB.prepare(
-    `UPDATE kols SET persona_version=?, updated_at=datetime('now') WHERE persona_pack IS NOT NULL`
-  )
-    .bind(version)
-    .run();
-  console.log(`persona refresh checkpoint: ${r.meta.changes || 0} kols -> ${version}`);
-  return r.meta.changes || 0;
+  const week = new Date().toISOString().slice(0, 10);
+  const version = `weekly-${week}`;
+  const since = Math.floor(Date.now() / 1000) - 7 * 86400;
+  const kols = await env.DB.prepare(
+    `SELECT id,display_name,handle FROM kols WHERE persona_pack IS NOT NULL`
+  ).all();
+  let updated = 0;
+  for (const k of (kols.results || []) as any[]) {
+    try {
+      const r = await env.DB.prepare(
+        `SELECT text,created_at_iso FROM tweets
+         WHERE kol_id=? AND is_retweet=0 AND created_at_ts>=? ORDER BY created_at_ts DESC LIMIT 120`
+      )
+        .bind(k.id, since)
+        .all();
+      const tweets = (r.results || []) as any[];
+      if (tweets.length >= 5) {
+        const corpus = tweets
+          .map((t) => `(${(t.created_at_iso || "").slice(0, 10)}) ${t.text}`)
+          .join("\n")
+          .slice(0, 12000);
+        const sys =
+          "You distill a finance KOL's recent posts into a dated 'current stance' note for a knowledge base. " +
+          "Output a one-line summary, then 4-8 concise bullets: tickers/themes in focus this week, current calls and rationale, any change vs prior views, and risk flags. Third person, factual, no fabrication.";
+        const note = await completeChat(
+          env,
+          env.MODEL_FLASH,
+          [
+            { role: "system", content: sys },
+            { role: "user", content: `KOL: ${k.display_name} (@${k.handle})\nRecent posts:\n${corpus}` },
+          ],
+          { maxTokens: 600 }
+        );
+        if (note) {
+          const chunkId = `${k.id}:analysis:${week}`;
+          const vec = await embed(env, note);
+          await env.DB.prepare(
+            `INSERT OR REPLACE INTO knowledge_chunks (id,kol_id,source,title,text,embedding,embedded)
+             VALUES (?,?,?,?,?,?,?)`
+          )
+            .bind(chunkId, k.id, `analysis:${week}`, `Weekly stance ${week}`, note, vec ? JSON.stringify(vec) : null, vec ? 1 : 0)
+            .run();
+          if (vec) await indexVectors(env, "knowledge", [{ id: chunkId, kolId: k.id, values: vec }]);
+          updated++;
+        }
+      }
+      await env.DB.prepare(`UPDATE kols SET persona_version=?, updated_at=datetime('now') WHERE id=?`)
+        .bind(version, k.id)
+        .run();
+    } catch (e) {
+      console.log(`weekly refresh ${k.id} error: ${e}`);
+    }
+  }
+  console.log(`weekly persona refresh: ${updated} dated stance chunks @ ${version}`);
+  return updated;
 }

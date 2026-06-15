@@ -316,8 +316,92 @@ R2 (`robindex-raw` bucket) would be the ideal Cloudflare-side archive but the AP
 
 ---
 
+## 6b. v2 upgrade — instrument detection · live-data skills · distillation ✅ (code complete; deploy pending)
+
+Research-backed (nuwa/colleague/serenity for distillation; financial NER + Tencent smartbox for entity
+resolution; Workbuddy for skill/tool dispatch). Full design: plan file
+`~/.claude/plans/users-aaron-desktop-aaron-robindex-west-snuggly-ocean.md`.
+
+- **A — Instrument detection (`app/src/entities.ts`)** ✅ DONE. `detectInstruments()` layers
+  $cashtags → static alias dict (CN/EN names → code, instant) → CJK spans (split on Chinese stopwords,
+  name-overlap validated) → Capitalized EN phrases → bare UPPER tickers (stopword-filtered), capped +
+  per-KOL universe bias (`getKolUniverse`, KV-cached from tweet cashtags, passed from `index.ts`). Fixed a
+  real bug: `searchSymbol` parsed the old GBK `v_hint=` format but smartbox now returns JSON → Chinese
+  names never resolved; now `searchSymbolHits()` parses `data.stock[[mkt,code,cn,en,type]]`. Verified live:
+  CRCL; 茅台+宁德时代 (glued "宁德时代怎么选" handled); 苹果+英伟达; Apple vs Tesla; 腾讯; $CRCL+PLTR;
+  no false positives (分钟/"the CEO"). Future option: promote alias dict to a `symbol_dict` D1 table.
+- **B — Live-data endpoints** ✅ DONE. Minute K-line (`finance.ts`): `getKline` accepts `m1/m5/m15/m30/m60`
+  — A-share via Tencent `ifzq…/kline/mkline`, US/HK via Yahoo intraday (`getKlineYahoo`+`yahooSymbol`);
+  served via `/api/kline?period=m1`. News/macro (`app/src/marketdata.ts`): `getStockNews` (US via Yahoo
+  search) + `getMarketNews` (CN/macro 7x24 via Eastmoney 快讯, JSONP-stripped), KV-cached 300s; routes
+  `/api/news`, `/api/macro`; wired into chat pre-fetch via `NEWS_INTENT` + a NEWS prompt block. Verified
+  live. Note: numeric macro indicators / economic calendar deferred (TE guest API discontinued; 快讯
+  covers macro *events*). Per-CN/HK single-stock news not ported (market news covers CN).
+- **C — Distillation upgrade** ✅ DONE (code). C1 Persona Pack v2 spec `personas/_TEMPLATE.md` (nuwa
+  triple-verification + Expression DNA, colleague layers, serenity evidence tiers, honest boundaries).
+  C2 `scripts/distill_kol.mjs` — offline drafter: corpus → v2 persona pack + knowledge chunks via gateway,
+  written as `.draft` files for human review (no auto-activation). C3 real weekly refresh in `ingest.ts`:
+  LLM-distills the week's new tweets into a dated `analysis:<week>` knowledge chunk (embedded + Vectorize),
+  persona pack itself never auto-mutated. C4 rolling memory: `maybeUpdateSummary` (chat.ts) fills
+  `conversations.summary` for long threads via `waitUntil`, injected as a CONVERSATION-SO-FAR block.
+  C5 Vectorize (`rag.ts` `retrieveVectorize`/`indexVectors`, guarded — falls back to D1+JS-cosine until
+  `wrangler vectorize create robindex-index --dimensions=1024 --metric=cosine` + binding uncomment +
+  backfill). C6 citation faithfulness: persist only `[T#]` refs the answer actually used. Added
+  `completeChat` (non-streaming gateway helper) + shared `gatewayHeaders`. Typechecks; LLM-call paths
+  verifiable only post-deploy (need provider key).
+- **D — Hybrid orchestration** ✅ DONE. **Verified deepseek-v4-flash supports function calling** via the
+  gateway (`finish_reason: tool_calls`); the `openrouter` route has BYOK so governor-only auth works.
+  `app/src/tools.ts`: 5 tools (`get_quote`, `get_kline` incl. m1/m5, `get_news`, `get_macro`,
+  `search_symbol`) backed by A/B. `resolveToolPhase` (chat.ts) runs a ≤2-iteration tool loop before the
+  streamed answer (best-effort: degrades to pre-fetch on any error); wired in `index.ts` before
+  `streamChat`. Fixed `resolveSymbol` to accept already-internal codes (sh600519/hk00700/usAAPL) so
+  tool-passed codes resolve. End-to-end tested live: model chained `search_symbol`+`get_quote`+
+  `get_kline(m1)` and executed each correctly.
+
+### Handoff — deploy, activate, verify
+
+New/changed files: `app/src/entities.ts`, `app/src/marketdata.ts`, `app/src/tools.ts` (new);
+`app/src/finance.ts`, `chat.ts`, `index.ts`, `ingest.ts`, `rag.ts`, `env.ts`, `wrangler.jsonc` (changed);
+`app/personas/_TEMPLATE.md`, `app/scripts/distill_kol.mjs` (new). Typechecks clean (`cd app && npx tsc --noEmit`).
+
+**Gateway auth (important):** the AI Gateway has **BYOK**, so **governor-only auth works** — the Worker
+needs the `CFGATEWAYKEY` secret; `OPENROUTER_KEY` is now *optional* (`gatewayHeaders` omits the
+`Authorization` header when it is unset; an empty Bearer 401s). Secrets live in `account.guard.json`
+(CFGATEWAYKEY, CLOUDFLARE_API_TOKEN, ADMIN_KEY) and as Worker secrets. Verified: `deepseek-v4-flash`
+returns `finish_reason: tool_calls` on the `…/robin/openrouter/v1/chat/completions` route.
+
+1. **Deploy:** `cd app && npx wrangler deploy` (uses `CLOUDFLARE_API_TOKEN`). Live domains: robindex.ai,
+   www.robindex.ai. Confirm `CFGATEWAYKEY` is set: `npx wrangler secret list`.
+2. **Smoke-test (no deploy needed for data layer):**
+   - `/api/news?q=AAPL` and `/api/macro` → headlines.
+   - `/api/kline?code=sh600519&period=m1&limit=5` → minute candles.
+   - `POST /api/chat` (kol_id + message "茅台1分钟K线 + 最近宏观新闻") → streamed, in-character, with data.
+3. **Activate Vectorize (optional, biggest recall win):**
+   `npx wrangler vectorize create robindex-index --dimensions=1024 --metric=cosine`, uncomment the
+   `vectorize` binding in `wrangler.jsonc`, redeploy, then backfill: re-run `POST /api/admin/embed?kol_id=…`
+   (tweets) and `POST /api/admin/knowledge` (chunks) per KOL. Until then retrieval auto-falls-back to
+   D1+JS-cosine, so nothing breaks.
+4. **Persona v2 re-distill (optional):** `KOL_ID=… NAME=… HANDLE=… TWEETS=tweets/<file>.json node
+   scripts/distill_kol.mjs` → review `personas/<id>.draft.md` + `<id>.knowledge.draft.json`, then promote.
+
+**Known limitations / next:** numeric macro indicators + economic calendar deferred (TE guest API
+discontinued; Eastmoney 快讯 covers macro *events*); per-CN/HK single-stock news not ported (market news
+covers CN); tool phase adds one non-streaming model call per turn (latency vs. flexibility tradeoff);
+LLM-call paths (weekly refresh, rolling summary, tool loop) only runtime-verified after deploy.
+
+---
+
 ## 7. Progress Log (newest first)
 
+- **2026-06-16 (session 7, v2 upgrade — code complete)** — Built the A→B→C→D upgrade (see §6b for the
+  full per-workstream detail). A: layered instrument detection (`entities.ts`) — fixed a real bug where
+  `searchSymbol` parsed the dead GBK smartbox format so Chinese names never resolved. B: minute K-line +
+  news/macro (`finance.ts`, `marketdata.ts`). C: persona v2 spec + distiller, real weekly refresh, rolling
+  conversation summary, guarded Vectorize retrieval, citation faithfulness. D: verified deepseek function
+  calling and added the hybrid tool loop (`tools.ts`, `resolveToolPhase`). Made gateway auth robust to a
+  missing `OPENROUTER_KEY` (BYOK → governor-only works). All typechecks pass; data-layer paths verified
+  live; LLM-call paths pending deploy. Not yet deployed/committed. Next: `wrangler deploy` + optional
+  Vectorize provisioning (commands in §6b Handoff).
 - **2026-06-16 (session 6, launch complete)** — User supplied the working Cloudflare Global API Key.
   Verified wrangler access to account `686bee522c90d03e13ba35077f04ff49`, uploaded `GETXAPI_KEY` and
   `ADMIN_KEY` secrets, deployed version `84e65c1c-d3e8-4601-bbd0-7b55197b3831` to `robindex.ai` and

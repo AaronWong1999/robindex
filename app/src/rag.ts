@@ -52,8 +52,91 @@ export async function embedBatch(env: Env, texts: string[]): Promise<(number[] |
   return out;
 }
 
-// Hybrid retrieval, hard-scoped to one kol_id. Entity/keyword prefilter + recency,
-// then optional bge-m3 cosine rerank over the (small) candidate set.
+// Upsert embeddings into Vectorize (no-op if the binding is absent). Hard-scoped by kol_id metadata.
+export async function indexVectors(
+  env: Env,
+  kind: "tweet" | "knowledge",
+  rows: { id: string; kolId: string; values: number[] }[]
+): Promise<void> {
+  if (!env.VECTORIZE || !rows.length) return;
+  try {
+    await env.VECTORIZE.upsert(
+      rows.map((r) => ({
+        id: `${kind}:${r.id}`,
+        values: r.values,
+        metadata: { kol_id: r.kolId, kind, ref: r.id },
+      }))
+    );
+  } catch (e) {
+    console.log(`vectorize upsert error: ${e}`);
+  }
+}
+
+// Vectorize-backed retrieval: true ANN over the whole corpus, hard-scoped by kol_id metadata.
+// Returns null if the binding is absent or the query yields nothing (caller falls back to lexical).
+async function retrieveVectorize(
+  env: Env,
+  kolId: string,
+  handle: string,
+  query: string
+): Promise<{ citations: Citation[]; knowledge: RetrievedKnowledge[] } | null> {
+  if (!env.VECTORIZE) return null;
+  const qvec = await embed(env, query);
+  if (!qvec) return null;
+  try {
+    const [tw, kn] = await Promise.all([
+      env.VECTORIZE.query(qvec, { topK: 6, filter: { kol_id: kolId, kind: "tweet" }, returnMetadata: "all" }),
+      env.VECTORIZE.query(qvec, { topK: 4, filter: { kol_id: kolId, kind: "knowledge" }, returnMetadata: "all" }),
+    ]);
+    const tweetIds = (tw.matches || []).map((m: any) => String(m.metadata?.ref || m.id.replace(/^tweet:/, "")));
+    const knowIds = (kn.matches || []).map((m: any) => String(m.metadata?.ref || m.id.replace(/^knowledge:/, "")));
+    if (!tweetIds.length && !knowIds.length) return null;
+
+    const citations: Citation[] = [];
+    if (tweetIds.length) {
+      const ph = tweetIds.map(() => "?").join(",");
+      const r = await env.DB.prepare(
+        `SELECT id,text,created_at_iso FROM tweets WHERE kol_id=? AND id IN (${ph})`
+      )
+        .bind(kolId, ...tweetIds)
+        .all();
+      const byId = new Map((r.results || []).map((x: any) => [String(x.id), x]));
+      tweetIds.forEach((id, i) => {
+        const row: any = byId.get(id);
+        if (row)
+          citations.push({
+            ref: `T${i + 1}`,
+            tweet_id: row.id,
+            url: `https://x.com/${handle}/status/${row.id}`,
+            date: (row.created_at_iso || "").slice(0, 10),
+            snippet: row.text,
+          });
+      });
+    }
+
+    const knowledge: RetrievedKnowledge[] = [];
+    if (knowIds.length) {
+      const ph = knowIds.map(() => "?").join(",");
+      const r = await env.DB.prepare(
+        `SELECT id,source,title,text FROM knowledge_chunks WHERE kol_id=? AND id IN (${ph})`
+      )
+        .bind(kolId, ...knowIds)
+        .all();
+      const byId = new Map((r.results || []).map((x: any) => [String(x.id), x]));
+      for (const id of knowIds) {
+        const row: any = byId.get(id);
+        if (row) knowledge.push({ source: row.source, title: row.title, text: row.text });
+      }
+    }
+    return { citations, knowledge };
+  } catch (e) {
+    console.log(`vectorize query error: ${e}`);
+    return null;
+  }
+}
+
+// Hybrid retrieval, hard-scoped to one kol_id. Prefers Vectorize ANN; falls back to entity/keyword
+// prefilter + recency + bge-m3 cosine rerank over the (small) candidate set.
 export async function retrieve(
   env: Env,
   kolId: string,
@@ -61,6 +144,9 @@ export async function retrieve(
   query: string,
   tickers: string[]
 ): Promise<{ citations: Citation[]; knowledge: RetrievedKnowledge[] }> {
+  const ann = await retrieveVectorize(env, kolId, handle, query);
+  if (ann && ann.citations.length) return ann;
+
   // 1) Candidate tweets: ticker/keyword hits + recent.
   const terms = new Set<string>();
   for (const t of tickers) {
