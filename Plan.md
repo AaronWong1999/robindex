@@ -234,15 +234,19 @@ Public Tencent endpoints, no key needed. Code format: A `sh######`/`sz######`/`b
     every input variant tried (twitterHandles, searchTerms `from:`, startUrls profile, with/without date range).
 - **Resolution:** GetXAPI is now the reliable tweet source for qinbafrank citations and daily incrementals.
   Account-info endpoint: `GET /v1/twitter/.. ` → `/v1/account/me` (free, shows balance).
-- **Full-corpus status (2026-06-16):**
-  - `aleabitoreddit`: near/full available corpus for this project. Remote D1 has 5,930 tweets, 5,929 embedded,
-    newest tweet 2026-06-15T22:56:05+08:00; source repo had 5,857 and daily increment inserted newer items.
-    Not independently proven against X lifetime count, but it is materially complete from the available archive
-    plus incrementals.
-  - `qinbafrank`: **not complete**. Remote D1 has 720 non-RT tweets, 70 embedded, newest
-    2026-06-15T20:17:03+08:00. Need a deeper archive/search source (paid historical endpoint, X export,
-    another scraper with date/cursor depth beyond GetXAPI timeline cap, or user-provided archive) to reach
-    the ~14.6k lifetime tweet corpus.
+- **Full-corpus status (2026-06-16, RESOLVED):**
+  - `aleabitoreddit`: materially complete. Remote D1 has 5,930 tweets, 5,929 embedded. Daily increment active.
+  - `qinbafrank`: **now complete**. Remote D1 has 13,750 tweets (was 720). Pulled the full original-tweet
+    history back to 2021-10-03 via GetXAPI **`twitter/tweet/advanced_search`** with `from:qinbafrank` + `until:`
+    date-windowing (`scripts/scrape_qinbafrank_deep.py`) — the timeline endpoint (`user/tweets`) had capped at
+    ~4 months. 705 API calls (~$0.70), 0 wrong-author. Lifetime `tweet_count` ~14.6k includes retweets, which
+    `from:` search excludes, so 13,747 originals/replies is effectively the full set. Two empty windows before
+    2021-10 confirmed account start. Embeddings only 170/13,750 (Workers AI daily quota) — backfill resumes via
+    `scripts/backfill_embeddings.mjs` / cron `embedPending` as quota resets; lexical+recency retrieval covers it.
+  - **Raw archive in R2:** `robindex-raw/raw/<kol>/full.json` for both KOLs; daily cron writes append-only
+    `raw/<kol>/incr-<ts>.json` deltas (Twitter data is paid → never overwritten). Also in repo `data/raw/`.
+  - **Daily cron** confirmed registered (`0 9 * * *`) and uses the cheapest incremental path: timeline endpoint,
+    early-stop at `last_tweet_id`, 4-page cap (≈1 call on a quiet day).
 
 ### Phase 7 — Polish, domain, launch  ✅ DONE
 - [x] Fixed local Worker config so `/api/*` runs through the Worker before Static Assets SPA fallback
