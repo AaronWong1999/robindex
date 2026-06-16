@@ -95,6 +95,6 @@ try {
 }
 const withIds = chunks.map((c, i) => ({ id: `${ID}:${c.source}:${i}`, ...c }));
 const draftJson = path.resolve(appDir, "personas", `${ID}.knowledge.draft.json`);
-fs.writeFileSync(draftJson, JSON.stringify({ kol_id: ID, embed: true, chunks: withIds }, null, 2));
+fs.writeFileSync(draftJson, JSON.stringify({ kol_id: ID, chunks: withIds }, null, 2));
 console.error("wrote", draftJson);
 console.error("\nReview the drafts, then: save .draft.md as personas/" + ID + ".md and POST the knowledge JSON to /api/admin/knowledge.");

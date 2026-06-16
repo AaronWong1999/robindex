@@ -19,7 +19,7 @@ const PERSONA_META = {
 };
 const ORDER = ["aleabitoreddit", "qinbafrank"];
 
-const state = { persona: "aleabitoreddit", model: "flash", convId: null, busy: false, kols: {}, lastCitations: [], promptMode: null };
+const state = { persona: "aleabitoreddit", model: "flash", convId: null, busy: false, kols: {}, lastCitations: [], allCitations: [], toolCalls: [], lastQuestion: "", promptMode: null };
 
 const $ = (s) => document.querySelector(s);
 const el = (t, c, x) => { const e = document.createElement(t); if (c) e.className = c; if (x != null) e.textContent = x; return e; };
@@ -36,7 +36,18 @@ function inline(s) {
   h = h.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">链接</a>');
   return h;
 }
+// Strip tool-call DSL artifacts from text (safety net)
+function stripDSL(text) {
+  return String(text || "")
+    .replace(/<\s*[｜|]?\s*DSML\s*[｜|]?\s*tool_calls\s*>\s*[\s\S]*?<\s*\/\s*[｜|]?\s*DSML\s*[｜|]?\s*tool_calls\s*>/gi, "")
+    .replace(/<\s*[｜|]?\s*DSML\s*[｜|]?\s*\/?\s*tool_calls?\s*>\s*/gi, "")
+    .replace(/<\s*\/?\s*(?:invoke|function|parameter|tool_calls?)\b[^>]*>\s*/gi, "")
+    .replace(/^\s*[<＜]\s*[｜|]?\s*DSML\s*[｜|]?\s*(?:tool_calls?|invoke|parameter|function).*$/gim, "")
+    .replace(/^\s*[<＜]\s*\/\s*[｜|]?\s*DSML\s*[｜|]?.*$/gim, "")
+    .replace(/^\s*[<＜]\s*[｜|]?\s*(?:invoke|parameter|function|tool_calls?).*$/gim, "");
+}
 function renderMarkdown(text) {
+  text = stripDSL(text);
   const lines = text.split("\n");
   let html = "", para = [], list = null;
   const flushPara = () => { if (para.length) { html += `<p>${para.join("<br/>")}</p>`; para = []; } };
@@ -127,7 +138,7 @@ function loadConv(id) {
   $("#thread").appendChild(threadInner());
   for (const m of c.messages) addMessage(m.role, m.content, m.citations || []);
   renderConvList();
-  closePanel();
+  renderSources(c.messages.flatMap((m) => m.citations || []), { fallback: true });
 }
 
 // ---------- daily limit (cosmetic, matches reference) ----------
@@ -158,7 +169,7 @@ function buildEmpty(m) {
   wrap.id = "empty";
   const ava = el("img", "ava"); ava.src = m.avatar_url; ava.alt = m.display_name; ava.onerror = () => (ava.style.visibility = "hidden");
   wrap.appendChild(ava);
-  wrap.appendChild(el("div", "pname", "@" + m.display_name));
+  const pnameEl = el("div", "pname", "@" + m.display_name); pnameEl.classList.add("font-editorial"); wrap.appendChild(pnameEl);
   wrap.appendChild(el("p", "pdesc", m.desc || ""));
   // switcher
   const sw = el("div", "switcher");
@@ -172,13 +183,13 @@ function buildEmpty(m) {
   wrap.appendChild(sw);
   const pc = el("div", "prompt-cards");
   const cards = [
-    { mode: "stock", t: "他怎么看这只股票", meta: "输入代码 ▾", cls: "", ic: "⚖" },
-    { mode: "market", t: "他怎么看最近的市场", meta: "4 问题 ▾", cls: "blue", ic: "◴" },
-    { mode: "sector", t: "他怎么看这个行业", meta: "选主题 ▾", cls: "amber", ic: "⛓" },
-    { mode: "verify", t: "验证他的观点", meta: "快速问 ▾", cls: "red", ic: "▤" },
+    { mode: "stock", t: "他怎么看这只股票", meta: "输入代码 ▾", cls: "emerald", ic: "⚖" },
+    { mode: "market", t: "他怎么看最近的市场", meta: "4 问题 ▾", cls: "amber", ic: "◴" },
+    { mode: "sector", t: "他怎么看这个行业", meta: "选主题 ▾", cls: "sky", ic: "⛓" },
+    { mode: "verify", t: "验证他的观点", meta: "快速问 ▾", cls: "rose", ic: "▤" },
   ];
   for (const c of cards) {
-    const b = el("button", "pcard");
+    const b = el("button", "pcard " + c.cls);
     b.dataset.mode = c.mode;
     b.appendChild(el("span", "pic", c.ic));
     b.appendChild(el("span", "pt", c.t));
@@ -302,18 +313,28 @@ function addMessage(role, content, citations) {
 }
 function wireCites(scope) {
   scope.querySelectorAll(".cite").forEach((b) => {
-    b.onclick = () => { openPanel(); const ref = b.dataset.ref; const card = document.querySelector(`.src[data-ref="${ref}"]`); if (card) card.scrollIntoView({ behavior: "smooth", block: "center" }); };
+    b.onclick = () => {
+      openPanel();
+      const ref = b.dataset.ref;
+      const card = document.querySelector(`.src[data-ref="${ref}"]`);
+      if (card) {
+        card.classList.add("hit");
+        card.scrollIntoView({ behavior: "smooth", block: "center" });
+        setTimeout(() => card.classList.remove("hit"), 900);
+      }
+    };
   });
 }
 
 // ---------- source panel ----------
 function openPanel() { $("#app").classList.add("with-panel", "show-panel"); $("#srcpanel").hidden = false; }
 function closePanel() { $("#app").classList.remove("with-panel", "show-panel"); $("#srcpanel").hidden = true; }
-function renderSources(citations) {
+function renderSources(citations, opts = {}) {
   const m = meta(state.persona);
   const list = $("#srcList"); list.innerHTML = "";
   if (!citations.length) { closePanel(); return; }
-  $("#srcCount").textContent = `${citations.length} 条博主历史推文`;
+  $("#srcCount").textContent = opts.fallback ? `${citations.length} 条相关原文候选` : `${citations.length} 条博主历史推文`;
+  if (opts.fallback) list.appendChild(el("div", "src-hint", "模型这次没有显式引用编号，先展示检索到的高相关原文。"));
   for (const c of citations) {
     const card = el("div", "src"); card.dataset.ref = c.ref;
     const sh = el("div", "sh");
@@ -325,7 +346,7 @@ function renderSources(citations) {
     const tx = el("div", "stext", c.snippet); card.appendChild(tx);
     const links = el("div", "slinks");
     const a = el("a", null, "𝕏 在 X 查看原文"); a.href = c.url; a.target = "_blank"; a.rel = "noopener";
-    const exp = el("button", null, "▾ 展开全文"); exp.onclick = () => { tx.classList.toggle("expanded"); exp.textContent = tx.classList.contains("expanded") ? "▴ 收起" : "▾ 展开全文"; };
+    const exp = el("button", null, "▾ 展开全文"); exp.type = "button"; exp.onclick = () => { tx.classList.toggle("expanded"); exp.textContent = tx.classList.contains("expanded") ? "▴ 收起" : "▾ 展开全文"; };
     links.appendChild(a); links.appendChild(exp); card.appendChild(links);
     list.appendChild(card);
   }
@@ -350,9 +371,12 @@ async function send(text) {
 
   const wrap = addMessage("assistant", "", []);
   const md = wrap.querySelector(".md");
-  md.innerHTML = '<span class="typing-dots"></span>';
+  md.innerHTML = '<div class="stream-status"><span class="stream-dot"></span><span class="stream-text">正在准备…</span></div>';
 
   let full = "", citeMap = {}, meta_ = null;
+  state.toolCalls = [];
+  state.allCitations = [];
+  state.lastQuestion = text;
   try {
     const res = await fetch("/api/chat", {
       method: "POST",
@@ -375,26 +399,43 @@ async function send(text) {
           else if (ln.startsWith("data:")) data += ln.slice(5).trim();
         }
         if (!data) continue;
-        if (type === "meta") { meta_ = JSON.parse(data); for (const c of meta_.citations || []) citeMap[c.ref] = c; }
-        else if (type === "delta") { full += JSON.parse(data); md.innerHTML = renderMarkdown(full); scrollDown(); }
+        if (type === "progress") {
+          const p = JSON.parse(data);
+          const statusEl = md.querySelector(".stream-status");
+          if (statusEl) {
+            statusEl.querySelector(".stream-text").textContent = p.text || "处理中…";
+          }
+        }
+        else if (type === "meta") { meta_ = JSON.parse(data); for (const c of meta_.citations || []) citeMap[c.ref] = c; state.allCitations = meta_.citations || []; }
+        else if (type === "tool_call") { const tc = JSON.parse(data); state.toolCalls.push(tc); updateWorkspaceTools(); }
+        else if (type === "delta") {
+          full = stripDSL(full + JSON.parse(data));
+          md.innerHTML = renderMarkdown(full);
+          scrollDown();
+        }
         else if (type === "error") { md.innerHTML = '<p>⚠️ 服务暂时不可用，请稍后再试。</p>'; }
       }
     }
+    full = stripDSL(full).trim();
     if (!full) md.innerHTML = "<p>⚠️ 未收到回复，请重试。</p>";
     else md.innerHTML = renderMarkdown(full);
     wireCites(md);
 
     // Only show source tweets the answer actually cited (matches reference behavior).
     const usedRefs = new Set((full.match(/\[(T\d+)\]/g) || []).map((s) => s.slice(1, -1)));
-    const used = (meta_?.citations || []).filter((c) => usedRefs.has(c.ref));
-    state.lastCitations = used;
-    renderSources(used);
+    const allSourceCandidates = meta_?.citations || [];
+    const used = allSourceCandidates.filter((c) => usedRefs.has(c.ref));
+    const panelCitations = used.length ? used : allSourceCandidates.slice(0, 8);
+    state.lastCitations = panelCitations;
+    renderSources(panelCitations, { fallback: !used.length && panelCitations.length > 0 });
     if (meta_?.chart) appendChart(wrap, meta_.chart);
 
     // actions row + persist
     addActions(wrap);
+    addSuggestions(wrap, text, full);
+    populateWorkspace(panelCitations);
     setRemaining(getRemaining() - 1);
-    persist(text, full, used);
+    persist(text, full, panelCitations);
   } catch (e) {
     md.innerHTML = `<p>⚠️ 网络错误：${esc(e.message)}</p>`;
   } finally {
@@ -408,6 +449,80 @@ function addActions(wrap) {
   const up = el("button", null, "👍"); const down = el("button", null, "👎");
   a.appendChild(up); a.appendChild(down);
   wrap.appendChild(a);
+}
+// ---- Follow-up suggestions ----
+function addSuggestions(wrap, question, answer) {
+  const box = el("div", "suggest-box");
+  box.innerHTML = '<div class="suggest-loading"><span class="stream-dot"></span> 正在生成追问建议…</div>';
+  wrap.appendChild(box);
+  fetch("/api/suggest", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kol_id: state.persona, question, answer }),
+  })
+    .then((r) => r.json())
+    .then((j) => {
+      const sugs = j.suggestions || [];
+      if (!sugs.length) { box.remove(); return; }
+      box.innerHTML = "";
+      const label = el("div", "suggest-label", "继续探索 ▾");
+      box.appendChild(label);
+      sugs.forEach((s) => {
+        const btn = el("button", "suggest-btn", s);
+        btn.onclick = () => {
+          const ta = $("#input");
+          ta.value = s;
+          ta.dispatchEvent(new Event("input"));
+          $("#composer").dispatchEvent(new Event("submit", { cancelable: true }));
+        };
+        box.appendChild(btn);
+      });
+    })
+    .catch(() => box.remove());
+}
+// ---- Workspace ----
+function populateWorkspace(citations) {
+  const list = $("#wsSrcList"); list.innerHTML = "";
+  $("#wsSrcCount").textContent = `${citations.length} 条推文`;
+  citations.forEach((c) => {
+    const item = el("div", "ws-item");
+    item.innerHTML = `<a href="${esc(c.url)}" target="_blank" class="ws-ref">[${esc(c.ref)}]</a><span class="ws-date">${esc(c.date || "")}</span><p class="ws-snippet">${esc(c.snippet)}</p>`;
+    list.appendChild(item);
+  });
+  // market
+  const mList = $("#wsMarketList"); mList.innerHTML = "";
+  const meta = state.lastCitations; // from last render
+  if (state.toolCalls.length === 0) mList.innerHTML = '<div class="ws-empty">暂无工具调用数据</div>';
+}
+
+function normalizePersonaParam(raw) {
+  const text = String(raw || "").trim();
+  if (!text) return "aleabitoreddit";
+  if (PERSONA_META[text]) return text;
+  const first = text.split(/[\s?&#/]+/).find((part) => PERSONA_META[part]);
+  return first || "aleabitoreddit";
+}
+function updateWorkspaceTools() {
+  const list = $("#wsToolList"); list.innerHTML = "";
+  state.toolCalls.forEach((tc, i) => {
+    const item = el("div", "ws-tool-item");
+    item.innerHTML = `<span class="ws-tool-idx">${i + 1}</span><span class="ws-tool-name">${esc(tc.name)}</span><span class="ws-tool-args">${esc(tc.args)}</span>`;
+    list.appendChild(item);
+  });
+}
+// ---- Tab switching ----
+function initTabs() {
+  const bar = $("#tabBar");
+  if (!bar) return;
+  bar.addEventListener("click", (e) => {
+    const btn = e.target.closest(".tab");
+    if (!btn) return;
+    const tab = btn.dataset.tab;
+    bar.querySelectorAll(".tab").forEach((b) => b.classList.toggle("active", b === btn));
+    $("#thread").hidden = tab !== "chat";
+    $("#workspace").hidden = tab !== "workspace";
+    if (tab === "workspace") { updateWorkspaceTools(); }
+  });
 }
 function persist(userText, answer, citations) {
   const all = loadConvs();
@@ -448,7 +563,7 @@ function drawCandles(canvas, candles) {
   const n = candles.length, cw = (W - pad * 2) / n, y = (v) => pad + (H - pad * 2) * (1 - (v - lo) / range);
   for (let i = 0; i < n; i++) {
     const c = candles[i], x = pad + cw * i + cw / 2, up = c.close >= c.open;
-    ctx.strokeStyle = ctx.fillStyle = up ? "#18c47d" : "#ff5d6c";
+    ctx.strokeStyle = ctx.fillStyle = up ? "#10b981" : "#ef4444";
     ctx.beginPath(); ctx.moveTo(x, y(c.high)); ctx.lineTo(x, y(c.low)); ctx.stroke();
     const bw = Math.max(1, cw * 0.6), yo = y(c.open), yc = y(c.close);
     ctx.fillRect(x - bw / 2, Math.min(yo, yc), bw, Math.max(1, Math.abs(yc - yo)));
@@ -470,8 +585,12 @@ async function init() {
   } catch {}
 
   const u = new URL(location.href);
-  const p = u.searchParams.get("persona");
-  state.persona = PERSONA_META[p] ? p : "aleabitoreddit";
+  const p = normalizePersonaParam(u.searchParams.get("persona"));
+  state.persona = p;
+  if (u.searchParams.get("persona") !== p) {
+    u.searchParams.set("persona", p);
+    history.replaceState({}, "", u);
+  }
   setPersona(state.persona);
   setRemaining(getRemaining());
   const preset = u.searchParams.get("q");
@@ -483,6 +602,7 @@ async function init() {
   $("#newChat").onclick = () => setPersona(state.persona);
   $("#hideHistory").onclick = () => document.body.classList.toggle("history-collapsed");
   $("#srcClose").onclick = closePanel;
+  initTabs();
 }
 function autoGrow() { const t = $("#input"); t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 160) + "px"; }
 init();

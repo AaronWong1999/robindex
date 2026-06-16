@@ -30,12 +30,6 @@
   "r2_buckets": [
     { "binding": "RAW", "bucket_name": "robindex-raw" }
   ],
-  // Optional ANN retrieval. Code falls back to D1+JS-cosine until this is provisioned + uncommented.
-  // Provision: npx wrangler vectorize create robindex-index --dimensions=1024 --metric=cosine
-  // Then backfill: re-run /api/admin/embed (tweets) and /api/admin/knowledge for each KOL.
-  // "vectorize": [
-  //   { "binding": "VECTORIZE", "index_name": "robindex-index" }
-  // ],
   "ai": { "binding": "AI" },
   "triggers": {
     "crons": ["0 9 * * *", "30 9 * * 1"]

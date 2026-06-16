@@ -11,7 +11,8 @@
     "preflight": "node scripts/preflight.mjs",
     "tail": "wrangler tail",
     "seed:local": "wrangler d1 execute robindex-db --local --file=./schema.sql",
-    "seed:remote": "wrangler d1 execute robindex-db --remote --file=./schema.sql"
+    "seed:remote": "wrangler d1 execute robindex-db --remote --file=./schema.sql",
+    "test:dsl": "node scripts/test_dsl_cleaners.mjs"
   },
   "dependencies": {
     "hono": "^4.6.14"

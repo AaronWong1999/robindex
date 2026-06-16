@@ -1,6 +1,6 @@
 import type { Env } from "./env";
-import { embed, indexVectors } from "./rag";
 import { completeChat } from "./chat";
+import { evolvePersona } from "./persona-gen";
 
 const APIFY_ACTOR = "apidojo~tweet-scraper";
 const GETXAPI_BASE = "https://api.getxapi.com/twitter/user/tweets";
@@ -169,28 +169,6 @@ export async function insertTweets(env: Env, rows: TweetRow[]): Promise<number> 
   return n;
 }
 
-// Embed up to `limit` not-yet-embedded tweets for a KOL.
-export async function embedPending(env: Env, kolId: string, limit = 40): Promise<number> {
-  const r = await env.DB.prepare(
-    `SELECT id,text FROM tweets WHERE kol_id=? AND embedded=0 AND is_retweet=0 ORDER BY created_at_ts DESC LIMIT ?`
-  )
-    .bind(kolId, limit)
-    .all();
-  let n = 0;
-  const vecs: { id: string; kolId: string; values: number[] }[] = [];
-  for (const row of (r.results || []) as any[]) {
-    const v = await embed(env, row.text);
-    if (!v) continue;
-    await env.DB.prepare(`UPDATE tweets SET embedding=?, embedded=1 WHERE id=?`)
-      .bind(JSON.stringify(v), row.id)
-      .run();
-    vecs.push({ id: row.id, kolId, values: v });
-    n++;
-  }
-  await indexVectors(env, "tweet", vecs);
-  return n;
-}
-
 async function touchSyncState(
   env: Env,
   kolId: string,
@@ -208,8 +186,7 @@ async function touchSyncState(
     .run();
 }
 
-export async function runDailyIngest(env: Env, opts: { embedLimit?: number } = {}): Promise<void> {
-  const embedLimit = opts.embedLimit ?? 50;
+export async function runDailyIngest(env: Env): Promise<void> {
   if (!env.GETXAPI_KEY && !env.APIFY_TOKEN) {
     console.log("ingest: no X/Twitter token set, skipping pull");
   }
@@ -248,14 +225,12 @@ export async function runDailyIngest(env: Env, opts: { embedLimit?: number } = {
           .pop() || null;
         console.log(`ingest ${k.id}: +${inserted} tweets`);
       }
-      const emb = embedLimit > 0 ? await embedPending(env, k.id, embedLimit) : 0;
       await touchSyncState(
         env,
         k.id,
         maxId,
-        `source=${source}; fetched=${rows.length}; inserted=${inserted}; embedded=${emb}`
+        `source=${source}; fetched=${rows.length}; inserted=${inserted}`
       );
-      console.log(`ingest ${k.id}: embedded ${emb}`);
     } catch (e) {
       console.log(`ingest ${k.id} error: ${e}`);
     }
@@ -263,14 +238,14 @@ export async function runDailyIngest(env: Env, opts: { embedLimit?: number } = {
 }
 
 // Weekly refresh: distill each KOL's *new* tweets from the past week into a dated "current stance"
-// knowledge chunk (embedded). The persona pack itself is NOT auto-mutated (anti-drift): identity/voice
-// stay human-curated; only the dated knowledge layer grows so answers stay current.
+// knowledge chunk. For KOLs with an existing persona_pack, also run incremental evolution
+// (colleague-skill pattern): new models/heuristics are appended, contradictions flagged for review.
 export async function runWeeklyPersonaRefresh(env: Env): Promise<number> {
   const week = new Date().toISOString().slice(0, 10);
   const version = `weekly-${week}`;
   const since = Math.floor(Date.now() / 1000) - 7 * 86400;
   const kols = await env.DB.prepare(
-    `SELECT id,display_name,handle FROM kols WHERE persona_pack IS NOT NULL`
+    `SELECT id,display_name,handle,persona_pack,persona_version FROM kols`
   ).all();
   let updated = 0;
   for (const k of (kols.results || []) as any[]) {
@@ -282,7 +257,9 @@ export async function runWeeklyPersonaRefresh(env: Env): Promise<number> {
         .bind(k.id, since)
         .all();
       const tweets = (r.results || []) as any[];
-      if (tweets.length >= 5) {
+
+      // --- Dated stance chunk (always, for KOLs with persona_pack) ---
+      if (k.persona_pack && tweets.length >= 5) {
         const corpus = tweets
           .map((t) => `(${(t.created_at_iso || "").slice(0, 10)}) ${t.text}`)
           .join("\n")
@@ -301,19 +278,26 @@ export async function runWeeklyPersonaRefresh(env: Env): Promise<number> {
         );
         if (note) {
           const chunkId = `${k.id}:analysis:${week}`;
-          const vec = await embed(env, note);
           await env.DB.prepare(
-            `INSERT OR REPLACE INTO knowledge_chunks (id,kol_id,source,title,text,embedding,embedded)
-             VALUES (?,?,?,?,?,?,?)`
+            `INSERT OR REPLACE INTO knowledge_chunks (id,kol_id,source,title,text)
+             VALUES (?,?,?,?,?)`
           )
-            .bind(chunkId, k.id, `analysis:${week}`, `Weekly stance ${week}`, note, vec ? JSON.stringify(vec) : null, vec ? 1 : 0)
+            .bind(chunkId, k.id, `weekly_stance:${week}`, `Weekly stance ${week}`, note)
             .run();
-          if (vec) await indexVectors(env, "knowledge", [{ id: chunkId, kolId: k.id, values: vec }]);
           updated++;
         }
+
+        // --- Incremental persona evolution (colleague-skill pattern) ---
+        try {
+          const evo = await evolvePersona(env, k.id);
+          console.log(`persona evolve ${k.id}: evolved=${evo.evolved} v=${evo.version} notes=${evo.notes.join("; ")} review=${evo.needs_review}`);
+        } catch (e) {
+          console.log(`persona evolve ${k.id} error: ${e}`);
+        }
       }
+
       await env.DB.prepare(`UPDATE kols SET persona_version=?, updated_at=datetime('now') WHERE id=?`)
-        .bind(version, k.id)
+        .bind(k.persona_pack ? version : k.persona_version, k.id)
         .run();
     } catch (e) {
       console.log(`weekly refresh ${k.id} error: ${e}`);

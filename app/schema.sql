@@ -28,12 +28,9 @@ CREATE TABLE IF NOT EXISTS tweets (
   views         INTEGER DEFAULT 0,
   urls          TEXT,                      -- JSON array
   media         TEXT,                      -- JSON array
-  embedding     TEXT,                      -- JSON float array (bge-m3, 1024-dim)
-  embedded      INTEGER DEFAULT 0,         -- 1 once embedding computed
   FOREIGN KEY (kol_id) REFERENCES kols(id)
 );
 CREATE INDEX IF NOT EXISTS idx_tweets_kol ON tweets(kol_id, created_at_ts DESC);
-CREATE INDEX IF NOT EXISTS idx_tweets_embed ON tweets(kol_id, embedded);
 
 -- Distilled long-form knowledge (methodology / theses / track-record / monthly analysis), chunked.
 CREATE TABLE IF NOT EXISTS knowledge_chunks (
@@ -42,11 +39,9 @@ CREATE TABLE IF NOT EXISTS knowledge_chunks (
   source        TEXT NOT NULL,             -- 'methodology' | 'theses' | 'analysis:2026-02' | ...
   title         TEXT,
   text          TEXT NOT NULL,
-  embedding     TEXT,                      -- JSON float array (bge-m3, 1024-dim)
-  embedded      INTEGER DEFAULT 0,
   FOREIGN KEY (kol_id) REFERENCES kols(id)
 );
-CREATE INDEX IF NOT EXISTS idx_knowledge_kol ON knowledge_chunks(kol_id, embedded);
+CREATE INDEX IF NOT EXISTS idx_knowledge_kol ON knowledge_chunks(kol_id);
 
 CREATE TABLE IF NOT EXISTS conversations (
   id            TEXT PRIMARY KEY,
@@ -64,6 +59,7 @@ CREATE TABLE IF NOT EXISTS messages (
   role          TEXT NOT NULL,             -- 'user' | 'assistant'
   content       TEXT NOT NULL,
   citations     TEXT,                      -- JSON: [{ref:'T1', tweet_id, url, date, snippet}]
+  tool_calls    TEXT,                      -- JSON: [{tool, args, result_summary}]
   created_at    TEXT DEFAULT (datetime('now')),
   FOREIGN KEY (conversation_id) REFERENCES conversations(id)
 );

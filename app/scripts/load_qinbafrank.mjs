@@ -18,7 +18,6 @@ const post = async (path, body) => {
   }
 };
 
-const EMBED = (process.env.EMBED ?? "true") !== "false";
 const persona = fs.readFileSync(PERSONA, "utf8");
 const all = JSON.parse(fs.readFileSync(TWEETS, "utf8"));
 const rows = all.filter((t) => !t.is_retweet && t.text);
@@ -38,12 +37,12 @@ await post("/api/admin/kol", {
 console.log("KOL upserted. lastId:", lastId, "tweets:", rows.length);
 
 const B = 100;
-let done = 0, emb = 0;
+let done = 0;
 for (let i = 0; i < rows.length; i += B) {
-  const r = await post("/api/admin/tweets", { kol_id: "qinbafrank", embed: EMBED, tweets: rows.slice(i, i + B) });
-  done += r.inserted; emb += r.embedded;
-  console.log(`tweets ${Math.min(i + B, rows.length)}/${rows.length} (emb ${emb})`);
+  const r = await post("/api/admin/tweets", { kol_id: "qinbafrank", tweets: rows.slice(i, i + B) });
+  done += r.inserted;
+  console.log(`tweets ${Math.min(i + B, rows.length)}/${rows.length}`);
 }
-console.log("DONE:", done, "embedded:", emb);
+console.log("DONE:", done);
 const stats = await fetch(BASE + "/api/admin/stats", { headers: { "x-admin-key": ADMIN_KEY } }).then((r) => r.json());
 console.log("STATS:", JSON.stringify(stats.tweets));

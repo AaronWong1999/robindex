@@ -96,8 +96,8 @@ for (const [source, fname] of Object.entries(kfiles)) {
 }
 console.log("knowledge chunks:", allChunks.length);
 for (let i = 0; i < allChunks.length; i += 20) {
-  const r = await post("/api/admin/knowledge", { kol_id: "aleabitoreddit", embed: true, chunks: allChunks.slice(i, i + 20) });
-  console.log(`knowledge ${i}-${i + 20}:`, r.inserted, "emb", r.embedded);
+  const r = await post("/api/admin/knowledge", { kol_id: "aleabitoreddit", chunks: allChunks.slice(i, i + 20) });
+  console.log(`knowledge ${i}-${i + 20}:`, r.inserted);
 }
 
 // ---- 3) Tweets (skip pure retweets) ----
@@ -120,13 +120,13 @@ const rows = all
   }));
 console.log("tweets to load:", rows.length);
 const B = 100;
-let done = 0, emb = 0;
+let done = 0;
 for (let i = 0; i < rows.length; i += B) {
-  const r = await post("/api/admin/tweets", { kol_id: "aleabitoreddit", embed: true, tweets: rows.slice(i, i + B) });
-  done += r.inserted; emb += r.embedded;
-  if (i % 1000 === 0 || i + B >= rows.length) console.log(`tweets ${i + B}/${rows.length} (emb ${emb})`);
+  const r = await post("/api/admin/tweets", { kol_id: "aleabitoreddit", tweets: rows.slice(i, i + B) });
+  done += r.inserted;
+  if (i % 1000 === 0 || i + B >= rows.length) console.log(`tweets ${i + B}/${rows.length}`);
 }
-console.log("DONE tweets:", done, "embedded:", emb);
+console.log("DONE tweets:", done);
 
 const stats = await fetch(BASE + "/api/admin/stats", { headers: { "x-admin-key": ADMIN_KEY } }).then((r) => r.json());
 console.log("STATS:", JSON.stringify(stats));

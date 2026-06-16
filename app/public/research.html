@@ -3,29 +3,19 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#06080b" />
+  <meta name="theme-color" content="#100f09" />
   <title>投研助手 — Robindex</title>
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
   <header class="nav">
     <a class="brand" href="/"><span class="mark">R</span><span class="bt"><b>Robindex</b><span>MARKET INTELLIGENCE</span></span></a>
-    <nav class="nav-links">
-      <a href="/research" class="active">AI 研究助手</a>
-      <a href="/today">每日简报 ▾</a>
-      <a href="/">投研 ▾</a>
-      <a href="/for-you">我的 ▾</a>
-      <a href="/pricing">定价</a>
-    </nav>
-    <div class="nav-right">
-      <a class="nav-icon" href="https://x.com" aria-label="X">𝕏</a>
-      <button class="nav-icon" aria-label="切换主题">☀</button>
-      <span class="nav-avatar">A</span>
-    </div>
+    <nav class="nav-links"></nav>
+    <div class="nav-right"></div>
   </header>
 
   <div class="app" id="app">
-    <!-- left sidebar -->
+    <!-- left sidebar (desktop only) -->
     <aside class="side">
       <div class="side-head"><b>投研助手</b><button class="nav-icon" id="hideHistory" aria-label="收起历史对话">⇤</button></div>
       <button class="side-btn" id="newChat">＋ 新对话</button>
@@ -33,12 +23,15 @@
       <div class="conv-list" id="convList"></div>
       <div class="side-foot">
         <button class="side-btn">⚙ 设置</button>
-        <button class="side-btn"><span class="nav-avatar" style="width:24px;height:24px;font-size:11px">A</span> Aaron W</button>
       </div>
     </aside>
 
     <!-- center -->
     <section class="main">
+      <div class="tab-bar" id="tabBar">
+        <button class="tab active" data-tab="chat">对话</button>
+        <button class="tab" data-tab="workspace">工作区</button>
+      </div>
       <div class="thread" id="thread">
         <div class="empty" id="empty">
           <img class="ava" id="pAva" alt="" />
@@ -49,12 +42,28 @@
             <span class="switch-note">用这个切换分析框架</span>
           </div>
           <div class="prompt-cards" id="promptCards">
-            <button class="pcard" data-mode="stock"><span class="pic">⚖</span><span class="pt">他怎么看这只股票</span><span class="pmeta">输入代码 ▾</span></button>
-            <button class="pcard" data-mode="market"><span class="pic">◴</span><span class="pt">他怎么看最近的市场</span><span class="pmeta blue">4 问题 ▾</span></button>
-            <button class="pcard" data-mode="sector"><span class="pic">⛓</span><span class="pt">他怎么看这个行业</span><span class="pmeta amber">选主题 ▾</span></button>
-            <button class="pcard" data-mode="verify"><span class="pic">▤</span><span class="pt">验证他的观点</span><span class="pmeta red">快速问 ▾</span></button>
+            <button class="pcard emerald" data-mode="stock"><span class="pic">⚖</span><span class="pt">他怎么看这只股票</span><span class="pmeta">输入代码 ▾</span></button>
+            <button class="pcard amber" data-mode="market"><span class="pic">◴</span><span class="pt">他怎么看最近的市场</span><span class="pmeta amber">4 问题 ▾</span></button>
+            <button class="pcard sky" data-mode="sector"><span class="pic">⛓</span><span class="pt">他怎么看这个行业</span><span class="pmeta blue">选主题 ▾</span></button>
+            <button class="pcard rose" data-mode="verify"><span class="pic">▤</span><span class="pt">验证他的观点</span><span class="pmeta red">快速问 ▾</span></button>
           </div>
           <div class="prompt-detail" id="promptDetail" hidden></div>
+        </div>
+      </div>
+
+      <!-- workspace panel -->
+      <div class="workspace" id="workspace" hidden>
+        <div class="ws-section">
+          <div class="ws-head"><span class="ws-label">原文支持</span><span class="ws-count" id="wsSrcCount">0 条推文</span></div>
+          <div class="ws-list" id="wsSrcList"></div>
+        </div>
+        <div class="ws-section">
+          <div class="ws-head"><span class="ws-label">工具调用</span></div>
+          <div class="ws-list" id="wsToolList"></div>
+        </div>
+        <div class="ws-section">
+          <div class="ws-head"><span class="ws-label">实时行情</span></div>
+          <div class="ws-list" id="wsMarketList"></div>
         </div>
       </div>
 

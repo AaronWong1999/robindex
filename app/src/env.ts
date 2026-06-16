@@ -4,7 +4,6 @@ export interface Env {
   CACHE: KVNamespace;
   AI: Ai;
   RAW?: R2Bucket;              // R2 bucket robindex-raw — durable raw-tweet archive
-  VECTORIZE?: VectorizeIndex;  // optional — bge-m3 ANN index; falls back to D1+JS-cosine when absent
   GATEWAY_URL: string;
   MODEL_FLASH: string;
   MODEL_PRO: string;

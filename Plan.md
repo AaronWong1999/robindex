@@ -4,7 +4,7 @@
 > continues from the next unchecked item. Update the **Status** and **Progress Log** as you go.
 > Keep decisions here, not in your head — the next AI has no memory of this session.
 
-Last updated: 2026-06-16
+Last updated: 2026-06-16 (v3 research & design — §6c added)
 
 ---
 
@@ -153,27 +153,11 @@ Public Tencent endpoints, no key needed. Code format: A `sh######`/`sz######`/`b
 - [x] Verified live in a real browser: landing + workspace render faithfully; SOXL query → in-character
   streamed markdown answer + candlestick chart + actions; conversation saved to sidebar.
 
-### Phase 5c — Second-pass comparison against live TheMarketBrew pages  🚧 IN PROGRESS
-- [x] Inspected the reference pages in the user's browser on 2026-06-16:
-  `/kol`, `/kol/qinbafrank`, and `/research?agent=kol&persona=qinbafrank`.
-- [x] Gap found: Robindex landing was close, but card feature chips were not real links and "进入研究室"
-  skipped the KOL landing page. Fixed: KOL cards now link to `/kol/<persona>` and library chips link to
-  `/kol/<persona>/{highlights,sectors,stocks,latest}` or the persona-bound research assistant.
-- [x] Gap found: Robindex lacked the KOL research-room landing page. Fixed: added `public/kol.html`,
-  `public/kol.js`, and Worker deep-link routes for `/kol/:persona` and `/kol/:persona/:section`.
-  The page now has KOL side nav, hero,资料库入口, Ultra CTA/pricing card, method cards, fit/not-fit section,
-  and real sample-question links into `/research?agent=kol&persona=...&q=...`.
-- [x] Gap found: library subpages were missing. Fixed: `/kol/<persona>/highlights`, `/sectors`, `/stocks`,
-  `/latest` now render an Ultra-style gate matching the reference behavior for locked sections.
-- [x] Gap found: research prompt cards were decorative. Fixed: prompt cards now expand into real inputs,
-  quick chips, and option buttons for stock, sector, market, and view-verification workflows.
-- [x] Gap found: conversation rows lacked management controls. Fixed: local conversation rows now support
-  rename/delete, and the history sidebar can be collapsed.
-- [x] Browser QA on production after deploy: verified `/kol/qinbafrank`, `/kol/qinbafrank/highlights`, and
-  `/research?agent=kol&persona=qinbafrank&q=SOXL` render correctly on `robindex.ai`. Final deployed version:
-  `41d7e9c0-9653-4d40-a860-e50bc256715d`.
-- [ ] Remaining parity gaps: reference has richer dropdown navs, billing/account flows, and actual unlocked
-  library content pages. Robindex currently ships locked/gated library shells plus functional research assistant.
+### Phase 5c — Second-pass comparison against live TheMarketBrew pages  ✅ DONE (superseded by v4)
+- [x] Inspected the reference pages in the user's browser on 2026-06-16.
+- [x] All initial gaps fixed (KOL landing, library subpages, prompt cards, conv management).
+- [x] Browser QA on production passed.
+- Remaining deeper parity gaps (billing, richer dropdowns, unlocked library content) are superseded by the v4 visual overhaul below.
 
 ### Phase 7 — Domain & launch  ✅ DONE
 - [x] Custom domain root now serves the Trader Desk frontend. Verified on 2026-06-16:
@@ -393,7 +377,273 @@ LLM-call paths (weekly refresh, rolling summary, tool loop) only runtime-verifie
 
 ---
 
+## 6c. v3 upgrade — research-backed improvements (instrument detection · distillation · model-driven tools)
+
+> Status: **RESEARCH + DESIGN COMPLETE; implementation pending approval.** This section captures the
+> findings from a 2026-06-16 deep dive into (1) tradable-instrument detection algorithms, (2) three open
+> KOL-distillation frameworks (nuwa/colleague/serenity), and (3) how Workbuddy exposes data skills as
+> model-callable tools. It also restates the two **hard design invariants** the user set, so any future
+> change stays within them:
+> - **CF-only** — only use what Cloudflare Workers/D1/Vectorize/KV/R2/Workers AI/AI Gateway natively
+>   support. No python runtime, no long-lived process, no non-CF vendor lock-in.
+> - **Model-agnostic upgrade** — the architecture must get *better* as the chat model gets smarter, with
+>   **zero code change**. Concretely: the more capable the model, the more we should hand it via tools /
+>   retrieval rather than hard-coding logic in TS. Put intelligence in the *prompt + tools + retrieved
+>   knowledge*, not in TS branching.
+
+### Three guiding principles (every change below must serve at least one)
+
+1. **CF-only primitives** — if CF doesn't host a capability, either (a) skip it, (b) wrap it behind a
+   thin HTTP bridge Worker that *is* CF-hosted, or (c) find the CF-native equivalent. No "just run a
+   python service on a VPS" shortcuts.
+2. **Ride model upgrades for free** — prefer *declarative* tool schemas + rich retrieved context over
+   *imperative* TS heuristics. As models get better at tool-use and long-context reasoning, our pipeline
+   automatically improves without a redeploy. Where we *do* hard-code (regex/stopwords), keep it minimal
+   and treat it as a fallback, not the primary path.
+3. **Let the model call the tools itself** — the model should be the orchestrator. Pre-fetch stays as a
+   *latency optimization* (inject the obvious quote before streaming), but the authoritative way the model
+   gets minute-K-line / fresh news / a tricky ticker is by **calling a tool during the turn**, not by our
+   TS guessing what it needs.
+
+---
+
+### Research findings
+
+#### R1. Tradable-instrument detection (the "is CRCL a tradable thing?" problem)
+
+**Question:** is there a complete, multi-language (English names / `$TICKER` / bare tickers / Chinese 汉字
+names) algorithm to detect *all* tradable instruments, ideally an off-the-shelf GitHub solution?
+
+**Answer: no single turnkey library exists, but there is a clear consensus architecture.** Every serious
+project combines the same three layers:
+
+| Layer | What it does | Off-the-shelf options |
+|---|---|---|
+| **L1 — Extraction (mention detection)** | find candidate ticker/name spans in free text | regex for `$TICKER` + 6-digit codes; **spaCy** `EntityRuler`/`PhraseMatcher` + token matcher (most cited approach, incl. Reddit stock-mention NER); John Snow Labs `finel_nasdaq_ticker_stock_screener_en` (EN only) |
+| **L2 — Normalization (canonical code)** | map any mention → one canonical market-qualified code | conventions: `600519.SH` / `AAPL.US` / `00700.HK` (Yahoo suffix `.SS/.SZ/.HK`); **AKShare** & **Tushare** for CN name↔code; EdgarTools / yfinance for US; Tencent smartbox (what we already use) for live search |
+| **L3 — Validation (is it really tradable?)** | confirm the code resolves to a live instrument | hit a quote endpoint; reject if no price/name |
+
+**Key gap in our current `entities.ts`:** L2 is a **hand-curated ~30-entry `BASE_DICT`** — this is the
+weak link. It misses most A/HK names and every ticker not in the list falls through to a Tencent smartbox
+call (1 network hop per miss). The `COMMON_WORDS`/`CJK_STOPWORDS` stopword approach is clever but brittle
+(scales only by us editing the list).
+
+**How to close the gap, CF-only:**
+- Replace the hand dict with a **`symbol_dict` D1 table** seeded once from AKShare/Tushare bulk exports
+  (full A+HK+US name→code map, ~10k rows). One-time import via a script; queried at runtime with a single
+  indexed `WHERE name=? OR name_en=? OR alias=?`. This is instant, free, and covers every listed name.
+- Keep Tencent smartbox (`searchSymbolHits`) as the L3 validator/fallback for names not in the dict
+  (new IPOs, aliases, funds/ETFs/options we didn't seed).
+- Keep the `$cashtag` + 6-digit-code + CJK-span extraction (L1) — that part is already sound. The win is
+  L2 becoming a table lookup instead of a 30-row dict + N network calls.
+- (Optional, model-agnostic bonus) expose `search_symbol` as a tool **and let the model resolve names we
+  missed** — see D below. The symbol_dict makes 95% of cases instant; the model handles the long tail.
+
+**Sources:** spaCy NER for tickers (StackOverflow 56489472, Medium "NER For Extracting Stock Mentions on
+Reddit"); AKShare (akshare.akfamily.xyz), Tushare (tushare.pro), EdgarTools (edgartools.readthedocs.io);
+John Snow Labs `finel_nasdaq_ticker_stock_screener_en`; cross-market normalization convention
+(`CODE.MKT`).
+
+#### R2. KOL distillation — what nuwa / colleague / serenity each teach us
+
+All three are **non-fine-tuning, prompt+retrieval persona systems** (exactly our stance). They differ in
+*what they extract and how rigorously*. We should steal the best from each.
+
+**nuwa-skill (`alchaincyf/nuwa-skill`) — the rigor of *what counts as a mental model*.**
+- **6-dimensional parallel corpus collection**: writings / conversations / expression-DNA / external-views
+  / decisions / timeline. Each is a separate research pass with its own output file. We currently only
+  have tweets + a hand-written persona — we are missing the *conversations* and *external-views* and
+  *decisions* dimensions entirely.
+- **Triple-verification gate** (the single most valuable idea): a claim becomes a **Mental Model** only if
+  it passes all of: **cross-domain** (appears in ≥2 different contexts), **generative** (predicts stance
+  on a new problem), **exclusive** (not what every smart person says). 1-2 gates → demote to Decision
+  Heuristic; 0 → drop. This is an objective filter against persona bloat/hallucination. Our `_TEMPLATE.md`
+  already references it but our actual personas (`aleabitoreddit.md`) were written by hand without applying
+  it mechanically.
+- **Preserve contradictions; don't smooth them** — track early-vs-recent stance separately, and record
+  "essential tensions" (e.g. freedom vs discipline) as a feature, not a bug.
+- **Quantified Expression DNA**: sentence length, question ratio, analogy density, first-person rate,
+  certainty register, transition frequency — measured over a 20-paragraph sample, not vibes.
+- **Honest boundaries are mandatory**, including "public statements ≠ real thinking" and an info cutoff.
+- **Source blacklist** (no 知乎/公众号/百度百科 — only first-party + authoritative media). Relevant when we
+  later pull auxiliary context about a KOL.
+
+**colleague-skill (`titanwings/colleague-skill`) — the *lifecycle*: versioning + evolution mode.**
+- It's a **meta-skill engine** that emits a self-contained skill dir (SKILL.md + scripts + references).
+- **Evolution mode**: a user saying "我有新文件" / "这不对" / "他应该是…" triggers an *incremental update*
+  of an existing persona with a version bump, not a full rebuild. We have `persona_version` field but no
+  such correction/append flow — our weekly refresh only appends a dated stance note, never amends the
+  persona itself on feedback.
+- **Layered behavioral rules** split into intake → analyzer → builder prompts (separable stages). Our
+  `distill_kol.mjs` is one monolithic prompt.
+
+**serenity-skill (`muxuuu/serenity-skill`) — *evidence discipline* + a runnable research workflow.**
+- **Evidence ladder**: Strong (filings/exchange/transcripts/contracts) > Medium (reputable media/trade
+  pubs) > Weak (KOL posts/social/forums) > Rumor. **The KOL's own tweets are explicitly Weak/lead-tier,
+  not proof.** This is a sharp principle for us: when our simulated KOL makes a *current* claim, it should
+  lean on retrieved live data (Strong/Medium), and treat the KOL's own past posts as *their perspective*
+  (a lead), not as evidence the claim is *true*. Our persona taboos say "never fabricate" but don't yet
+  encode this tiering.
+- **9-step research workflow** (scope → system-change → value-chain → scarce-layer → company-universe →
+  evidence-grade → rank → failure-conditions → next-move). This is essentially a *methodology tool* the
+  persona can invoke for theme-scan questions ("AI半导体哪层最值得研究").
+- **Plain-language evidence labels** in every answer (Strong/Medium/Weak/Needs-checking).
+- **Identity caveat**: all profile/performance claims are "self-reported, verify independently" — we
+  already encode this; serenity makes it a first-class reliability ladder.
+
+**Net distillation improvements (synthesized into C below):** add the missing corpus dimensions, make the
+triple-verification gate an actual mechanical step in the distiller, adopt the evidence ladder into the
+persona taboos + answer format, add an evolution/correction flow, and quantify Expression DNA from a
+sample.
+
+#### R3. Workbuddy / skill-as-tool — how data skills become model-callable tools
+
+The local skills are **host-agent skills** (python CLIs / node bundles meant for Claude-Code-style hosts):
+- `westock-data` (richest A/HK/US equity detail + risk + sector/macro), `westock-tool` (screener) — Node
+  obfuscated bundles, **not worker-runnable**.
+- `富途 OpenAPI` — python + needs a running **OpenD daemon** + places real orders, **hardest "no"**.
+- `宏观数据监控技能` — not a data API, it's a browser-scraping agent workflow, **skip**.
+- `腾讯自选股 npm` — strict subset of westock-data, **skip**.
+- `自然语言通用金融数据搜索服务` (**NeoData**) — single HTTP POST + Bearer token, broadest coverage
+  (A股/港股/美股/**日韩全球** + funds + forex + commodities + macro history + economic calendar),
+  **directly portable to a Worker tool**.
+
+**Workbuddy's model:** each skill is a `SKILL.md` the host reads; the host then calls the skill's scripts
+as needed. The agent-centric lesson for us: **the model should discover and call data capabilities itself**,
+not have our TS pre-decide. Our `tools.ts` already does this for 5 tools; the gap is *coverage* and the
+*non-worker skills*.
+
+**How to extend, CF-only:** NeoData ports directly (TS fetch + token cache in KV). westock-data/tool and
+futuapi(read) go behind a **thin HTTP bridge Worker** (or a CF Queue + Worker) that shells out to the node
+bundle / OpenD. We expose them as additional tools with clear descriptions; the model picks.
+
+#### R4. Cloudflare capability confirmation (what we can rely on)
+
+- **`@cf/baai/bge-reranker-base`** is on Workers AI (added 2025-03-17): takes `{query, document}` →
+  relevance score. ~$0.0031/1M tokens, 128k ctx. **This is the missing rerank layer** for our RAG —
+  currently we do raw bge-m3 cosine + a hand-tuned lexical score; a cross-encoder rerank on the candidate
+  set is a clear recall/precision win and is CF-native.
+- **Vectorize** supports per-vector metadata (≤10KiB) with `$eq`/`$neq` filtering at query time → our
+  hard `kol_id` isolation is natively supported (the v2 code already uses it, guarded).
+- **AI Gateway** does prefix caching → our stable-prefix prompt (persona+methodology first) is already
+  cache-optimal; keep the persona block byte-stable.
+- **Workers AI** also gained speculative decoding + prefix caching + batch inference — relevant for the
+  weekly distillation/rolling-summary batch paths.
+- No CF-native python/long-process; this confirms the bridge-only approach for non-worker skills.
+
+---
+
+### Improvement plan (A / B / C / D), each tied to a principle + research finding
+
+> Order = highest leverage first. Each item lists *what*, *why (principle + finding)*, *CF mechanism*, and
+> a *model-upgrade note*. D is the largest and most aligned with "let the model call tools itself".
+
+#### A — Symbol dictionary table (CF-only, biggest detection win)  [R1]
+- **What:** new D1 table `symbol_dict(name, name_en, code, market, alias, type)` seeded once from an
+  AKShare/Tushare bulk export (full A+HK+US listings). Rewrite `entities.ts` L2 so `dictLookup()` hits
+  this table (indexed) instead of the 30-row `BASE_DICT` constant. Keep Tencent smartbox as L3 fallback.
+- **Why:** closes the real gap (hand dict misses most names); instant + free vs N network calls; CF-native
+  (D1). Principle 1 (CF-only) + 2 (move logic out of fragile TS constants).
+- **Model-upgrade note:** as models get better at emitting `$TICKER`/codes, L1 extraction improves on its
+  own; L2 stays a dumb table. The long tail is handled by the model calling `search_symbol` (D).
+
+#### B — Cross-encoder rerank + recency in retrieval (CF-native recall win)  [R4]
+- **What:** in `rag.ts`, after Vectorize (or lexical) candidate retrieval, call `@cf/baai/bge-reranker-base`
+  on the (query, candidate) pairs → take top-K by rerank score, with a small **recency multiplier**
+  (`score *= 0.7 + 0.3*recency`) so dated theses don't tie with yesterday's posts. Encode "thesis decay"
+  in retrieval, not just in the persona prompt.
+- **Why:** pure cosine + hand lexical score is the weakest part of RAG today; reranker is the standard fix
+  and is CF-native ($0.0031/1M). Principle 1. serenity's "theses decay" becomes real in ranking, not just
+  words.
+- **Model-upgrade note:** retrieval quality lifts *every* model uniformly — a smarter model with better
+  evidence cites better; this is pure infrastructure.
+
+#### C — Distillation v3: corpus dimensions + triple-verification gate + evidence ladder + evolution mode  [R2]
+- **C1 — Missing corpus dimensions.** Extend the distiller (`scripts/distill_kol.mjs`) and the per-KOL
+  references to capture the nuwa dimensions we lack: **conversations/long-form** (X Articles, AMAs) and
+  **external-views** (third-party analysis of the KOL). For our two KOLs the raw material is tweets +
+  articles; add an "external views" ingestion note for future KOLs.
+- **C2 — Make the triple-verification gate mechanical.** The distiller prompt must, for each candidate
+  claim, explicitly test cross-domain / generative / exclusive and *label* the outcome (Model vs Heuristic
+  vs Drop) in the draft persona, instead of trusting the LLM to self-apply it. Output a reasoning trace.
+- **C3 — Evidence ladder into persona taboos + answer format.** Update `_TEMPLATE.md` and both live
+  personas: when making a *current* claim, weight retrieved **live data as Strong/Medium** and the KOL's
+  own past posts as **Weak/lead (their perspective, not proof)**; emit a Strong/Medium/Weak/Needs-checking
+  label. This is serenity's discipline, ported.
+- **C4 — Evolution/correction flow (from colleague).** Add an admin endpoint + persona-version bump for
+  "correct this persona" (e.g. user says "他不会这么说") that amends the persona pack incrementally with a
+  diff + version, rather than only the weekly append. Persona stays human-approved (anti-drift preserved).
+- **C5 — Quantified Expression DNA.** Distiller computes (over a 50-tweet sample): avg sentence length,
+  cashtag density, certainty register, list usage, signature openers/sign-offs — and writes them as
+  concrete values into the Expression DNA section, not adjectives.
+- **Why:** these are exactly the rigor gaps vs the three reference frameworks. Principles 2 + 3 (richer
+  retrieved persona context → smarter models just sound more like the KOL with no code change).
+- **Model-upgrade note:** the persona pack is *retrieved text*; a smarter model reproduces a more precise
+  persona from the same pack. The gate + ladder also cap hallucination as models get more fluent.
+
+#### D — Model-driven data tools, incl. the non-worker skills behind bridges  [R3, principles 1+3]
+- **D1 — Port NeoData as a native tool (direct).** New tool `financial_search`: a Worker `fetch` to the
+  NeoData endpoint with a KV-cached (12h) bearer token. Covers funds/forex/commodities/Japan/Korea/economic
+  calendar — markets our current 5 tools can't reach. Biggest coverage gain, zero new infra.
+- **D2 — Bridge the node-bundle skills (westock-data / westock-tool).** Stand up a small **bridge Worker**
+  (or CF Queue→Worker) that runs the westock node bundle server-side (a CF Container / a tiny separate
+  Worker that shells the bundle) and exposes `equity_detail` / `screener` tools. Until a CF Container is
+  available, this can be a single endpoint on a minimal always-on host fronted by the Worker; the *tool
+  surface* is the same. Read-only.
+- **D3 — Bridge Futu read-only (optional, later).** `option_chain` / `orderbook` / `snapshot` tools behind
+  a bridge to an OpenD host. **Trade endpoints stay out of the model's tool set** (hard rule: no
+  model-initiated orders; confirmation gate lives in TS, never delegatable).
+- **D4 — Tool-routing discipline (model is the orchestrator).** Keep the pre-fetch in `gatherMarketData`
+  as a *latency optimization only* (inject the obvious primary quote + daily K-line so the first token is
+  fast). Everything else — minute K-line, fresh news, macro, a name we didn't detect, screening — the model
+  fetches by calling tools in the tool phase. Add an **intent gate** so pure-chat turns skip the tool phase
+  entirely (cuts the extra non-streaming call on greetings).
+- **Why:** this is the explicit user ask ("让模型自己调用 tools"). Principles 1 (bridges are CF-hosted) +
+  2 (tools are declarative; smarter models use them better) + 3 (model orchestrates).
+- **Model-upgrade note:** as models improve at parallel/conditional tool-use, our pipeline gets richer with
+  *no* change — we only ever add tool schemas and descriptions. The TS never has to "know" what data the
+  model needs.
+
+### Sequencing & acceptance
+
+1. **A (symbol_dict)** — standalone, no model calls. Acceptance: 茅台/宁德时代/腾讯/Raspberry Pi-class
+   long-tail names resolve with zero network hops; `attempts` fan-out drops.
+2. **B (rerank + recency)** — needs Vectorize active OR runs on D1-candidate set. Acceptance: for a query
+   whose answer is an old tweet, a newer relevant tweet outranks it when recency matters; rerank top-6 is
+   visibly more on-topic than raw cosine top-6.
+3. **D1 (NeoData tool)** — direct port, fast. Acceptance: model answers a funds/forex/Japan-stock question
+   by calling `financial_search`.
+4. **D4 (intent gate + orchestrator discipline)** — small TS change, big latency/cost win. Acceptance: a
+   "你好" turn streams immediately with no tool phase; a "CRCL 1分钟K线+最新宏观" turn calls tools itself.
+5. **C (distillation v3)** — largest, mostly offline (distiller + persona rewrites + template). Acceptance:
+   re-distilled personas show explicit Model/Heuristic/Drop labels, quantified DNA, evidence-ladder wording;
+   a "correct this" admin call bumps `persona_version` with a diff.
+6. **D2/D3 (bridges)** — infra-heavy, do last / optionally. Acceptance: model calls `equity_detail` /
+   `screener` and gets westock data; Futu trade endpoints are provably absent from the tool set.
+
+### Non-goals (explicitly deferred)
+
+- No fine-tuning, ever (rides model upgrades — core stance, unchanged).
+- No browser-scraping macro skill port (宏观数据监控技能) — not a data API; would need full rewrite.
+- No model-callable *trading* tools — order placement stays behind a TS confirmation gate, never a tool.
+- No non-CF vendor data services at runtime (SerpAPI etc.) — CF-only.
+
+---
+
 ## 7. Progress Log (newest first)
+
+- **2026-06-16 (session 8, v3 research + design)** — Deep research dive for the next upgrade, written up
+  as **§6c** (CF-only + model-agnostic + model-driven-tools invariants; A/B/C/D plan). Findings: (1)
+  tradable-instrument detection has no turnkey lib — consensus is extraction→normalization→validation
+  (spaCy NER + AKShare/Tushare name↔code + quote-validate); our gap is the 30-row hand `BASE_DICT`,
+  fixed by a seeded `symbol_dict` D1 table (A). (2) nuwa=triple-verification gate (cross-domain/generative/
+  exclusive) + 6 corpus dims + preserve-contradictions + quantified Expression DNA; colleague=evolution/
+  correction mode + versioning; serenity=evidence ladder (filings>media>KOL-posts>rumor) + 9-step research
+  workflow — synthesized into distillation v3 (C). (3) Workbuddy lesson: model orchestrates data skills;
+  NeoData ports directly as a Worker tool, westock/futu need bridges (D). Confirmed CF-native
+  `@cf/baai/bge-reranker-base` closes the RAG rerank gap (B). No code changed this session; plan awaits
+  approval. Local skills matrix captured: NeoData=direct port, westock-data/tool=bridge, futu=bridge(read
+  only), 腾讯npm=skip(subset), 宏观技能=skip(browser scrape).
 
 - **2026-06-16 (session 7, v2 upgrade — code complete)** — Built the A→B→C→D upgrade (see §6b for the
   full per-workstream detail). A: layered instrument detection (`entities.ts`) — fixed a real bug where

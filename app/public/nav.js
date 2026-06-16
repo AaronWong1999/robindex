@@ -1,6 +1,5 @@
 "use strict";
-/* Shared top navigation: working dropdown menus + theme toggle.
-   Included on every page. Call RobindexNav.mount() again after any dynamic body rewrite. */
+/* Shared top navigation: hamburger (mobile) + dropdown (desktop) + theme toggle. */
 (function () {
   const X_URL = "https://x.com/qinbafrank";
   const ITEMS = [
@@ -51,6 +50,22 @@
     }).join("");
   }
 
+  function buildMobileMenu() {
+    const ak = activeKey();
+    let html = "";
+    for (const it of ITEMS) {
+      if (!it.menu) {
+        html += `<a href="${it.href}" class="${it.key === ak ? "active" : ""}">${it.label}</a>`;
+      } else {
+        html += `<div class="group-label">${it.label}</div>`;
+        for (const [label, href] of it.menu) {
+          html += `<a class="sub" href="${href}">${label}</a>`;
+        }
+      }
+    }
+    return html;
+  }
+
   function applyTheme(t) {
     document.documentElement.setAttribute("data-theme", t);
     try { localStorage.setItem("robindex_theme", t); } catch (e) {}
@@ -66,10 +81,40 @@
       <div class="nav-right">
         <a class="nav-icon" href="${X_URL}" target="_blank" rel="noopener" aria-label="X">𝕏</a>
         <button class="nav-icon theme-toggle" aria-label="切换主题">☀</button>
-        <span class="nav-avatar" aria-label="账户">A</span>
+        <button class="nav-hamburger" aria-label="菜单" aria-expanded="false">☰</button>
       </div>`;
 
-    // Dropdown toggles (click to open; also opens on hover via CSS).
+    // Mobile overlay
+    let overlay = document.querySelector(".nav-mobile-overlay");
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.className = "nav-mobile-overlay";
+      document.body.appendChild(overlay);
+    }
+    overlay.innerHTML = buildMobileMenu();
+
+    // Hamburger toggle
+    const hamburger = header.querySelector(".nav-hamburger");
+    hamburger.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const isOpen = overlay.classList.contains("open");
+      overlay.classList.toggle("open");
+      hamburger.setAttribute("aria-expanded", String(!isOpen));
+      hamburger.textContent = isOpen ? "☰" : "✕";
+      document.body.style.overflow = isOpen ? "" : "hidden";
+    });
+
+    // Close mobile menu on link click
+    overlay.querySelectorAll("a").forEach((a) => {
+      a.addEventListener("click", () => {
+        overlay.classList.remove("open");
+        hamburger.setAttribute("aria-expanded", "false");
+        hamburger.textContent = "☰";
+        document.body.style.overflow = "";
+      });
+    });
+
+    // Desktop dropdown toggles
     const items = header.querySelectorAll(".nav-item");
     items.forEach((item) => {
       const trigger = item.querySelector(".nav-trigger");
@@ -84,6 +129,7 @@
       if (!e.target.closest(".nav-item")) items.forEach((o) => o.classList.remove("open"));
     });
 
+    // Theme toggle
     const themeBtn = header.querySelector(".theme-toggle");
     const cur = document.documentElement.getAttribute("data-theme") || "dark";
     applyTheme(cur);
@@ -93,7 +139,7 @@
     });
   }
 
-  // Restore saved theme ASAP (before mount) to avoid flash.
+  // Restore saved theme ASAP
   try {
     const saved = localStorage.getItem("robindex_theme");
     if (saved) document.documentElement.setAttribute("data-theme", saved);

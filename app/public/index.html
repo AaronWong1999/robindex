@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#06080b" />
+  <meta name="theme-color" content="#100f09" />
   <title>Robindex — AI 驱动的市场洞察</title>
   <meta name="description" content="选择一个研究视角：把博主的公开内容整理成可浏览、可追问、可持续跟踪的投研工作台。" />
   <link rel="stylesheet" href="/styles.css" />
@@ -16,34 +16,25 @@
       <span class="mark">R</span>
       <span class="bt"><b>Robindex</b><span>MARKET INTELLIGENCE</span></span>
     </a>
-    <nav class="nav-links">
-      <a href="/research">AI 研究助手</a>
-      <a href="/today">每日简报 ▾</a>
-      <a href="/" class="active">投研 ▾</a>
-      <a href="/for-you">我的 ▾</a>
-      <a href="/pricing">定价</a>
-    </nav>
-    <div class="nav-right">
-      <a class="nav-icon" href="https://x.com" aria-label="X">𝕏</a>
-      <button class="nav-icon" aria-label="切换主题">☀</button>
-      <span class="nav-avatar" aria-label="账户">A</span>
-    </div>
+    <nav class="nav-links"></nav>
+    <div class="nav-right"></div>
   </header>
 
   <main id="main">
-    <section class="section">
+    <!-- Hero + KOL Cards -->
+    <section class="section hero-gradient">
       <div class="wrap">
         <p class="eyebrow">博主研究室</p>
         <h1 class="h1">选择一个研究视角</h1>
         <p class="lead">每个研究室都把公开内容整理成可浏览、可追问、可持续跟踪的投研工作台。</p>
 
-        <div class="rooms" style="margin-top:36px">
+        <div class="rooms">
           <!-- Qinbafrank -->
-          <article class="room">
+          <article class="room green-accent">
             <div class="room-head">
               <img src="https://unavatar.io/x/qinbafrank" alt="Qinbafrank 头像" onerror="this.style.visibility='hidden'" />
               <div>
-                <div class="room-title"><h3>Qinbafrank 研究室</h3><span class="badge green">Ultra 资料包</span></div>
+                <div class="room-title"><h3 class="font-editorial">Qinbafrank 研究室</h3><span class="badge green">Ultra 资料包</span></div>
                 <div class="room-handle">@qinbafrank</div>
               </div>
             </div>
@@ -66,11 +57,11 @@
           </article>
 
           <!-- Serenity -->
-          <article class="room">
+          <article class="room blue-accent">
             <div class="room-head">
               <img src="https://pbs.twimg.com/profile_images/1996176688414367744/LXfA_lIx_400x400.jpg" alt="Serenity 头像" onerror="this.style.visibility='hidden'" />
               <div>
-                <div class="room-title"><h3>Serenity 研究室</h3><span class="badge blue">供应链工作台</span></div>
+                <div class="room-title"><h3 class="font-editorial">Serenity 研究室</h3><span class="badge blue">供应链工作台</span></div>
                 <div class="room-handle">@aleabitoreddit</div>
               </div>
             </div>
@@ -94,12 +85,13 @@
       </div>
     </section>
 
+    <!-- How to choose -->
     <section class="section">
       <div class="wrap split">
         <div>
           <p class="eyebrow">怎么选</p>
           <h2 class="h2">先按问题选博主，<br />再进入对应工具</h2>
-          <p class="lead">两个研究室共用同一套左侧导航和研究助手入口，但内容组织围绕各自方法论展开。</p>
+          <p class="lead">两个研究室共用同一套导航和研究助手入口，但内容组织围绕各自方法论展开。</p>
         </div>
         <div class="cardgrid">
           <a class="minicard" href="/kol/qinbafrank">
@@ -126,7 +118,8 @@
       </div>
     </section>
 
-    <section class="section">
+    <!-- Boundaries -->
+    <section class="section boundary-section">
       <div class="wrap split">
         <div>
           <p class="eyebrow">使用边界</p>
