@@ -4,7 +4,43 @@
 > continues from the next unchecked item. Update the **Status** and **Progress Log** as you go.
 > Keep decisions here, not in your head — the next AI has no memory of this session.
 
-Last updated: 2026-06-16 (v3 research & design — §6c added)
+Last updated: 2026-06-17 (no-vector production architecture; README synced)
+
+---
+
+## 0. Current production truth (read this first)
+
+As of 2026-06-17, Robindex has intentionally **removed Vectorize and all embedding storage**.
+The product is now a Cloudflare-native **D1 original-text + sparse retrieval + KOL-OS/playbook**
+system.
+
+Current production state:
+
+- Production URL: `https://robindex.ai`
+- Latest deployed Worker version: `ee3941de-5c1c-4f56-9d71-7037f78af800`
+- Latest GitHub `main` commit: `d6d3bee feat: remove vector embeddings from KOL retrieval`
+- D1 schema has no `embedding` or `embedded` columns.
+- `wrangler.jsonc` has no `vectorize` binding.
+- `app/scripts/backfill_embeddings.mjs` was deleted.
+- Retrieval path: `app/src/rag.ts` uses D1 sparse retrieval only.
+- Runtime smoke after migration:
+  - `qinbafrank`: 13,756 original tweets, 2021-10-03 to 2026-06-16
+  - `aleabitoreddit`: 5,935 original tweets, 2025-07-02 to 2026-06-16
+  - `aleabitoreddit` knowledge chunks: 201
+  - `/api/chat` returns citations, no DSML, and normalized `[T#]` source refs.
+
+Deprecated/forbidden in future implementation unless the user reverses the decision:
+
+- Do not add Vectorize back to `wrangler.jsonc`.
+- Do not add D1 `embedding` / `embedded` fields.
+- Do not call `@cf/baai/bge-m3` for tweet/knowledge indexing.
+- Do not reintroduce `embedBatch`, `embedPending`, `indexVectors`, or vector backfill scripts.
+
+Migration that removed historical vectors:
+
+```sql
+app/migrations/0002_remove_embeddings.sql
+```
 
 ---
 
@@ -23,11 +59,11 @@ When a user asks something like *"qinbafrank, 你怎么看最近 SOXL 的走势"
 Reference product being emulated (concept, not pixel-clone — site is bot-blocked): themarketbrew.com/kol.
 Feel: like Codex / Claude Cowork / WorkBuddy. **Mobile-first.**
 
-### KOLs at launch
+### KOLs at launch / current corpus
 | id | Display | X handle | Source of distilled corpus |
 |----|---------|----------|----------------------------|
-| `aleabitoreddit` | Serenity (白毛股神) | [@aleabitoreddit](https://x.com/aleabitoreddit) | **Ready** — github.com/yan-labs/serenity-aleabitoreddit (5,857 tweets + persona/methodology/theses/track-record + monthly analyses) |
-| `qinbafrank` | qinbafrank | [@qinbafrank](https://x.com/qinbafrank) | **TODO** — scrape via Apify, then distill with same pipeline |
+| `aleabitoreddit` | Serenity (白毛股神) | [@aleabitoreddit](https://x.com/aleabitoreddit) | **Live** — 5,935 original tweets in D1 + 201 knowledge chunks |
+| `qinbafrank` | qinbafrank | [@qinbafrank](https://x.com/qinbafrank) | **Live** — 13,756 original tweets in D1 via GetXAPI full-history + daily increment |
 
 Architecture must make adding more KOLs trivial and **contamination-proof** (see §4).
 
@@ -59,12 +95,12 @@ Single **Worker** (Hono + TS) under `app/`, serving static frontend (Workers Sta
 |---|---|---|
 | Frontend (mobile-first SPA) | Static Assets on the Worker | vanilla HTML/CSS/JS, no build step |
 | App + API + SSE streaming | Worker | `/api/kols`, `/api/chat` (stream), `/api/quote`, `/api/kline`, `/api/cron/*` |
-| Structured store | **D1** (`schema.sql`) | kols, tweets, articles, analysis_chunks, conversations, messages, sync_state |
-| Vector retrieval (RAG) | **Vectorize** index `kol-knowledge` | 1024-dim (bge-m3), cosine; **every vector tagged `kol_id`** → hard filter |
-| Embeddings | **Workers AI** `@cf/baai/bge-m3` | multilingual (EN tweets + ZH queries) |
+| Structured store | **D1** (`schema.sql`) | kols, tweets, knowledge_chunks, conversations, messages, sync_state |
+| Retrieval (RAG) | **D1 sparse retrieval** | terms/tickers/priority topics/recency/engagement/local rerank; no embeddings |
+| Embeddings / Vector DB | **Removed** | no Vectorize binding, no D1 embedding columns, no backfill scripts |
 | Chat completions | **AI Gateway** → deepseek v4 flash/pro | OpenAI-compatible; stable-prefix prompt for caching |
 | Caches (quotes, persona packs, ticker map) | **KV** | quote TTL ~30–60s; persona pack cached assembled |
-| Daily tweet sync + weekly persona refresh | **Cron Triggers** | incremental Apify → D1 → embed new → Vectorize upsert |
+| Daily tweet sync + weekly persona refresh | **Cron Triggers** | GetXAPI incremental → D1 + R2 archive; no embedding step |
 | Raw backups / avatars (optional) | **R2** | nice-to-have |
 
 ### Financial data (works from a Worker — verified live)
@@ -82,8 +118,9 @@ Public Tencent endpoints, no key needed. Code format: A `sh######`/`sz######`/`b
 2. **Entity/ticker detection**: regex for `$TICKER`/cashtags + a lightweight resolver (Tencent search)
    to map names→codes and confirm instrument + market.
 3. **Live data fetch**: quote + recent K-line (+ fundamentals when relevant) for detected instruments. Cache in KV.
-4. **RAG**: embed query (bge-m3) → Vectorize query **filtered by kol_id** → top tweet/analysis chunks,
-   each given a citation id `[T1]`, `[T2]`… mapped to tweet id/url/date.
+4. **RAG**: expand terms → D1 sparse retrieval filtered by `kol_id` → top tweet/knowledge chunks,
+   each given a citation id `[T1]`, `[T2]`… mapped to tweet id/url/date. This path does not use
+   embeddings or Vectorize.
 5. **Assemble prompt** (stable→variable for caching):
    `[Persona Pack (identity, methodology, tone, taboos, format)]` →
    `[Retrieved KOL knowledge w/ citation ids]` → `[Live market data block]` →
@@ -100,7 +137,7 @@ Public Tencent endpoints, no key needed. Code format: A `sh######`/`sz######`/`b
   source files in `app/personas/<kol_id>.md`, seeded into D1. **Injected every turn** — never rely on
   the model "remembering". Stable text first (cache-friendly).
 - Persona Pack is **not** auto-rewritten on every new tweet. Refresh on a **weekly** scheduled job.
-- **Knowledge layer carries `kol_id` everywhere** (tweets, articles, analysis, vectors). Retrieval is
+- **Knowledge layer carries `kol_id` everywhere** (tweets, articles, analysis, knowledge chunks). Retrieval is
   **hard-filtered by kol_id** — the model never chooses which person's library to search.
 - **Session ↔ one KOL.** Multi-turn memory is **bounded** (last N turns + rolling summary), not infinite.
 
@@ -112,11 +149,12 @@ Public Tencent endpoints, no key needed. Code format: A `sh######`/`sz######`/`b
 - [x] Read all skills/credentials/README; confirm CF token + zones.
 - [x] Verify financial endpoints callable from server (quote/kline/minute live-tested).
 - [x] Confirm aleabitoreddit distilled corpus available; capture tweet JSON schema + sync_state.
-- [x] Decide stack: Worker(Hono+TS) + D1 + Vectorize + KV + Workers AI + AI Gateway + Cron.
+- [x] Decide current stack: Worker(Hono+TS) + D1 sparse retrieval + KV + R2 + Workers AI/Gateway + Cron.
 
 ### Phase 1 — Scaffold & first deploy  ✅ DONE
 - [x] `app/` scaffold: package.json, wrangler.jsonc, tsconfig, schema.sql, src/, public/.
-- [x] Create CF resources: D1 (`a4f1e62d…`), KV `CACHE` (`83cb63c5…`). **Vectorize blocked** — token lacks scope; using D1-stored bge-m3 embeddings + hybrid retrieval instead.
+- [x] Create CF resources: D1 (`a4f1e62d…`), KV `CACHE` (`83cb63c5…`), R2 `robindex-raw`.
+- [x] Removed Vectorize/embedding from production on 2026-06-17; D1 original text is the retrieval source of truth.
 - [x] Put gateway key as Worker secret (`CFGATEWAYKEY`); admin key (`ADMIN_KEY`) for import.
 - [x] Mobile-first frontend shell: KOL picker, model picker, streaming chat UI, citation + chart slots.
 - [x] Deployed: **https://robindex.waaron1999.workers.dev**.
@@ -128,12 +166,12 @@ Public Tencent endpoints, no key needed. Code format: A `sh######`/`sz######`/`b
 
 ### Phase 3 — Ingest aleabitoreddit corpus  ✅ DONE
 - [x] Persona Pack `personas/aleabitoreddit.md` built from SKILL.md + methodology + voice sampling.
-- [x] Admin import endpoints (`/api/admin/kol|tweets|knowledge|stats`, key-gated) + server-side bge-m3 embedding.
-- [x] Knowledge chunks (methodology/theses/track-record/articles + 6 analyses): **201 chunks, embedded**.
-- [x] **5,857 tweets loaded into D1, all 5,857 embedded** (bge-m3, stored in D1). `scripts/load_aleabitoreddit.mjs`.
+- [x] Admin import endpoints (`/api/admin/kol|tweets|knowledge|stats`, key-gated), no embedding.
+- [x] Knowledge chunks (methodology/theses/track-record/articles + analyses): **201 chunks**.
+- [x] **5,935 aleabitoreddit tweets loaded into D1**, searchable immediately via sparse retrieval.
 
 ### Phase 4 — Chat pipeline  ✅ DONE (verified live)
-- [x] Persona injection (stable prefix) + hybrid RAG (kol_id-scoped) + live-data + bounded history → SSE stream.
+- [x] Persona injection (stable prefix) + D1 sparse RAG (kol_id-scoped) + live-data + bounded history → SSE stream.
 - [x] Citation mapping `[Tn]` → source tweet (clickable to x.com); rendered in UI with sources panel.
 - [x] Model selector (flash/pro) honored.
 - [x] **AI Gateway auth resolved**: route is `…/robin/openrouter/v1/chat/completions`; headers
@@ -170,8 +208,8 @@ Public Tencent endpoints, no key needed. Code format: A `sh######`/`sz######`/`b
   `POST /api/chat` with qinbafrank + SOXL returns `text/event-stream`, source tweet citations, chart meta
   `{ code: "usSOXL", symbol: "SOXL" }`, and an in-character Chinese answer.
 - [x] KV quote/kline caching, prompt-cache stable prefix, retrieval caps, disclaimers — code is in place.
-- [x] Cloudflare deploy/secret operations verified with Global API Key. Latest deployed version:
-  `84e65c1c-d3e8-4601-bbd0-7b55197b3831`.
+- [x] Cloudflare deploy/secret operations verified with Global API Key. Latest deployed no-vector version:
+  `ee3941de-5c1c-4f56-9d71-7037f78af800`.
 
 ### Phase 5 — Daily/weekly automation  ✅ DONE
 - [x] Cron code now prefers **GetXAPI** incremental pull (per-KOL `twitter_uid` + `last_tweet_id`, strict
@@ -184,14 +222,10 @@ Public Tencent endpoints, no key needed. Code format: A `sh######`/`sz######`/`b
   both KOLs to `persona_version=weekly-2026-06-15`.
 
 ### Phase 6 — Second KOL (qinbafrank)  ✅ DONE — live with citations
-- [x] **721 tweets scraped (720 non-RT, 0 wrong-author), loaded + in D1.** Covers pinned + recent
-  ~4 months (GetXAPI `user/tweets` caps history there). This is **NOT the full qinbafrank corpus**:
-  GetXAPI account metadata showed ~14,664 lifetime tweets, so the current D1 corpus covers only a recent
-  slice. Verified: qinbafrank answers in-character with
-  **live data + 原文支持 citations** to his real tweets (HOOD/Robinhood/稳定币 test → cited [T1–T5]).
-- [⚠️] Only 70/720 embedded — hit **Workers AI daily quota** (after ~6,600 vectors today). Retrieval uses
-  lexical/recency fallback (works well); backfill embeddings when quota resets (cron `embedPending`, 50/day,
-  or re-run the loader). Lesson re scraping below.
+- [x] **13,756 qinbafrank original tweets loaded in D1.** Full-history original/reply corpus reaches back to
+  2021-10-03 via GetXAPI advanced search. Verified: qinbafrank answers in-character with live data and
+  原文支持 citations.
+- [x] No embedding/backfill remains. The historical partial embedding path was removed on 2026-06-17.
 - Earlier vendor notes (ScrapeBadger wrong-account, Apify noResults) retained for history:
 - **Working source: GetXAPI** (`api.getxapi.com`, `Authorization: Bearer <key>`). MCP pkg `@getxapi/mcp`,
   REST base discovered from its manifest. Endpoint `GET /twitter/user/tweets?userId=<id>&cursor=<c>` →
@@ -200,12 +234,11 @@ Public Tencent endpoints, no key needed. Code format: A `sh######`/`sz######`/`b
   `scripts/scrape_getxapi.py` (strict per-tweet `author==target` guard). **Gotcha: don't name the target
   env var `USERNAME`** — it's reserved/preset in the shell and silently overrode the guard (flagged all as
   wrong-author). Renamed to `TARGET_USER`.
-- [x] Pulling ~250 pages (~4,750 recent tweets, ~$0.25) → `scripts/load_qinbafrank.mjs` loads + embeds.
+- [x] `scripts/load_qinbafrank.mjs` loads tweets/persona without embedding.
 - qinbafrank: uid `1338075202798809089`, 14,664 lifetime tweets, avatar `…rEHaWNk1` (→ _400x400).
 - [x] Persona Pack `personas/qinbafrank.md` (macro top-down framework, 杀逻辑/打脸指标, PEG/cycle, liquidity).
-- [x] **KOL row loaded (persona only, 0 tweets)** → his research room is LIVE and answers in-character
-  using persona + live market data. **Verified.** Gap: 原文支持 tweet-citation panel stays empty until tweets load.
-- [x] `scripts/load_qinbafrank.mjs` + `scrape_sb.py` retained for future backfills.
+- [x] **KOL row + full tweet corpus loaded** → his research room is live with source citations.
+- [x] `scripts/load_qinbafrank.mjs` + historical scraper notes retained for future tweet-corpus backfills.
 - **Historical scraper notes — resolved by GetXAPI:**
   - **ScrapeBadger** `/v1/twitter/users/qinbafrank/latest_tweets` is **inconsistent**: some calls return his
     real Chinese content, others return a *different account* (`@aaron`, English sports/theScore tweets) for
@@ -219,14 +252,13 @@ Public Tencent endpoints, no key needed. Code format: A `sh######`/`sz######`/`b
 - **Resolution:** GetXAPI is now the reliable tweet source for qinbafrank citations and daily incrementals.
   Account-info endpoint: `GET /v1/twitter/.. ` → `/v1/account/me` (free, shows balance).
 - **Full-corpus status (2026-06-16, RESOLVED):**
-  - `aleabitoreddit`: materially complete. Remote D1 has 5,930 tweets, 5,929 embedded. Daily increment active.
-  - `qinbafrank`: **now complete**. Remote D1 has 13,750 tweets (was 720). Pulled the full original-tweet
+  - `aleabitoreddit`: materially complete. Remote D1 has 5,935 tweets. Daily increment active.
+  - `qinbafrank`: **now complete**. Remote D1 has 13,756 tweets. Pulled the full original-tweet
     history back to 2021-10-03 via GetXAPI **`twitter/tweet/advanced_search`** with `from:qinbafrank` + `until:`
     date-windowing (`scripts/scrape_qinbafrank_deep.py`) — the timeline endpoint (`user/tweets`) had capped at
     ~4 months. 705 API calls (~$0.70), 0 wrong-author. Lifetime `tweet_count` ~14.6k includes retweets, which
     `from:` search excludes, so 13,747 originals/replies is effectively the full set. Two empty windows before
-    2021-10 confirmed account start. Embeddings only 170/13,750 (Workers AI daily quota) — backfill resumes via
-    `scripts/backfill_embeddings.mjs` / cron `embedPending` as quota resets; lexical+recency retrieval covers it.
+    2021-10 confirmed account start. Embedding/backfill was intentionally removed; D1 sparse retrieval covers it.
   - **Raw archive in R2:** `robindex-raw/raw/<kol>/full.json` for both KOLs; daily cron writes append-only
     `raw/<kol>/incr-<ts>.json` deltas (Twitter data is paid → never overwritten). Also in repo `data/raw/`.
   - **Daily cron** confirmed registered (`0 9 * * *`) and uses the cheapest incremental path: timeline endpoint,
@@ -241,9 +273,9 @@ Public Tencent endpoints, no key needed. Code format: A `sh######`/`sz######`/`b
 - [x] Custom domain `robindex.ai` core route/API/chat path is live.
 - [x] SEO/meta baseline in place: title, description, viewport, theme-color.
 - [x] Cost guards in place: KV quote/kline cache, prompt-cache stable prefix, retrieval caps, daily ingest
-  page cap, admin ingest `embed_limit` cap. Launch checks pass.
+  page cap. Launch checks pass.
 
-#### Current deployment blocker (2026-06-16)
+#### Deployment notes (current)
 
 Deployment/ops notes:
 
@@ -252,37 +284,29 @@ Deployment/ops notes:
 - The credential in `account.guard.json` is a **Global API Key** (`cfk_...`), not a Bearer API Token.
   Use `CLOUDFLARE_API_KEY` + `CLOUDFLARE_EMAIL`, or `npm run preflight` which auto-detects this.
 
-Exact retry commands from `app/` when network/API access is healthy:
+Deploy command from `app/`:
 
 ```bash
-CF_TOKEN=$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('../account.guard.json','utf8')).CLOUDFLARE_API_TOKEN)")
-GX_KEY=$(node - <<'NODE'
-const fs=require('fs');
-const text=fs.readFileSync('../README.md','utf8');
-const m=text.match(/get-x-api-[A-Za-z0-9]+/);
-if(!m) process.exit(2);
-process.stdout.write(m[0]);
-NODE
-)
-printf '%s' "$GX_KEY" | CLOUDFLARE_API_TOKEN="$CF_TOKEN" NODE_OPTIONS="--require ./scripts/cloudflare-dns-patch.cjs" npx wrangler secret put GETXAPI_KEY
-CLOUDFLARE_API_TOKEN="$CF_TOKEN" npm run deploy:cf
+CLOUDFLARE_API_KEY=$(node -p "require('../account.guard.json').CLOUDFLARE_API_KEY") \
+CLOUDFLARE_EMAIL=$(node -p "require('../account.guard.json').expectedEmail") \
+NODE_OPTIONS='--require ./scripts/cloudflare-dns-patch.cjs' \
+npx wrangler deploy
 ```
 
 ---
 
 ## 5c. Raw tweet storage (durability — IMPORTANT)
 
-Scraped tweets are **expensive to acquire**, so originals are persisted in two durable places (never
-vector-only):
+Scraped tweets are **expensive to acquire**, so originals are persisted in durable stores (never
+model-index-only):
 1. **Cloudflare D1 `tweets` table** (live store): full `text` + `created_at_iso/ts`, all engagement metrics
-   (likes/retweets/replies/quotes/views), `urls`, `media`, `lang`, `is_retweet`. The `embedding` column is
-   an *extra* field alongside the text, not a replacement. This is the queryable source of truth.
+   (likes/retweets/replies/quotes/views), `urls`, `media`, `lang`, `is_retweet`. This is the queryable
+   source of truth; there are no embedding columns.
 2. **Repo `data/raw/*.json`** (git-tracked archive): `aleabitoreddit_tweets.json` (full GitHub schema),
    `qinbafrank_tweets.json` (GetXAPI mapped schema). Committed so the corpus survives even if D1 is reset.
 
-R2 (`robindex-raw` bucket) would be the ideal Cloudflare-side archive but the API token lacks R2 perms
-(same gap as Vectorize) — add `R2 Edit` to the token to enable. Until then, D1 + repo archive cover it.
-**Rule for any future scrape: always write the raw JSON to `data/raw/` AND upsert into D1.**
+R2 (`robindex-raw` bucket) is active for append-only raw tweet archives.
+**Rule for any future scrape: always archive raw JSON and upsert original text into D1.**
 
 ## 6. Key reference data (captured)
 
@@ -325,12 +349,11 @@ resolution; Workbuddy for skill/tool dispatch). Full design: plan file
   triple-verification + Expression DNA, colleague layers, serenity evidence tiers, honest boundaries).
   C2 `scripts/distill_kol.mjs` — offline drafter: corpus → v2 persona pack + knowledge chunks via gateway,
   written as `.draft` files for human review (no auto-activation). C3 real weekly refresh in `ingest.ts`:
-  LLM-distills the week's new tweets into a dated `analysis:<week>` knowledge chunk (embedded + Vectorize),
+  LLM-distills the week's new tweets into a dated `analysis:<week>` knowledge chunk in D1,
   persona pack itself never auto-mutated. C4 rolling memory: `maybeUpdateSummary` (chat.ts) fills
   `conversations.summary` for long threads via `waitUntil`, injected as a CONVERSATION-SO-FAR block.
-  C5 Vectorize (`rag.ts` `retrieveVectorize`/`indexVectors`, guarded — falls back to D1+JS-cosine until
-  `wrangler vectorize create robindex-index --dimensions=1024 --metric=cosine` + binding uncomment +
-  backfill). C6 citation faithfulness: persist only `[T#]` refs the answer actually used. Added
+  C5 historical Vectorize experiment was removed on 2026-06-17; current `rag.ts` is D1 sparse only.
+  C6 citation faithfulness: persist only `[T#]` refs the answer actually used. Added
   `completeChat` (non-streaming gateway helper) + shared `gatewayHeaders`. Typechecks; LLM-call paths
   verifiable only post-deploy (need provider key).
 - **D — Hybrid orchestration** ✅ DONE. **Verified deepseek-v4-flash supports function calling** via the
@@ -362,11 +385,8 @@ returns `finish_reason: tool_calls` on the `…/robin/openrouter/v1/chat/complet
    - `/api/news?q=AAPL` and `/api/macro` → headlines.
    - `/api/kline?code=sh600519&period=m1&limit=5` → minute candles.
    - `POST /api/chat` (kol_id + message "茅台1分钟K线 + 最近宏观新闻") → streamed, in-character, with data.
-3. **Activate Vectorize (optional, biggest recall win):**
-   `npx wrangler vectorize create robindex-index --dimensions=1024 --metric=cosine`, uncomment the
-   `vectorize` binding in `wrangler.jsonc`, redeploy, then backfill: re-run `POST /api/admin/embed?kol_id=…`
-   (tweets) and `POST /api/admin/knowledge` (chunks) per KOL. Until then retrieval auto-falls-back to
-   D1+JS-cosine, so nothing breaks.
+3. **Do not activate Vectorize.** This was an earlier option but was explicitly rejected and removed on
+   2026-06-17. Keep retrieval on D1 sparse search unless the user makes a new product decision.
 4. **Persona v2 re-distill (optional):** `KOL_ID=… NAME=… HANDLE=… TWEETS=tweets/<file>.json node
    scripts/distill_kol.mjs` → review `personas/<id>.draft.md` + `<id>.knowledge.draft.json`, then promote.
 
@@ -384,7 +404,7 @@ LLM-call paths (weekly refresh, rolling summary, tool loop) only runtime-verifie
 > KOL-distillation frameworks (nuwa/colleague/serenity), and (3) how Workbuddy exposes data skills as
 > model-callable tools. It also restates the two **hard design invariants** the user set, so any future
 > change stays within them:
-> - **CF-only** — only use what Cloudflare Workers/D1/Vectorize/KV/R2/Workers AI/AI Gateway natively
+> - **CF-only** — only use what Cloudflare Workers/D1/KV/R2/Workers AI/AI Gateway natively
 >   support. No python runtime, no long-lived process, no non-CF vendor lock-in.
 > - **Model-agnostic upgrade** — the architecture must get *better* as the chat model gets smarter, with
 >   **zero code change**. Concretely: the more capable the model, the more we should hand it via tools /
@@ -519,12 +539,9 @@ bundle / OpenD. We expose them as additional tools with clear descriptions; the 
 
 #### R4. Cloudflare capability confirmation (what we can rely on)
 
-- **`@cf/baai/bge-reranker-base`** is on Workers AI (added 2025-03-17): takes `{query, document}` →
-  relevance score. ~$0.0031/1M tokens, 128k ctx. **This is the missing rerank layer** for our RAG —
-  currently we do raw bge-m3 cosine + a hand-tuned lexical score; a cross-encoder rerank on the candidate
-  set is a clear recall/precision win and is CF-native.
-- **Vectorize** supports per-vector metadata (≤10KiB) with `$eq`/`$neq` filtering at query time → our
-  hard `kol_id` isolation is natively supported (the v2 code already uses it, guarded).
+- **Workers AI reranker note:** `@cf/baai/bge-reranker-base` exists, but the current product decision is
+  no embedding/vector database. If used later, it may only rerank D1 candidate text and must not write vectors.
+- **Vectorize note:** Vectorize metadata filtering was researched, but this path is now deprecated for Robindex.
 - **AI Gateway** does prefix caching → our stable-prefix prompt (persona+methodology first) is already
   cache-optimal; keep the persona block byte-stable.
 - **Workers AI** also gained speculative decoding + prefix caching + batch inference — relevant for the
@@ -547,13 +564,13 @@ bundle / OpenD. We expose them as additional tools with clear descriptions; the 
 - **Model-upgrade note:** as models get better at emitting `$TICKER`/codes, L1 extraction improves on its
   own; L2 stays a dumb table. The long tail is handled by the model calling `search_symbol` (D).
 
-#### B — Cross-encoder rerank + recency in retrieval (CF-native recall win)  [R4]
-- **What:** in `rag.ts`, after Vectorize (or lexical) candidate retrieval, call `@cf/baai/bge-reranker-base`
+#### B — Sparse candidate rerank + recency in retrieval (optional, no-vector only)  [R4]
+- **What:** in `rag.ts`, after D1 sparse candidate retrieval, optionally call a text reranker
   on the (query, candidate) pairs → take top-K by rerank score, with a small **recency multiplier**
   (`score *= 0.7 + 0.3*recency`) so dated theses don't tie with yesterday's posts. Encode "thesis decay"
   in retrieval, not just in the persona prompt.
-- **Why:** pure cosine + hand lexical score is the weakest part of RAG today; reranker is the standard fix
-  and is CF-native ($0.0031/1M). Principle 1. serenity's "theses decay" becomes real in ranking, not just
+- **Why:** hand lexical scoring is the weakest part of sparse retrieval; reranking D1 candidates could improve
+  precision without writing embeddings. Principle 1. serenity's "theses decay" becomes real in ranking, not just
   words.
 - **Model-upgrade note:** retrieval quality lifts *every* model uniformly — a smarter model with better
   evidence cites better; this is pure infrastructure.
@@ -608,9 +625,9 @@ bundle / OpenD. We expose them as additional tools with clear descriptions; the 
 
 1. **A (symbol_dict)** — standalone, no model calls. Acceptance: 茅台/宁德时代/腾讯/Raspberry Pi-class
    long-tail names resolve with zero network hops; `attempts` fan-out drops.
-2. **B (rerank + recency)** — needs Vectorize active OR runs on D1-candidate set. Acceptance: for a query
+2. **B (rerank + recency)** — D1-candidate set only, no Vectorize. Acceptance: for a query
    whose answer is an old tweet, a newer relevant tweet outranks it when recency matters; rerank top-6 is
-   visibly more on-topic than raw cosine top-6.
+   visibly more on-topic than raw sparse top-6.
 3. **D1 (NeoData tool)** — direct port, fast. Acceptance: model answers a funds/forex/Japan-stock question
    by calling `financial_search`.
 4. **D4 (intent gate + orchestrator discipline)** — small TS change, big latency/cost win. Acceptance: a
@@ -632,6 +649,13 @@ bundle / OpenD. We expose them as additional tools with clear descriptions; the 
 
 ## 7. Progress Log (newest first)
 
+- **2026-06-17 (session 9, no-vector production migration + docs)** — User chose to remove embeddings and
+  Vectorize entirely. Implemented D1 schema migration `0002_remove_embeddings.sql`, deleted embedding fields,
+  removed `VECTORIZE` binding, removed embed/backfill code paths, converted retrieval to D1 sparse-only, fixed
+  D1 `LIKE pattern too complex` by switching to `instr(lower(text), lower(?))`, normalized citations from
+  `【T#】` to `[T#]`, deployed Worker version `ee3941de-5c1c-4f56-9d71-7037f78af800`, verified stats/chat smoke,
+  and pushed GitHub `main` commit `d6d3bee`.
+
 - **2026-06-16 (session 8, v3 research + design)** — Deep research dive for the next upgrade, written up
   as **§6c** (CF-only + model-agnostic + model-driven-tools invariants; A/B/C/D plan). Findings: (1)
   tradable-instrument detection has no turnkey lib — consensus is extraction→normalization→validation
@@ -641,7 +665,7 @@ bundle / OpenD. We expose them as additional tools with clear descriptions; the 
   correction mode + versioning; serenity=evidence ladder (filings>media>KOL-posts>rumor) + 9-step research
   workflow — synthesized into distillation v3 (C). (3) Workbuddy lesson: model orchestrates data skills;
   NeoData ports directly as a Worker tool, westock/futu need bridges (D). Confirmed CF-native
-  `@cf/baai/bge-reranker-base` closes the RAG rerank gap (B). No code changed this session; plan awaits
+  Workers AI reranker could improve sparse candidate ranking (B) without writing vectors. No code changed this session; plan awaits
   approval. Local skills matrix captured: NeoData=direct port, westock-data/tool=bridge, futu=bridge(read
   only), 腾讯npm=skip(subset), 宏观技能=skip(browser scrape).
 
@@ -649,16 +673,16 @@ bundle / OpenD. We expose them as additional tools with clear descriptions; the 
   full per-workstream detail). A: layered instrument detection (`entities.ts`) — fixed a real bug where
   `searchSymbol` parsed the dead GBK smartbox format so Chinese names never resolved. B: minute K-line +
   news/macro (`finance.ts`, `marketdata.ts`). C: persona v2 spec + distiller, real weekly refresh, rolling
-  conversation summary, guarded Vectorize retrieval, citation faithfulness. D: verified deepseek function
+  conversation summary, guarded Vectorize retrieval (later removed), citation faithfulness. D: verified deepseek function
   calling and added the hybrid tool loop (`tools.ts`, `resolveToolPhase`). Made gateway auth robust to a
   missing `OPENROUTER_KEY` (BYOK → governor-only works). All typechecks pass; data-layer paths verified
   live; LLM-call paths pending deploy. Not yet deployed/committed. Next: `wrangler deploy` + optional
-  Vectorize provisioning (commands in §6b Handoff).
+  Vectorize provisioning was later rejected and removed in session 9.
 - **2026-06-16 (session 6, launch complete)** — User supplied the working Cloudflare Global API Key.
   Verified wrangler access to account `686bee522c90d03e13ba35077f04ff49`, uploaded `GETXAPI_KEY` and
   `ADMIN_KEY` secrets, deployed version `84e65c1c-d3e8-4601-bbd0-7b55197b3831` to `robindex.ai` and
   `www.robindex.ai`. Verified schedules via Cloudflare API: daily `0 9 * * *` and weekly `30 9 * * 1`.
-  Triggered production ingest through `/api/admin/ingest?embed_limit=0`; D1 `sync_state` updated and
+  Triggered production ingest through `/api/admin/ingest`; D1 `sync_state` updated and
   `aleabitoreddit` inserted 1 new tweet from GetXAPI. Added/verified weekly persona checkpoint through
   `/api/admin/persona-refresh`; both KOLs now have `persona_version=weekly-2026-06-15`. Final launch checks:
   `npm run preflight` green, `npx tsc --noEmit` green, and live qinbafrank+SOXL chat streams answer with
@@ -704,11 +728,10 @@ bundle / OpenD. We expose them as additional tools with clear descriptions; the 
 
 - **2026-06-15 (session 1, qinbafrank LIVE)** — Got a working tweet source: **GetXAPI** (user provided, $10).
   Scraped 721 clean qinbafrank tweets (strict author-guard, curl backend to dodge urllib connection resets),
-  loaded + partial-embedded. **Both KOLs now fully live with citations.** Browser-verified: qinbafrank →
+  loaded with partial historical embeddings at the time. **Both KOLs now fully live with citations.** Browser-verified: qinbafrank →
   in-character macro answer + HOOD candlestick chart + 原文支持 panel showing 3 real cited tweets (CFTC/
   Rothera/world-cup), exactly matching the reference product. Bug lesson: never use env var name `USERNAME`
-  (shell-reserved) — it silently overrode the author guard. Embeddings throttled by Workers AI daily quota
-  (70/720) → lexical retrieval covers it; backfill when quota resets.
+  (shell-reserved) — it silently overrode the author guard. This old embedding/backfill path was removed later.
 - **2026-06-15 (session 1, qinbafrank pass)** — Added qinbafrank as a 2nd KOL. Wrote his persona pack and
   loaded his research room (persona-only) — **live and verified answering in-character**. Tweet-corpus
   backfill blocked: ScrapeBadger returns the wrong account (@aaron) intermittently (~800 credits wasted
@@ -724,9 +747,9 @@ bundle / OpenD. We expose them as additional tools with clear descriptions; the 
   (Apify scrape + persona) — UI already wired with a
   graceful "preparing" state until his corpus loads.
 - **2026-06-15 (session 1, cont.)** — Shipped a working v1. Deployed Worker (D1+KV+Workers AI+Gateway+cron).
-  Built finance service (Tencent quotes/A-HK kline + Yahoo US kline), hybrid RAG, persona injection, SSE
+  Built finance service (Tencent quotes/A-HK kline + Yahoo US kline), hybrid RAG (later replaced by D1 sparse-only), persona injection, SSE
   streaming chat, citations, mobile-first UI with candlestick charts. Loaded aleabitoreddit: 5,857 tweets +
-  201 knowledge chunks, all embedded. Resolved gateway auth via OpenRouter route (deepseek-v4-flash/pro).
+  201 knowledge chunks. Resolved gateway auth via OpenRouter route (deepseek-v4-flash/pro).
   Verified in-character chat end-to-end. Attached custom domains — **www.robindex.ai live**, apex provisioning.
   Remaining: confirm apex; add KOL #2 qinbafrank (needs Apify spend); verify cron run; optional polish.
 - **2026-06-15** — Phase 0 complete. Verified CF token/zones, financial endpoints (quote/kline/minute),

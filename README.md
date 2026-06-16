@@ -1,22 +1,113 @@
-附件信息：
-0）整体大概有点像 Codex 或者 Claude Cowork 或者 Workbuddy 的界面，早期可以 Mobile First，先考虑移动用户的体验；
-1）里面有两位 KOL，https://www.themarketbrew.com/kol/qinbafrank，https://www.themarketbrew.com/kol/aleabitoreddit，他俩的推是https://x.com/qinbafrank，https://x.com/aleabitoreddit，记得取一下他们的头像；
-2）白毛股神的历史推文和X Articles，https://github.com/yan-labs/serenity-aleabitoreddit 在这里有；qinbafrank 的我暂时没找到，可能需要爬，你也可以自己找一下；
-3）需要考虑 Twitter 内容的更新，所以所有的博主数据你抓下来之后都要存到 CF 里，然后每天 CF 在后台跑数据更新一次；
-4）TwitterAPI 是收费的且挺贵的，所以你在取的时候要注意只取增量数据（注意别取漏了），每天更新一次，把所有的 TWITTER 的数据都存在自己的数据库里（要有各种信息比如原文、时间、引用等等），你要把你爬下来的所有推特原文完整存起来，爬下来这些数据不容易都是收费的
-5）Twitter API 先用这个，我充了 10 美元，请在调用的时候检查确实返回的是你想要的数据再获取，否则很快就用完了：<GETXAPI_KEY 已脱敏，存于本地 account.guard.json / Worker secret GETXAPI_KEY>，npx -y @getxapi/mcp@latest，https://www.getxapi.com/
-6）AI 的 GATEWAY 也写到了 json 里，一开始我们就支持两个模型，让用户自己选择使用什么模型来回答：deepseek/deepseek-v4-flash 和 deepseek/deepseek-v4-pro。此外还需要考虑成本问题，缓存命中则便宜，所以在构造 prompt 的时候要把固定不变的放在最前面，比如 KOL 的人设逻辑记忆之类。
-7）之后还得选择支持更多 KOL，你需要考虑每个 KOL 的记忆不能串台，也得考虑多轮对话后 AI 忘记自己的知识和人设的风险，让 AI 能够保持长期记忆稳定和语气稳定，所以：每个 KOL 独立 Persona Pack
-固定保存身份、方法论、语气、禁区、回答格式；每轮都注入，不能靠模型自己记。Persona 不要因为一条新推文就自动修改，建议每周系统自动更新一次。知识层：所有数据强制带 kol_id
-推文、文章、观点和向量索引都必须明确属于哪个 KOL，不能让模型自己决定“应该去哪个人物库搜索”，否则很容易把不同 KOL 的观点混在一起。会话层：一个线程固定绑定一个 KOL多轮记忆：不要无限堆聊天记录。
-8）“蒸馏”一个KOL，除了我希望复刻的“https://www.themarketbrew.com/kol”，目前也有一些开源项目也能借鉴思路，可以直接看一下：https://github.com/muxuuu/serenity-skill 是把它的推蒸馏成了方法；https://github.com/alchaincyf/nuwa-skill 是对任意一个 KOL 的蒸馏通用工具；https://github.com/codeman008/awesome-distillhub-persona-skills 同样也是一个蒸馏器。这里我们都绝对不采用微调模型的方式，而是采用调用 API + 外挂的方式，这样能享受模型升级之后带来的红利。
-9）如果你要画价格曲线和 K 线，请直接用这个：https://benji.org/liveline
-10）用户在问问题的时候经常会问某个 KOL 如“你怎么看 CRCL 现在该不该买”，这个时候你首先需要知道 CRCL 是一个股票，还是个美股，然后还知道它现在的价格、基本面等各种信息。现在的信息怎么拿呢？https://github.com/simonlin1212/global-stock-data 这个是美港股数据包，https://github.com/simonlin1212/a-stock-data 这个是 A 股数据包，westock-data 和 westock-tool 是腾讯自选股的 skill，还有 富途 OpenAPI 交易与行情助手 宏观数据监控技能 腾讯自选股行情数据接口 自然语言通用金融数据搜索服务，通过这些 skill 都可以取出来，优先选后面几个我已经放到目录中的。
+# Robindex
 
-curl https://gateway.ai.cloudflare.com/v1/686bee522c90d03e13ba35077f04ff49/robin/openai/chat/completions \
-  -H 'cf-aig-authorization: Bearer $CF_AIG_TOKEN' \
-  -H 'Content-Type: application/json' \
-  -d '{"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "Hello"}]}'
+Robindex is a Cloudflare-native KOL research assistant. Users ask questions as if they were consulting a specific finance KOL, and the app answers with that KOL's persona, reasoning style, historical source tweets, and live market data.
 
+Production: https://robindex.ai
 
+## Current Architecture
 
+Robindex now uses **D1 original text + sparse retrieval + KOL playbooks**. It does **not** use Vectorize or embedding in the chat path.
+
+| Layer | Current implementation |
+| --- | --- |
+| Frontend | Cloudflare Workers Static Assets, vanilla HTML/CSS/JS |
+| API / SSE chat | Hono Worker in `app/src/index.ts` |
+| Store | Cloudflare D1 `robindex-db` |
+| Raw archive | R2 `robindex-raw` for paid tweet data |
+| Cache | KV `CACHE` for quotes/kline/news-style runtime data |
+| LLM | Cloudflare AI Gateway → `deepseek/deepseek-v4-flash` / `deepseek/deepseek-v4-pro` |
+| Retrieval | D1 sparse retrieval in `app/src/rag.ts`: terms, tickers, priority topics, recency, engagement, local rerank |
+| KOL memory | `persona_pack`, `knowledge_chunks`, weekly stance refresh, bounded conversation summaries |
+| Scheduled jobs | Daily tweet ingest and weekly persona refresh via Cloudflare Cron |
+
+Explicitly removed:
+- No Vectorize binding in `app/wrangler.jsonc`.
+- No `embedding` / `embedded` columns in D1.
+- No `bge-m3`, `embedBatch`, `embedPending`, or vector backfill scripts.
+- Migration: `app/migrations/0002_remove_embeddings.sql`.
+
+## KOLs
+
+| id | Display | Handle | Current corpus |
+| --- | --- | --- | --- |
+| `qinbafrank` | Qinbafrank | `@qinbafrank` | 13,756 original tweets in D1, 2021-10-03 to 2026-06-16 |
+| `aleabitoreddit` | Serenity | `@aleabitoreddit` | 5,935 original tweets in D1, 2025-07-02 to 2026-06-16; 201 distilled knowledge chunks |
+
+Each conversation is bound to one `kol_id`. All tweet, knowledge, message, and sync rows carry a KOL boundary, so personas do not contaminate each other.
+
+## Chat Flow
+
+1. The user sends `{ kol_id, model, conversation_id, message }` to `/api/chat`.
+2. The Worker loads the KOL row and stable `persona_pack`.
+3. It detects tickers/entities and fetches live market data/tools where relevant.
+4. It expands search terms with a small LLM call.
+5. `retrieve()` searches D1 original tweets and knowledge chunks using sparse retrieval only.
+6. The prompt is assembled as stable persona/methodology first, then source tweets, live data, news/tools, bounded history, and user question.
+7. The model streams the final answer via SSE, with citations normalized to `[T#]`.
+8. The frontend renders the answer, chart metadata, and right-side source tweet panel.
+
+## Data Ingest
+
+Tweet data is paid, so the ingest path is conservative:
+
+- Daily cron uses GetXAPI by `twitter_uid` and `sync_state.last_tweet_id`.
+- It strictly validates the returned author before inserting.
+- New tweets are inserted into D1 and archived to R2.
+- No embedding job is triggered; new tweets are searchable immediately through D1 sparse retrieval.
+- Weekly cron distills recent posts into dated stance knowledge and optionally evolves persona packs.
+
+## Important Files
+
+- `app/src/index.ts` — Worker routes, chat SSE, admin APIs, deploy entrypoint
+- `app/src/rag.ts` — D1 sparse retrieval and citation construction
+- `app/src/chat.ts` — prompt assembly, market data gathering, tool phase
+- `app/src/ingest.ts` — daily tweet ingest and weekly persona refresh
+- `app/src/persona-gen.ts` — persona generation/evolution helpers
+- `app/schema.sql` — current no-embedding D1 schema
+- `app/migrations/0002_remove_embeddings.sql` — production migration that removed embedding fields
+- `app/wrangler.jsonc` — Cloudflare Worker config; no Vectorize binding
+
+## Local Checks
+
+```bash
+cd app
+npx tsc --noEmit
+npm run test:dsl
+rg -n "embedding|embedded|VECTORIZE|vectorize|embedBatch|embedPending|indexVectors|bge-m3" src scripts schema.sql wrangler.jsonc package.json public
+```
+
+The final `rg` command should return no runtime-code matches.
+
+## Deploy
+
+Cloudflare auth in this workspace uses the Global API Key from `account.guard.json`, not a bearer API token.
+
+```bash
+cd app
+CLOUDFLARE_API_KEY=$(node -p "require('../account.guard.json').CLOUDFLARE_API_KEY") \
+CLOUDFLARE_EMAIL=$(node -p "require('../account.guard.json').expectedEmail") \
+NODE_OPTIONS='--require ./scripts/cloudflare-dns-patch.cjs' \
+npx wrangler deploy
+```
+
+Latest known deployed Worker version after the no-vector migration:
+
+```text
+ee3941de-5c1c-4f56-9d71-7037f78af800
+```
+
+## Production Smoke
+
+```bash
+curl https://robindex.ai/api/kols
+curl "https://robindex.ai/api/tweets?kol_id=qinbafrank&limit=1"
+curl "https://robindex.ai/api/tweets?kol_id=aleabitoreddit&limit=1"
+```
+
+Admin-only smoke:
+
+```bash
+curl https://robindex.ai/api/admin/stats -H "x-admin-key: $ADMIN_KEY"
+```
+
+Expected shape: tweet totals, non-retweet counts, date ranges, knowledge counts, and `sync_state`; no `emb` field.
