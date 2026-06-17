@@ -842,27 +842,31 @@ app.post("/api/persona-generate", async (c) => {
   if (!adminOk(c)) return c.json({ error: "unauthorized" }, 401);
   const kolId = c.req.query("kol_id");
   if (!kolId) return c.json({ error: "kol_id required" }, 400);
-  try {
-    const { persona_pack, validation } = await generatePersonaPack(c.env, kolId);
-    // Guard: if the generated pack is suspiciously short (< 500 chars), it likely failed.
-    // Keep the existing pack and report the failure without overwriting.
-    if (persona_pack.length < 500) {
-      return c.json({ ok: false, validation, pack_length: persona_pack.length, error: "Generated pack too short — existing pack preserved" });
-    }
-    // Backup current pack before overwriting
-    const current = await c.env.DB.prepare(`SELECT persona_pack, persona_version FROM kols WHERE id=?`).bind(kolId).first<any>();
-    if (current?.persona_pack && current.persona_pack.length > 100) {
-      const backupId = `${kolId}:persona_backup:${new Date().toISOString().slice(0, 10)}:${Date.now()}`;
-      await c.env.DB.prepare(
-        `INSERT OR REPLACE INTO knowledge_chunks (id,kol_id,source,title,text) VALUES (?,?,?,?,?)`
-      ).bind(backupId, kolId, `persona_backup:${current.persona_version || "unknown"}`, `Persona backup ${new Date().toISOString().slice(0, 10)}`, current.persona_pack).run();
-    }
-    await c.env.DB.prepare(`UPDATE kols SET persona_pack=?, persona_version='v1-auto', updated_at=datetime('now') WHERE id=?`)
-      .bind(persona_pack, kolId).run();
-    return c.json({ ok: true, validation, pack_length: persona_pack.length });
-  } catch (e: any) {
-    return c.json({ error: e.message || String(e) }, 500);
-  }
+  // Run generation in background (avoids Worker execution time limit)
+  c.executionCtx.waitUntil(
+    (async () => {
+      try {
+        const { persona_pack, validation } = await generatePersonaPack(c.env, kolId);
+        if (persona_pack.length < 500) {
+          console.log(`persona-gen ${kolId}: pack too short (${persona_pack.length}), keeping existing`);
+          return;
+        }
+        const current = await c.env.DB.prepare(`SELECT persona_pack, persona_version FROM kols WHERE id=?`).bind(kolId).first<any>();
+        if (current?.persona_pack && current.persona_pack.length > 100) {
+          const backupId = `${kolId}:persona_backup:${new Date().toISOString().slice(0, 10)}:${Date.now()}`;
+          await c.env.DB.prepare(
+            `INSERT OR REPLACE INTO knowledge_chunks (id,kol_id,source,title,text) VALUES (?,?,?,?,?)`
+          ).bind(backupId, kolId, `persona_backup:${current.persona_version || "unknown"}`, `Persona backup ${new Date().toISOString().slice(0, 10)}`, current.persona_pack).run();
+        }
+        await c.env.DB.prepare(`UPDATE kols SET persona_pack=?, persona_version='v1-auto', updated_at=datetime('now') WHERE id=?`)
+          .bind(persona_pack, kolId).run();
+        console.log(`persona-gen ${kolId}: success, ${persona_pack.length} chars`);
+      } catch (e) {
+        console.log(`persona-gen ${kolId} error: ${e}`);
+      }
+    })()
+  );
+  return c.json({ ok: true, message: "Generation started in background. Poll GET /api/persona/:kol_id to check." });
 });
 
 app.get("/api/persona/:kol_id", async (c) => {
