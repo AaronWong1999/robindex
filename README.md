@@ -184,4 +184,4 @@ curl "https://robindex.ai/api/tweets?kol_id=qinbafrank&limit=1"
 - `app/src/finance.ts` / `eastmoney-*.ts` / `marketdata.ts` — live market data
 - `app/schema.sql` + `app/migrations/` — D1 schema
 
-See `Plan.md` for the decision history and roadmap (incl. the self-serve KOL marketplace).
+See `Plan.md` for the persona-pipeline runbook, changelog, and roadmap (incl. the self-serve KOL marketplace).

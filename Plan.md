@@ -1,43 +1,13 @@
-# Robindex — Decisions, Runbook & Roadmap
+# Robindex — Persona Pipeline & Roadmap
 
-> Living doc for whoever picks this up. Read `README.md` first (what it is + architecture + how to run).
-> This file is the **why** (decisions), the **persona pipeline runbook** (the one genuinely tricky part),
-> and the **roadmap**. Keep it lean — delete anything no longer true.
+> Read `README.md` first (what it is, architecture, data model, ops, the "why" behind no-vector /
+> query-side / no-fine-tuning). This file holds only what README doesn't: the **persona pipeline runbook**
+> (the one genuinely tricky part), the condensed **changelog**, and the **roadmap**. Keep it lean.
 
-Last updated: 2026-06-18.
+Last updated: 2026-06-18. Live personas: `qinbafrank` = **v2-mapreduce** (full-corpus); `aleabitoreddit`,
+`qinbafrank-tag` on earlier packs.
 
-## 0. Current truth
-
-- Production: `https://robindex.ai`. Cloudflare-only (Worker + D1 + R2 + KV + AI Gateway). No build step.
-- KOLs live: `qinbafrank` (main, 13.7k tweets, **persona = v2-mapreduce, full-corpus**), `aleabitoreddit`
-  (Serenity), `qinbafrank-tag` (tagged A/B control sharing qinbafrank's corpus).
-- Retrieval = **LLM query-plan → SQLite FTS5 (trigram) → LLM rerank**, default query-side-only.
-  **No vectors/embeddings** anywhere (deliberate; do not reintroduce).
-- All LLM calls via **AI Gateway** (`deepseek-v4-flash` cheap path, `-pro` answer/persona). **No fine-tuning.**
-- Persona is distilled from **100% of the corpus** (map-reduce) with an **eval + auto-rollback** loop.
-- Cloudflare auth = **Global API Key** (`CLOUDFLARE_API_KEY` + `CLOUDFLARE_EMAIL`), not a bearer token.
-
-## 1. Key decisions (the "why")
-
-- **No vector DB.** Short, jargon-dense, bilingual finance text retrieves better with full-text + LLM
-  expansion. Pure-vector blurs specialized terms (RRP/SOFR/准备金). FTS5 trigram handles CN+EN.
-- **Query-side-only by default, tagging optional.** Cross-lingual recall is done at query time (planner
-  expands CN↔EN), not by pre-tagging tweets. A new KOL goes searchable in minutes (fetch → store →
-  raw-index, zero LLM). Per-tweet machine tags are an opt-in `tagged` A/B mode only.
-- **No hardcoded dictionaries.** Domain expansion is the planner's job; the reranker is the relevance
-  authority — quality improves automatically as models improve.
-- **No fine-tuning.** Persona is prompt + retrieval only, so we ride model upgrades for free.
-- **Original text is sacred / anti-hallucination in code.** The answer model sees only real tweet text;
-  persona evidence quotes are verified as verbatim substrings and dropped if they don't resolve; analytical
-  exemplars are verbatim tweets selected in code. Citations are clickable; quoted tweets render nested.
-- **Anti-contamination.** Every query scoped `WHERE kol_id=?`; conversation bound to one KOL; persona
-  re-injected each turn (not model memory).
-- **Cost/caching.** Stable prompt prefix first (persona pack + tool SOP in system message) for provider
-  prefix-cache hits; variable content (retrieved tweets, live data, question) last.
-
----
-
-## 2. Persona distillation pipeline (the tricky part — read this before touching it)
+## 1. Persona distillation pipeline (the tricky part — read this before touching it)
 
 **Why map-reduce.** A prolific KOL is ~1.2M tokens of tweets — beyond any context window. The old
 single-call distiller (`persona-gen.ts`) only fit an ~80K-char **recency** window ≈ 3.8% of the corpus, so
@@ -57,7 +27,7 @@ emitting N tokens takes ~N/65 s; near max output it exceeds the limit and the wo
 (nothing persists). `waitUntil` does **not** survive a ~100s call either. What actually works:
 
 1. **Stage + resume everything.** Map and reduce are split into small steps, each one LLM call, persisted
-   as it completes, so a driver calls the endpoint repeatedly and re-runs only skip what's done.
+   as it completes, so a driver calls the endpoint repeatedly and re-running skips what's already done.
 2. **Cap reduce output low** (~4000 group / ~6000 final tokens) so each `pro` call finishes in ~60–85s.
 3. **Drive from the client** (repeated `curl`), not from `waitUntil`.
 
@@ -103,13 +73,13 @@ publish_merged → eval automatically.
 
 ---
 
-## 3. Changelog (condensed, newest first)
+## 2. Changelog (condensed, newest first)
 
 - **Full-corpus map-reduce persona + eval/auto-rollback (2026-06-18):** new `persona-distill.ts` (100% of
   corpus, verbatim-quote verified, staged around the ~100s limit) + `eval.ts` (golden eval, citation/voice/
   stance, regression rollback) + `persona_facts` (migration 0007) + `persona_experiments`/`eval_*`
   (migration 0006). Fixed `buildCorpus` recency-truncation (interleave recent + top-engagement). Made
-  persona fallbacks observable in D1. qinbafrank live on v2-mapreduce. See §2.
+  persona fallbacks observable in D1. qinbafrank live on v2-mapreduce. See §1.
 - **Persona-gen stability (2026-06-18):** typed-error retry ladder; `finish_reason=length` is now a hard
   truncation error (was silently parsed); per-chunk timeout scales with budget; full D1 observability.
 - **KOL persona voice fix (2026-06-17):** system prompt now enables authentic first-person KOL voice
@@ -127,10 +97,10 @@ publish_merged → eval automatically.
 - **Foundation:** Cloudflare scaffold, market-data service, persona injection, SSE chat w/ citations,
   mobile-first UI, two corpora, daily/weekly crons.
 
-## 4. Roadmap / open items
+## 3. Roadmap / open items
 
-- **Productionize the backfill driver** (§2 "Next step") — CF Queue/cron, so onboarding a KOL is one call.
-- **Reconcile qinbafrank merged facts** (§2 "Known cleanup") — re-run `reduce_final`.
+- **Productionize the backfill driver** (§1 "Next step") — CF Queue/cron, so onboarding a KOL is one call.
+- **Reconcile qinbafrank merged facts** (§1 "Known cleanup") — re-run `reduce_final`.
 - **Self-serve KOL marketplace (revenue-share):** submit handle → instant cost quote → pay (Stripe/CF
   Payments) → clone live in minutes (`reindex?mode=raw` + persona distill) → 50/50 end-user revenue split;
   `usage_events` + weekly billing rollup + KOL dashboard.
