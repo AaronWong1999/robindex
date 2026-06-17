@@ -137,24 +137,36 @@ export async function generatePersonaPack(
   env: Env,
   kolId: string
 ): Promise<{ persona_pack: string; persona_json: PersonaJson | null; validation: string[] }> {
-  // 1. Fetch KOL metadata + tweets
+  // 1. Fetch KOL metadata + tweets (recent + high-engagement for better coverage)
   const kol = await env.DB.prepare(
     `SELECT id,display_name,handle,tagline FROM kols WHERE id=?`
   ).bind(kolId).first<any>();
   if (!kol) throw new Error(`KOL not found: ${kolId}`);
 
-  const r = await env.DB.prepare(
-    `SELECT text,created_at_iso,likes,retweets FROM tweets
-     WHERE kol_id=? AND is_retweet=0 ORDER BY created_at_ts DESC LIMIT 500`
-  ).bind(kolId).all();
-  const tweets = (r.results || []) as any[];
+  const [recentR, topR] = await Promise.all([
+    env.DB.prepare(
+      `SELECT text,created_at_iso,likes,retweets FROM tweets
+       WHERE kol_id=? AND is_retweet=0 ORDER BY created_at_ts DESC LIMIT 1000`
+    ).bind(kolId).all(),
+    env.DB.prepare(
+      `SELECT text,created_at_iso,likes,retweets FROM tweets
+       WHERE kol_id=? AND is_retweet=0 ORDER BY (likes + retweets * 2) DESC LIMIT 500`
+    ).bind(kolId).all(),
+  ]);
+  // Merge and dedup by text content
+  const seen = new Set<string>();
+  const tweets: any[] = [];
+  for (const r of [...(recentR.results || []), ...(topR.results || [])] as any[]) {
+    const key = String(r.text || "").slice(0, 80);
+    if (!seen.has(key)) { seen.add(key); tweets.push(r); }
+  }
   if (tweets.length < 10) throw new Error(`Not enough tweets (${tweets.length}) for ${kolId}`);
 
   // 2. Build corpus (chronological, most recent first)
   const corpus = tweets
     .map((t) => `[${(t.created_at_iso || "").slice(0, 10)}] ❤${t.likes} RT${t.retweets} ${t.text}`)
     .join("\n")
-    .slice(0, 30000);
+    .slice(0, 50000);
 
   // 3. Single structured LLM call for multi-dimensional analysis
   const raw = await completeChat(
@@ -167,7 +179,7 @@ export async function generatePersonaPack(
         content: `KOL: ${kol.display_name} (@${kol.handle})${kol.tagline ? ` — ${kol.tagline}` : ""}\n\nTweet corpus (${tweets.length} tweets):\n${corpus}`,
       },
     ],
-    { maxTokens: 6400, temperature: 0.2, timeoutMs: 180000 }
+    { maxTokens: 8192, temperature: 0.2, timeoutMs: 300000 }
   );
 
   // 4. Parse JSON output
@@ -179,7 +191,11 @@ export async function generatePersonaPack(
     // Try to extract JSON from the response
     const match = raw.match(/\{[\s\S]*\}/);
     if (match) {
-      try { pj = JSON.parse(match[0]) as PersonaJson; } catch {}
+      try { pj = JSON.parse(match[0]) as PersonaJson; } catch (e2) {
+        console.log(`persona-gen JSON parse failed (raw length: ${raw.length}, match length: ${match[0].length}): ${e2}`);
+      }
+    } else {
+      console.log(`persona-gen: no JSON found in output (raw length: ${raw.length}), first 200 chars: ${raw.slice(0, 200)}`);
     }
   }
 
