@@ -105,12 +105,21 @@ Live measurement (robindex.ai, "怎么看待 AI 泡沫" question):
 
 Answer quality is strong (15+ cited tweets, structured, on-voice). The fight is **speed**.
 
-Post-deploy measurement after deterministic quick-route guard (robindex.ai,
+Post-deploy measurement from the temporary deterministic quick-route experiment (robindex.ai,
 "怎么看 AI 泡沫？请用 Qinbafrank 的框架回答。"):
 - `meta`: 2.9s, 18 citations, no chart
 - first token: 16.1s
 - done: 40.1s
 - phases: plan → market/retrieval → thinking; **no tool phase**
+- NOTE: the regex-based quick-route guard was removed after review. Route classification must remain
+  LLM-owned; do not maintain prompt-classification word lists.
+
+Three-question production benchmark before deep-route compaction:
+- SPCX 走势: meta 14.7s, first token 108.0s, done 154.7s, 18 citations, chart=false
+- 中际旭创该不该买: meta 20.7s, first token 76.7s, done 101.8s, 18 citations, chart=false
+- AI 泡沫: meta 2.9s, first token 3.2s, done 3.2s, 18 citations
+Follow-up fix kept: compact tool outputs before final-answer prompt, and cap deep tool phase to 1
+round when LLM prefetch already resolved a primary quote. Regex instrument/route hints were removed.
 
 ### A. Latency — backend
 
@@ -120,8 +129,8 @@ Post-deploy measurement after deterministic quick-route guard (robindex.ai,
   - **quick**: viewpoint/opinion/verify/"他怎么看" questions → skip tool phase entirely
   - **deep**: live-price buy/sell timing, fresh news, fundamentals, intraday → run tool phase
 - Default to deep (safe).
-- Added deterministic quick-route guard + 8s planner budget for obvious corpus-only questions, after
-  live testing showed the planner misrouted "怎么看 AI 泡沫" to deep and spent 2 tool rounds.
+- Route classification stays LLM-only. A regex quick-route guard was tested and removed as
+  unsustainable; do not reintroduce prompt-classification keyword lists.
 
 #### A2. Parallel preprocessing (index.ts /api/chat) ✅ DONE
 - `gatherMarketData` and `retrieve` run concurrently via `Promise.all` after plan returns.
@@ -168,7 +177,7 @@ Post-deploy measurement after deterministic quick-route guard (robindex.ai,
 - Add `prefers-reduced-motion` guards on pulse/blink animations.
 
 ### D. Verify & deploy — TODO
-1. `npx tsc --noEmit` + `npm run test:dsl` + `npm run test:prompt` + `npm run test:route` ✅ DONE
+1. `npx tsc --noEmit` + `npm run test:dsl` + `npm run test:prompt` ✅ DONE
 2. Local smoke via curl timing SSE phases — BLOCKED locally by Wrangler remote proxy auth timeout
 3. Commit on branch, deploy via `wrangler deploy` ✅ DONE (version `1967b71d-af05-458b-b2f3-17742d14620b`)
 4. Re-measure live latency ✅ DONE for AI bubble quick-route smoke
@@ -179,9 +188,7 @@ Post-deploy measurement after deterministic quick-route guard (robindex.ai,
 - `app/src/rag.ts` — A3: smaller rerank pool
 - `app/src/tools.ts` — A4: parallel get_quote
 - `app/src/source-format.ts` — quoted context prompt formatting
-- `app/src/route-heuristics.ts` — deterministic quick/deep guardrails
 - `app/scripts/test_prompt_format.mjs` — prompt-format regression test
-- `app/scripts/test_route_heuristics.mjs` — quick/deep routing regression test
 - `app/public/research.js` — B2: phase stepper
 - `app/public/styles.css` — C1-C4: markdown, .tab, light theme, fonts, reduced-motion
 

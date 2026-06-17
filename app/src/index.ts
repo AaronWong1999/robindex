@@ -3,7 +3,6 @@ import type { Env, KolRow } from "./env";
 import { getQuotesCached, getKlineCached, resolveSymbolCached } from "./finance";
 import { retrieve } from "./rag";
 import { planQuery } from "./query-plan";
-import { fallbackQuickPlan, isLikelyCorpusOnlyQuestion } from "./route-heuristics";
 import { indexTweets, indexRawTweets } from "./tagger";
 import { gatherMarketData, buildMessages, maybeUpdateSummary, resolveToolPhase } from "./chat";
 import { getStockNews, getMarketNews } from "./marketdata";
@@ -95,22 +94,6 @@ function createDSLStreamCleaner() {
       return cleanComplete(text);
     },
   };
-}
-
-function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(fallback), ms);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      () => {
-        clearTimeout(timer);
-        resolve(fallback);
-      }
-    );
-  });
 }
 
 app.get("/api/kols", async (c) => {
@@ -352,16 +335,7 @@ app.post("/api/chat", async (c) => {
         // Step 1: LLM query planning — one flash call that ALSO identifies tradable instruments
         // (name + ticker) AND classifies the route (quick = corpus-only, deep = needs live data/tools).
         send("progress", { phase: "plan", text: "正在理解问题、识别标的并规划检索…" });
-        const likelyQuick = isLikelyCorpusOnlyQuestion(body.message);
-        const plan = likelyQuick
-          ? await withTimeout(planQuery(c.env, c.env.MODEL_FLASH, body.message, []), 8000, fallbackQuickPlan(body.message))
-          : await planQuery(c.env, c.env.MODEL_FLASH, body.message, []);
-        if (likelyQuick) {
-          // Deterministic guardrail: the model planner can occasionally label "怎么看/观点/泡沫" questions
-          // as deep and spend tool rounds on news/quotes. These questions are corpus/methodology answers.
-          plan.route = "quick";
-          plan.needs_tools = false;
-        }
+        const plan = await planQuery(c.env, c.env.MODEL_FLASH, body.message, []);
         // Candidates to price-check: the planner's explicit instruments FIRST, then its exact_entities as
         // fallback. flash is often unsure whether a name is tradable (e.g. a just-IPO'd SpaceX→SPCX), so
         // we let the LIVE FEED decide — gatherMarketData keeps only those that return a real quote.
@@ -417,13 +391,14 @@ app.post("/api/chat", async (c) => {
         let toolCalls: { tool: string; args: Record<string, any>; result_summary: string }[] = [];
         if (plan.needs_tools) {
           send("progress", { phase: "tools", text: "正在调用工具获取深度数据…" });
+          const toolRounds = plan.route === "quick" ? 1 : market.primary ? 1 : 2;
           const toolPhase = await resolveToolPhase(c.env, model, messages, (evt) => {
             if (evt.type === "progress") send("progress", { phase: "tools", text: evt.text || "正在分析数据…" });
             if (evt.type === "tool_call") {
               send("progress", { phase: "tools", text: `工具: ${evt.name || "unknown"}` });
               send("tool_call", { name: evt.name || "unknown", args: evt.args || "" });
             }
-          }, plan.route === "quick" ? 1 : 2); // quick-with-tools caps at 1 round; deep gets 2.
+          }, toolRounds);
           toolMsgs = toolPhase.messages;
           toolCalls = toolPhase.toolCalls;
         }

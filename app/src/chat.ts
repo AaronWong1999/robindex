@@ -262,6 +262,19 @@ export interface ToolCallRecord {
   args: Record<string, any>;
   result_summary: string;  // first 200 chars of result
 }
+
+function compactToolOutput(name: string, out: string): string {
+  const text = String(out || "").replace(/\n{3,}/g, "\n\n").trim();
+  const lines = text.split("\n");
+  const maxLines = name === "get_kline" ? 24 : name === "get_news" ? 8 : 28;
+  const maxChars = name === "get_quote" ? 900 : name === "get_news" ? 1400 : 1800;
+  let compact = lines.slice(0, maxLines).join("\n");
+  if (text.length > compact.length || compact.length > maxChars) {
+    compact = compact.slice(0, maxChars).trimEnd() + "\n[truncated for final-answer prompt]";
+  }
+  return compact || text.slice(0, maxChars);
+}
+
 export async function resolveToolPhase(
   env: Env,
   model: string,
@@ -298,15 +311,16 @@ export async function resolveToolPhase(
           name: tc.function?.name || "unknown",
           args: Object.keys(args).join(", "),
         });
-        const out = await executeTool(env, tc.function?.name, args);
-        return { tc, args, out };
+        const name = tc.function?.name || "";
+        const out = await executeTool(env, name, args);
+        return { tc, args, out, compactOut: compactToolOutput(name, out) };
       }));
-      for (const { tc, args, out } of toolResults) {
-        msgs.push({ role: "tool", tool_call_id: tc.id, content: out });
+      for (const { tc, args, compactOut } of toolResults) {
+        msgs.push({ role: "tool", tool_call_id: tc.id, content: compactOut });
         toolCalls.push({
           tool: tc.function?.name || "",
           args,
-          result_summary: out.slice(0, 200),
+          result_summary: compactOut.slice(0, 200),
         });
       }
     }
