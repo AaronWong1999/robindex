@@ -49,6 +49,10 @@ Last updated: 2026-06-17.
   LLM rerank, and the final SOURCE TWEETS prompt. The answer model sees both the KOL's own tweet and
   the quoted context it reacted to, with an explicit guard not to attribute quoted-account words to
   the KOL. This closes a major gap vs TMB for Qinbafrank-style quote-heavy research threads.
+- **Answer posture pass (TMB parity):** Final assistant now applies the KOL's documented framework and
+  cadence without claiming to be the KOL. The answer contract explicitly asks whether the KOL directly
+  mentioned the topic, what is inferred from framework, whether old source views may be stale, and which
+  signals would falsify the view.
 - **Quoted/retweet display.** `tweets.quoted` (migration 0005) + native capture in ingest + `attachQuoted`
   (stored-or-self-quote-link fallback) + nested render in the 原文支持 panel + budget-safe
   `/api/admin/refetch-quotes`. ~97% of qinbafrank tweets are quote-tweets; recent window backfilled cheap.
@@ -205,4 +209,6 @@ the wider 30/18 evidence budget.
 - Rerank remains the relevance authority (just smaller pool).
 - Quick route still retrieves + cites; only the tool phase is conditionally skipped.
 - If `route` classification fails, default to `deep` (safe).
+- The answer model should not impersonate the KOL or invent alternate spellings of the KOL name; it should
+  apply the documented framework, cite source tweets, and separate direct support from inference.
 - No schema/DB migration needed. No model change.

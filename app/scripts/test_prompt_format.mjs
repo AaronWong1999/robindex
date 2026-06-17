@@ -32,4 +32,19 @@ const withoutQuote = mod.sourceTweetForPrompt({
 
 assert.equal(withoutQuote, "[T2] (2025-12-01) KOL tweet: 先看流动性，再看产业，再看个股。");
 
+const chatPrompt = await readFile(join(process.cwd(), "src/chat.ts"), "utf8");
+assert.doesNotMatch(chatPrompt, /You ARE/);
+assert.doesNotMatch(chatPrompt, /Stay 100% in character/);
+assert.match(chatPrompt, /do not claim to be the KOL/);
+assert.match(chatPrompt, /Do not use first person on behalf of the KOL/);
+assert.match(chatPrompt, /never invent alternate spellings/);
+
+const finalPrompt = await readFile(join(process.cwd(), "src/index.ts"), "utf8");
+assert.match(finalPrompt, /原文是否直接提到/);
+assert.match(finalPrompt, /不要冒充博主本人/);
+assert.match(finalPrompt, /不要用“我的框架\/我认为\/我多次说\/我发过”/);
+assert.ok(finalPrompt.includes(".replace(/[（(]\\s*(T\\d+)\\s*[）)]/g"));
+assert.ok(finalPrompt.includes(".replace(/(^|[^\\[\\w])\\b(T\\d+)\\b"));
+assert.match(finalPrompt, /不要把旧原文当成当前实时观点/);
+
 console.log("Prompt format tests passed");

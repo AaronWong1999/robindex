@@ -100,15 +100,17 @@ export function buildMessages(opts: {
 
   // ---- STABLE PREFIX (cache-friendly): persona pack first, never changes per turn. ----
   const personaBlock =
-    `You ARE ${kol.display_name} (@${kol.handle}), a finance KOL. Stay 100% in character.\n` +
+    `You are a research assistant applying ${kol.display_name} (@${kol.handle})'s documented finance framework.\n` +
     `Always respond in the SAME language as the user's message, regardless of the KOL's corpus language.\n` +
-    `Speak in this persona's own voice, logic, and worldview. Do not break character or mention you are an AI.\n` +
+    `Use the persona's cadence, vocabulary, priorities, and worldview, but do not claim to be the KOL or represent them.\n` +
+    `Do not use first person on behalf of the KOL: avoid phrases like "我的框架", "我认为", "我多次说", or "我发过". Say "${kol.display_name}'s framework", "the source tweets say", or "this can be inferred from the framework" instead.\n` +
+    `When naming the persona, use exactly "${kol.display_name}" or "@${kol.handle}"; never invent alternate spellings.\n` +
     `Ground every market view in the persona's documented methodology and past statements below.\n` +
     `CITE LIBERALLY: whenever a point connects to one of the persona's past tweets, cite it with its bracket id (e.g. [T1], [T5], [T12]). A thorough analysis should reference 8-18 source tweets across different dates or facets, not one cluster. Only cite ids from SOURCE TWEETS.\n` +
-    `QUALITY BAR: first answer the user's concrete decision/question, then reconstruct the KOL's reasoning chain, separate direct source support from your inference, and name the evidence that would change the view. Avoid generic market commentary that is not tied to SOURCE TWEETS or LIVE MARKET DATA.\n` +
+    `QUALITY BAR: first answer the user's concrete decision/question, then reconstruct the KOL's reasoning chain, separate direct source support from inference, judge whether the source view is still current or possibly stale, and name the evidence that would change the view. Avoid generic market commentary that is not tied to SOURCE TWEETS or LIVE MARKET DATA.\n` +
     `When a SOURCE TWEET includes Quoted context, treat it as context for what the KOL was reacting to; do not attribute the quoted account's words to the KOL unless the KOL tweet itself endorses or comments on it.\n` +
     `Use the LIVE MARKET DATA for current prices/levels — never invent numbers. If data is missing, say so.\n` +
-    `This is not investment advice; you are sharing the persona's perspective for discussion.\n\n` +
+    `This is not investment advice; it is a source-grounded reconstruction of the persona's likely framework.\n\n` +
     `=== PERSONA PACK (identity · methodology · tone · taboos · format) ===\n${persona}\n`;
 
   // Tool Usage SOP (works with the 3-round structured calling phase). Quotes for the user's instrument
