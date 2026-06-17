@@ -296,24 +296,15 @@ async function llmRerank(
   question: string,
   plan: QueryPlan,
   cands: { id: string; date: string; text: string }[],
-  keep: number
+  keep: number,
+  snippetChars = 140
 ): Promise<string[]> {
   if (cands.length <= 1) return cands.map((c) => c.id);
   const list = cands
-    .map((c, i) => `${i}\t(${c.date})\t${String(c.text || "").replace(/\s+/g, " ").slice(0, 160)}`)
+    .map((c, i) => `${i}\t(${c.date})\t${String(c.text || "").replace(/\s+/g, " ").slice(0, snippetChars)}`)
     .join("\n");
   const sys =
-    "You are the relevance authority selecting which of a finance KOL's past tweets best let us answer " +
-    "this question AS that KOL. Pick the set a sharp analyst would actually cite. Judge each candidate on:\n" +
-    "1. SPECIFICITY to the exact subject asked — a tweet whose MAIN topic is the asked subject beats a long " +
-    "market-recap that only mentions it in passing. Penalize tangential/omnibus tweets.\n" +
-    "2. It expresses the KOL's OWN view/framework/methodology, not just relayed news.\n" +
-    "3. COVERAGE as a set: prefer a spread that covers the question's facets and the named ecosystem " +
-    "(e.g. for a stock: the company itself, comparable names it discusses, the buy/sell-timing logic, the " +
-    "risks/打脸 conditions) over near-duplicates of the same point.\n" +
-    "4. Concrete substance (specific data/orders/levels/mechanisms) over vague commentary.\n" +
-    "Do NOT favor a tweet merely for being recent: the KOL's defining framework tweets are often older and " +
-    "are exactly what we want, applied to now. Rank relevance + own-view + coverage far above recency.\n" +
+    "Select finance-KOL tweets to cite for answering AS that KOL. Prefer exact subject match, the KOL's own view/framework, facet coverage, and concrete mechanisms/data. Penalize tangential recaps, relayed news, near-duplicates, and pure recency.\n" +
     `Return ONLY a JSON array of the best candidate indices, best first, at most ${keep} items. No markdown.`;
   const usr =
     `User question: ${question}\n` +
@@ -324,7 +315,7 @@ async function llmRerank(
     const raw = await completeChat(env, model, [
       { role: "system", content: sys },
       { role: "user", content: usr },
-    ], { maxTokens: 220, temperature: 0.1 });
+    ], { maxTokens: Math.max(120, keep * 7), temperature: 0.1 });
     const arr = JSON.parse(raw.match(/\[[\s\S]*\]/)?.[0] || "[]");
     if (!Array.isArray(arr)) return [];
     const order: string[] = [];
@@ -466,7 +457,10 @@ export async function retrieve(
   // Step 3: the LLM reranker is the authority on relevance (semantic judgment the lexical blend can't
   // make). The blend only builds the candidate POOL; the reranker selects + orders the final set. If
   // the reranker fails, we fall back to the blend order (which is FTS-led, so still sensible).
-  const POOL = 30;
+  const isQuick = p.route === "quick" && !p.needs_tools;
+  const POOL = isQuick ? 18 : 30;
+  const KEEP = isQuick ? 14 : 18;
+  const RERANK_SNIPPET = isQuick ? 110 : 140;
   const pool = scored.slice(0, POOL);
   const order = await llmRerank(
     env,
@@ -474,7 +468,8 @@ export async function retrieve(
     query,
     p,
     pool.map((x) => ({ id: String(x.r.id), date: (x.r.created_at_iso || "").slice(0, 10), text: rowTextWithQuote(x.r) })),
-    18
+    KEEP,
+    RERANK_SNIPPET
   );
   if (order.length) {
     const rank = new Map(order.map((id, i) => [id, i]));
@@ -490,7 +485,7 @@ export async function retrieve(
   for (const x of scored) {
     if (deduped.some((d) => textSimilarity(d.r.text, x.r.text) > DEDUP_COSINE_THRESHOLD)) continue;
     deduped.push(x);
-    if (deduped.length >= 18) break;
+    if (deduped.length >= KEEP) break;
   }
   const citations: Citation[] = deduped.map((x, i) => ({
     ref: `T${i + 1}`,

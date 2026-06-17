@@ -120,6 +120,12 @@ Three-question production benchmark before deep-route compaction:
 - AI 泡沫: meta 2.9s, first token 3.2s, done 3.2s, 18 citations
 Follow-up fix kept: compact tool outputs before final-answer prompt, and cap deep tool phase to 1
 round when LLM prefetch already resolved a primary quote. Regex instrument/route hints were removed.
+Current LLM-only planner optimization: compacted the planner system prompt and reduced planner output
+budget (500→360 max tokens). This keeps routing/term expansion owned by the LLM while reducing planner
+latency and prompt-cache pressure.
+Follow-up LLM-owned speed optimization: quick-route retrieval still uses the LLM reranker, but with a
+smaller candidate pool and citation cap (18→14) plus shorter candidate snippets. Deep-route questions keep
+the wider 30/18 evidence budget.
 
 ### A. Latency — backend
 
@@ -131,6 +137,8 @@ round when LLM prefetch already resolved a primary quote. Regex instrument/route
 - Default to deep (safe).
 - Route classification stays LLM-only. A regex quick-route guard was tested and removed as
   unsustainable; do not reintroduce prompt-classification keyword lists.
+- Planner prompt was compacted; no local keyword classifier was added.
+- Retrieval rerank budgets can depend on the LLM planner's `route`, but not on local keyword/regex lists.
 
 #### A2. Parallel preprocessing (index.ts /api/chat) ✅ DONE
 - `gatherMarketData` and `retrieve` run concurrently via `Promise.all` after plan returns.

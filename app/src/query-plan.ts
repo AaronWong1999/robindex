@@ -43,46 +43,15 @@ export const EMPTY_PLAN: QueryPlan = {
 };
 
 const PLAN_SYS =
-  "You are the retrieval brain of a finance-KOL research assistant. The KOL's past tweets are stored " +
-  "as ORIGINAL TEXT and searched with a substring full-text index — there is NO semantic/vector layer, " +
-  "so a tweet is only found if the search terms literally appear in it. Your job: expand the user's " +
-  "question into the actual WORDS that a relevant tweet would contain, in BOTH Chinese and English " +
-  "(the corpus mixes the two). This bilingual expansion is the ONLY thing bridging language — do it well.\n\n" +
-  "Think: 'If the KOL had written about this, what exact words/tickers/phrases would be in that tweet?' " +
-  "Then output ONLY this JSON object (no markdown):\n" +
-  "{\n" +
-  '  "intent": "<one line: what kind of past view we are looking for>",\n' +
-  '  "route": "quick" | "deep",\n' +
-  '  "needs_tools": true | false,\n' +
-  '  "instruments": [{"name":"<as written>","ticker":"<real ticker e.g. SOXL/NVDA/00700/600519/BTC>","market":"us|hk|a|crypto|unknown"}],\n' +
-  '  "exact_entities": ["<named tickers/companies/people/products — keep tight & literal>"],\n' +
-  '  "aliases": ["<every alternate surface form: CN name, EN name, ticker, abbreviation, codename, common misspelling — e.g. 英伟达, NVDA, Nvidia, 老黄>"],\n' +
-  '  "concepts": ["<the ideas/themes as words that would actually appear in a tweet, each given in BOTH 中文 AND English, prefer 3+ char terms, include domain jargon>"],\n' +
-  '  "related_entities": [{"name":"<adjacent ticker/person/product likely co-mentioned>","weight":0.0-1.0}],\n' +
-  '  "required_stances": ["<attitude words to look for: 看多 看空 支持 质疑 担忧 评价 ...>"],\n' +
-  '  "exclude_topics": ["<topics that would be off-target>"]\n' +
-  "}\n\n" +
-  "Rules:\n" +
-  "- For EVERY concept and entity, give BOTH a Chinese and an English surface form (e.g. 流动性/liquidity, " +
-  "准备金/bank reserves, 快速迭代/rapid iteration, 火星殖民/Mars colonization, 钱荒/liquidity squeeze).\n" +
-  "- Prefer the words the KOL would really type (tickers, $cashtags, jargon, slang) over textbook phrasing.\n" +
-  "- Be generous on aliases & concepts (recall is won here); keep exact_entities literal and tight.\n" +
-  "- Expand to the CONCRETE, mechanism-level vocabulary a domain expert would actually type (the specific " +
-  "metrics, programs, codenames, products, jargon — in BOTH 中文 and English), not just the surface words " +
-  "from the question. Think about which exact words a relevant tweet would contain.\n" +
-  "- COVER THE ECOSYSTEM: include the closely-linked names the KOL discusses alongside the subject " +
-  "(related/competitor tickers, key people, sub-products) in related_entities and aliases.\n" +
-  "- instruments: only genuinely tradable things; give the real ticker, leave it empty if unsure (never guess wildly).\n\n" +
-  "ROUTE CLASSIFICATION (critical for speed — this decides whether we spend extra seconds on live data):\n" +
-  'Set route="quick" and needs_tools=false when the answer lives in the KOL\'s CORPUS/methodology and does NOT ' +
-  "depend on fresh live data — e.g. asking the persona's view/opinion/framework on a company/sector/theme " +
-  "(他怎么看 / 怎么看 X / 怎么看 AI 泡沫), verifying a past stance (验证观点), definitional or framework " +
-  "questions, '他的逻辑是', '为什么', comparing the persona's positions. These are answered from past tweets.\n" +
-  'Set route="deep" and needs_tools=true ONLY when the user explicitly wants CURRENT actionable data the ' +
-  "corpus cannot supply: live price / 现在 / 今天 / 现在 该不该买 / 该不该抄底 / 现价, intraday or recent " +
-  "K-line/走势/技术面, fresh news/事件/利好利空/政策, fundamentals/财务/估值/财报/PE, multi-name live " +
-  "comparison, market-wide ranking/资金流/龙虎榜/板块. When unsure, prefer quick (the pre-fetched quote for " +
-  "any named instrument is still injected for context).";
+  "You plan retrieval for a finance-KOL assistant. Tweets are searched by literal original text, no vectors. " +
+  "Expand the question into the exact Chinese/English words, tickers, aliases, jargon, products, people, and mechanisms a relevant tweet would contain. " +
+  "Output ONLY compact JSON with this shape:\n" +
+  '{"intent":"","route":"quick|deep","needs_tools":false,"instruments":[{"name":"","ticker":"","market":"us|hk|a|crypto|unknown"}],"exact_entities":[],"aliases":[],"concepts":[],"related_entities":[{"name":"","weight":0.4}],"required_stances":[],"exclude_topics":[]}\n' +
+  "Keep arrays tight but recall-oriented: exact_entities literal; aliases/concepts bilingual; related_entities adjacent names the KOL likely co-mentions. " +
+  "instruments are only tradable things; use real tickers when confident.\n" +
+  "Route is LLM-owned: quick/needs_tools=false for corpus methodology, past stance, viewpoint, framework, why/how, verification, bubble/theme questions. " +
+  "deep/needs_tools=true for current actionable data: live price, today/now buy-sell timing, K-line/trend/technical, fresh news/events, fundamentals, valuation/financials, market ranking/fund flow. " +
+  "When unsure, prefer quick; named instruments still get prefetched live quote context outside tools.";
 
 function strArr(v: any, max = 16): string[] {
   if (!Array.isArray(v)) return [];
@@ -106,7 +75,7 @@ export async function planQuery(
         { role: "system", content: PLAN_SYS },
         { role: "user", content: usr },
       ],
-      { maxTokens: 500, temperature: 0.2 }
+      { maxTokens: 360, temperature: 0.2 }
     );
     const obj = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || "{}");
     const related: RelatedEntity[] = Array.isArray(obj.related_entities)
