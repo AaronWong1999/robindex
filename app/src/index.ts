@@ -842,31 +842,24 @@ app.post("/api/persona-generate", async (c) => {
   if (!adminOk(c)) return c.json({ error: "unauthorized" }, 401);
   const kolId = c.req.query("kol_id");
   if (!kolId) return c.json({ error: "kol_id required" }, 400);
-  // Run generation in background (avoids Worker execution time limit)
-  c.executionCtx.waitUntil(
-    (async () => {
-      try {
-        const { persona_pack, validation } = await generatePersonaPack(c.env, kolId);
-        if (persona_pack.length < 500) {
-          console.log(`persona-gen ${kolId}: pack too short (${persona_pack.length}), keeping existing`);
-          return;
-        }
-        const current = await c.env.DB.prepare(`SELECT persona_pack, persona_version FROM kols WHERE id=?`).bind(kolId).first<any>();
-        if (current?.persona_pack && current.persona_pack.length > 100) {
-          const backupId = `${kolId}:persona_backup:${new Date().toISOString().slice(0, 10)}:${Date.now()}`;
-          await c.env.DB.prepare(
-            `INSERT OR REPLACE INTO knowledge_chunks (id,kol_id,source,title,text) VALUES (?,?,?,?,?)`
-          ).bind(backupId, kolId, `persona_backup:${current.persona_version || "unknown"}`, `Persona backup ${new Date().toISOString().slice(0, 10)}`, current.persona_pack).run();
-        }
-        await c.env.DB.prepare(`UPDATE kols SET persona_pack=?, persona_version='v1-auto', updated_at=datetime('now') WHERE id=?`)
-          .bind(persona_pack, kolId).run();
-        console.log(`persona-gen ${kolId}: success, ${persona_pack.length} chars`);
-      } catch (e) {
-        console.log(`persona-gen ${kolId} error: ${e}`);
-      }
-    })()
-  );
-  return c.json({ ok: true, message: "Generation started in background. Poll GET /api/persona/:kol_id to check." });
+  try {
+    const { persona_pack, validation } = await generatePersonaPack(c.env, kolId);
+    if (persona_pack.length < 500) {
+      return c.json({ ok: false, validation, pack_length: persona_pack.length, error: "Generated pack too short — existing pack preserved" });
+    }
+    const current = await c.env.DB.prepare(`SELECT persona_pack, persona_version FROM kols WHERE id=?`).bind(kolId).first<any>();
+    if (current?.persona_pack && current.persona_pack.length > 100) {
+      const backupId = `${kolId}:persona_backup:${new Date().toISOString().slice(0, 10)}:${Date.now()}`;
+      await c.env.DB.prepare(
+        `INSERT OR REPLACE INTO knowledge_chunks (id,kol_id,source,title,text) VALUES (?,?,?,?,?)`
+      ).bind(backupId, kolId, `persona_backup:${current.persona_version || "unknown"}`, `Persona backup ${new Date().toISOString().slice(0, 10)}`, current.persona_pack).run();
+    }
+    await c.env.DB.prepare(`UPDATE kols SET persona_pack=?, persona_version='v1-auto', updated_at=datetime('now') WHERE id=?`)
+      .bind(persona_pack, kolId).run();
+    return c.json({ ok: true, validation, pack_length: persona_pack.length });
+  } catch (e: any) {
+    return c.json({ error: e.message || String(e) }, 500);
+  }
 });
 
 app.get("/api/persona/:kol_id", async (c) => {
@@ -937,6 +930,38 @@ for (const [route, file] of Object.entries(PAGE_ROUTES)) {
     return c.env.ASSETS.fetch(new Request(url, c.req.raw));
   });
 }
+
+// ---- Diagnostic: test pro model connectivity ----
+app.get("/api/admin/model-test", async (c) => {
+  if (!adminOk(c)) return c.json({ error: "unauthorized" }, 401);
+  const kolId = c.req.query("kol_id") || "aleabitoreddit";
+  const debug = await c.env.CACHE.get(`persona_debug:${kolId}`);
+  const start = Date.now();
+  try {
+    const res = await fetch(c.env.GATEWAY_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "cf-aig-authorization": `Bearer ${c.env.CFGATEWAYKEY}`,
+        ...(c.env.OPENROUTER_KEY ? { Authorization: `Bearer ${c.env.OPENROUTER_KEY}` } : {}),
+        "HTTP-Referer": "https://robindex.ai",
+        "X-Title": "Robindex",
+      },
+      body: JSON.stringify({
+        model: c.env.MODEL_PRO,
+        messages: [{ role: "user", content: "Say hello in exactly 3 words." }],
+        temperature: 0.1,
+        max_tokens: 20,
+      }),
+    });
+    const elapsed = Date.now() - start;
+    if (!res.ok) return c.json({ error: `HTTP ${res.status}`, elapsed });
+    const j: any = await res.json();
+    return c.json({ ok: true, elapsed, model: c.env.MODEL_PRO, response: j?.choices?.[0]?.message?.content || "", persona_debug: debug });
+  } catch (e: any) {
+    return c.json({ error: String(e), elapsed: Date.now() - start });
+  }
+});
 
 // Static assets fallback (SPA).
 app.get("*", (c) => c.env.ASSETS.fetch(c.req.raw));

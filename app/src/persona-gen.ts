@@ -168,19 +168,64 @@ export async function generatePersonaPack(
     .join("\n")
     .slice(0, 80000);
 
-  // 3. Single structured LLM call for multi-dimensional analysis
-  const raw = await completeChat(
-    env,
-    env.MODEL_PRO,
-    [
-      { role: "system", content: DISTILL_SYSTEM },
-      {
-        role: "user",
-        content: `KOL: ${kol.display_name} (@${kol.handle})${kol.tagline ? ` — ${kol.tagline}` : ""}\n\nTweet corpus (${tweets.length} tweets):\n${corpus}`,
+  // 3. Single structured LLM call for multi-dimensional analysis (direct fetch with debug logging)
+  const messages = [
+    { role: "system", content: DISTILL_SYSTEM },
+    { role: "user", content: `KOL: ${kol.display_name} (@${kol.handle})${kol.tagline ? ` — ${kol.tagline}` : ""}\n\nTweet corpus (${tweets.length} tweets):\n${corpus}` },
+  ];
+  let raw = "";
+  try {
+    if (env.CACHE) await env.CACHE.put(`persona_debug:${kolId}`, `BEFORE_FETCH: corpus=${corpus.length} chars, msgs=${messages.length} at ${new Date().toISOString()}`, { expirationTtl: 3600 });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 600000);
+    const res = await fetch(env.GATEWAY_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "cf-aig-authorization": `Bearer ${env.CFGATEWAYKEY}`,
+        "cf-aig-request-timeout": "600000",
+        ...(env.OPENROUTER_KEY ? { Authorization: `Bearer ${env.OPENROUTER_KEY}` } : {}),
+        "HTTP-Referer": "https://robindex.ai",
+        "X-Title": "Robindex",
       },
-    ],
-    { maxTokens: 16384, temperature: 0.2, timeoutMs: 600000 }
-  );
+      body: JSON.stringify({ model: env.MODEL_PRO, messages, temperature: 0.2, max_tokens: 32768 }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (env.CACHE) await env.CACHE.put(`persona_debug:${kolId}`, `FETCH_RETURNED: status=${res.status} at ${new Date().toISOString()}`, { expirationTtl: 3600 });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      if (env.CACHE) await env.CACHE.put(`persona_debug:${kolId}`, `HTTP ${res.status}: ${errText.slice(0, 500)}`, { expirationTtl: 3600 });
+      throw new Error(`HTTP ${res.status}`);
+    }
+    // Read body via streaming with timeout — AI Gateway may keep connection open
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let bodyText = "";
+    const bodyStart = Date.now();
+    while (true) {
+      const readPromise = reader.read();
+      const timeoutPromise = new Promise<{ done: boolean; value?: Uint8Array }>((_, reject) =>
+        setTimeout(() => reject(new Error("body_read_timeout")), 120000)
+      );
+      try {
+        const { done, value } = await Promise.race([readPromise, timeoutPromise]);
+        if (done) break;
+        bodyText += decoder.decode(value, { stream: true });
+      } catch {
+        if (env.CACHE) await env.CACHE.put(`persona_debug:${kolId}`, `BODY_READ_TIMEOUT: got ${bodyText.length} chars after ${Date.now() - bodyStart}ms`, { expirationTtl: 3600 });
+        break;
+      }
+    }
+    if (env.CACHE) await env.CACHE.put(`persona_debug:${kolId}`, `BODY: ${bodyText.length} chars in ${Date.now() - bodyStart}ms at ${new Date().toISOString()}`, { expirationTtl: 3600 });
+    const j: any = JSON.parse(bodyText);
+    raw = j?.choices?.[0]?.message?.content || "";
+    const finishReason = j?.choices?.[0]?.finish_reason || "unknown";
+    if (env.CACHE) await env.CACHE.put(`persona_debug:${kolId}`, `PARSED: raw=${raw.length} chars, finish=${finishReason} at ${new Date().toISOString()}`, { expirationTtl: 3600 });
+  } catch (e: any) {
+    if (env.CACHE) await env.CACHE.put(`persona_debug:${kolId}`, `ERROR: ${String(e).slice(0, 500)}`, { expirationTtl: 3600 });
+    raw = "";
+  }
 
   // 4. Parse JSON output
   let pj: PersonaJson | null = null;
