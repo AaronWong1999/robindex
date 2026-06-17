@@ -167,7 +167,7 @@ export async function generatePersonaPack(
         content: `KOL: ${kol.display_name} (@${kol.handle})${kol.tagline ? ` — ${kol.tagline}` : ""}\n\nTweet corpus (${tweets.length} tweets):\n${corpus}`,
       },
     ],
-    { maxTokens: 4800, temperature: 0.2 }
+    { maxTokens: 6400, temperature: 0.2, timeoutMs: 180000 }
   );
 
   // 4. Parse JSON output

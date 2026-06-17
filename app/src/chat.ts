@@ -293,9 +293,11 @@ export async function completeChat(
   env: Env,
   model: string,
   messages: { role: string; content: string }[],
-  opts: { temperature?: number; maxTokens?: number } = {}
+  opts: { temperature?: number; maxTokens?: number; timeoutMs?: number } = {}
 ): Promise<string> {
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), opts.timeoutMs ?? 60000);
     const res = await fetch(env.GATEWAY_URL, {
       method: "POST",
       headers: gatewayHeaders(env),
@@ -305,7 +307,9 @@ export async function completeChat(
         temperature: opts.temperature ?? 0.3,
         max_tokens: opts.maxTokens ?? 600,
       }),
+      signal: controller.signal,
     });
+    clearTimeout(timeout);
     if (!res.ok) return "";
     const j: any = await res.json().catch(() => null);
     return j?.choices?.[0]?.message?.content || "";
