@@ -3,6 +3,7 @@ import type { Env, KolRow } from "./env";
 import { getQuotesCached, getKlineCached, resolveSymbolCached } from "./finance";
 import { retrieve } from "./rag";
 import { planQuery } from "./query-plan";
+import { fallbackQuickPlan, isLikelyCorpusOnlyQuestion } from "./route-heuristics";
 import { indexTweets, indexRawTweets } from "./tagger";
 import { gatherMarketData, buildMessages, maybeUpdateSummary, resolveToolPhase } from "./chat";
 import { getStockNews, getMarketNews } from "./marketdata";
@@ -94,6 +95,22 @@ function createDSLStreamCleaner() {
       return cleanComplete(text);
     },
   };
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(fallback), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(fallback);
+      }
+    );
+  });
 }
 
 app.get("/api/kols", async (c) => {
@@ -333,10 +350,18 @@ app.post("/api/chat", async (c) => {
 
       try {
         // Step 1: LLM query planning — one flash call that ALSO identifies tradable instruments
-        // (name + ticker). We run it first so the market-data fetch can use the planner's instruments
-        // (validated against the live feed) instead of relying only on the cashtag/dict fast-path.
-        send("progress", { phase: "rag", text: "正在理解问题、识别标的并规划检索…" });
-        const plan = await planQuery(c.env, c.env.MODEL_FLASH, body.message, []);
+        // (name + ticker) AND classifies the route (quick = corpus-only, deep = needs live data/tools).
+        send("progress", { phase: "plan", text: "正在理解问题、识别标的并规划检索…" });
+        const likelyQuick = isLikelyCorpusOnlyQuestion(body.message);
+        const plan = likelyQuick
+          ? await withTimeout(planQuery(c.env, c.env.MODEL_FLASH, body.message, []), 8000, fallbackQuickPlan(body.message))
+          : await planQuery(c.env, c.env.MODEL_FLASH, body.message, []);
+        if (likelyQuick) {
+          // Deterministic guardrail: the model planner can occasionally label "怎么看/观点/泡沫" questions
+          // as deep and spend tool rounds on news/quotes. These questions are corpus/methodology answers.
+          plan.route = "quick";
+          plan.needs_tools = false;
+        }
         // Candidates to price-check: the planner's explicit instruments FIRST, then its exact_entities as
         // fallback. flash is often unsure whether a name is tradable (e.g. a just-IPO'd SpaceX→SPCX), so
         // we let the LIVE FEED decide — gatherMarketData keeps only those that return a real quote.
@@ -345,21 +370,25 @@ app.post("/api/chat", async (c) => {
           ...plan.exact_entities,
         ]));
 
-        // Step 2: Market data — resolve the planner's instruments against the live feed, then quote/K-line/news.
-        send("progress", { phase: "market", text: "正在获取实时行情与新闻…" });
-        const market = await gatherMarketData(c.env, body.message, { extraInstruments: plannedInstruments });
+        // Step 2 + 3 run CONCURRENTLY: market-data fetch and tweet retrieval+rerank are independent once we
+        // have the planner's instruments. (Previously serial, which cost ~15-20s.) They share no state.
+        send("progress", { phase: "market", text: "正在并行获取行情与检索原文…" });
+        const [market, retrieved] = await Promise.all([
+          gatherMarketData(c.env, body.message, { extraInstruments: plannedInstruments }),
+          (async () => {
+            const mode = (kol.retrieval_mode === "tagged" ? "tagged" : "query_side") as "tagged" | "query_side";
+            // Pass the planner's instrument guesses (validated tickers aren't resolved yet — market-data
+            // runs concurrently); retrieve also tokenizes the raw query for ticker-ish terms. The planner's
+            // exact_entities (which already contain these guesses) drive the FTS routes.
+            return retrieve(
+              c.env, kol.id, kol.handle, body.message, plannedInstruments, plan, c.env.MODEL_FLASH, mode, kol.corpus_id || kol.id
+            );
+          })(),
+        ]);
         const tickers = market.quotes.map((q) => q.symbol);
-        // Fold the validated tickers back into the plan so retrieval routes match them too.
+        // Fold the validated tickers back into the plan so any downstream consumer matches them too.
         for (const t of tickers) if (t && !plan.exact_entities.includes(t)) plan.exact_entities.push(t);
-
-        // Step 3: retrieval + LLM rerank. Default mode is query-side-only (bilingual planner terms vs
-        // original text); a 'tagged' KOL (A/B control) instead weights the machine tag columns. corpus_id
-        // lets a control reuse another KOL's tweets. Real original text only ever reaches the model.
-        send("progress", { phase: "rag", text: "正在检索并重排相关历史原文…" });
-        const mode = (kol.retrieval_mode === "tagged" ? "tagged" : "query_side") as "tagged" | "query_side";
-        const { citations, knowledge } = await retrieve(
-          c.env, kol.id, kol.handle, body.message, tickers, plan, c.env.MODEL_FLASH, mode, kol.corpus_id || kol.id
-        );
+        const { citations, knowledge } = retrieved;
 
         const messages = buildMessages({
           kol,
@@ -373,17 +402,31 @@ app.post("/api/chat", async (c) => {
           toolMemory: prevToolCalls.length ? prevToolCalls.slice(0, 8).join("\n") : undefined,
         });
 
-        // Step 4: Tool phase (shared helper, best effort)
-        send("progress", { phase: "tools", text: "正在调用工具获取深度数据…" });
-        const toolPhase = await resolveToolPhase(c.env, model, messages, (evt) => {
-          if (evt.type === "progress") send("progress", { phase: "tools", text: evt.text || "正在分析数据…" });
-          if (evt.type === "tool_call") {
-            send("progress", { phase: "tools", text: `工具: ${evt.name || "unknown"}` });
-            send("tool_call", { name: evt.name || "unknown", args: evt.args || "" });
-          }
+        // Send meta (citations + chart info) EARLY — right after retrieval, before the (optional) tool
+        // phase. This populates the right-side 原文支持 panel while the answer streams, dramatically
+        // improving perceived latency. (Previously meta was sent after the ~35s tool phase.)
+        send("meta", {
+          citations,
+          chart: market.primary ? { code: market.primary.code, symbol: market.primary.symbol, market: market.primary.market } : null,
         });
-        const toolMsgs: any[] = toolPhase.messages;
-        const toolCalls = toolPhase.toolCalls;
+
+        // Step 4: Tool phase — ONLY when the planner flagged needs_tools (route=deep). The quick route
+        // (viewpoint/framework/verify questions) is answered from the corpus + the pre-fetched quote/kline
+        // already injected into LIVE MARKET DATA, so we skip the tool LLM rounds entirely (saves ~35s).
+        let toolMsgs: any[] = messages;
+        let toolCalls: { tool: string; args: Record<string, any>; result_summary: string }[] = [];
+        if (plan.needs_tools) {
+          send("progress", { phase: "tools", text: "正在调用工具获取深度数据…" });
+          const toolPhase = await resolveToolPhase(c.env, model, messages, (evt) => {
+            if (evt.type === "progress") send("progress", { phase: "tools", text: evt.text || "正在分析数据…" });
+            if (evt.type === "tool_call") {
+              send("progress", { phase: "tools", text: `工具: ${evt.name || "unknown"}` });
+              send("tool_call", { name: evt.name || "unknown", args: evt.args || "" });
+            }
+          }, plan.route === "quick" ? 1 : 2); // quick-with-tools caps at 1 round; deep gets 2.
+          toolMsgs = toolPhase.messages;
+          toolCalls = toolPhase.toolCalls;
+        }
 
         const finalMessages = [
           ...toolMsgs,
@@ -391,8 +434,9 @@ app.post("/api/chat", async (c) => {
             role: "user",
             content:
               "现在直接输出给用户看的最终分析。严禁输出任何工具调用、DSML、XML/HTML-like invoke/parameter/tool_calls 标签；" +
-              "不要说你要调用工具。请用中文，按“主矛盾 / 四个维度 / 打脸指标 / 风险边界”的结构回答。" +
-              "所有原文引用必须写成方括号格式，例如 [T1]、[T4]，不要写成 T1 或 #1。" +
+              "不要说你要调用工具。请用中文，优先按“结论 / 主矛盾 / 证据链 / 打脸指标 / 风险边界”的结构回答；如果用户问该不该买，必须给出条件式结论而不是含糊其辞。" +
+              "所有原文引用必须写成方括号格式，例如 [T1]、[T4]，不要写成 T1 或 #1。尽量引用 8 条以上不同原文；如果引用不足，要明确说“这部分原文支持有限”。" +
+              "区分三类信息：① KOL 原文直接支持，② 基于原文推演到当前市场，③ 实时行情/新闻；不要把推演说成原文。" +
               "如果问题涉及流动性、利率、美债、风险资产，优先围绕 SOURCE TWEETS 里的 RRP、TGA、SOFR、SRF、商业银行准备金、回购钱荒、联储购债扩表框架展开；" +
               "除非用户明确问油价或地缘冲突，否则油价、地缘新闻和单个当日行情只能作为次要背景，不要抢走主线。",
           },
@@ -417,12 +461,6 @@ app.post("/api/chat", async (c) => {
           controller.close();
           return;
         }
-
-        // Send meta (citations + chart info) before streaming text
-        send("meta", {
-          citations,
-          chart: market.primary ? { code: market.primary.code, symbol: market.primary.symbol, market: market.primary.market } : null,
-        });
 
         const reader = upstream.body!.getReader();
         let buf = "";

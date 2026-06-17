@@ -184,15 +184,15 @@ export async function executeTool(env: Env, name: string, args: any): Promise<st
       if (!list.length) return "No symbols provided.";
       const resolved: Quote[] = [];
       const unresolved: string[] = [];
+      const inputs = list.slice(0, 10).map((raw) => String(raw || "").trim()).filter(Boolean);
       const seen = new Set<string>();
-      for (const raw of list.slice(0, 10)) {
-        const q = await resolveQuote(env, raw, seen);
-        if (q) {
+      const quotes = await Promise.all(inputs.map((raw) => resolveQuote(env, raw, new Set<string>())));
+      for (let i = 0; i < inputs.length; i++) {
+        const q = quotes[i];
+        if (q && !seen.has(q.code)) {
           seen.add(q.code);
           resolved.push(q);
-        } else if (String(raw).trim()) {
-          unresolved.push(String(raw).trim());
-        }
+        } else if (!q) unresolved.push(inputs[i]);
       }
       let out = resolved.length ? resolved.map(fmtQuote).join("\n") : "";
       if (unresolved.length) out += (out ? "\n" : "") + `Could not resolve: ${unresolved.join(", ")}`;

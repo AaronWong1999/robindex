@@ -15,8 +15,11 @@ export interface PlannedInstrument {
   ticker: string;        // best-guess ticker (e.g. SOXL, NVDA, 00700, 600519, BTC)
   market: string;        // us | hk | a | crypto | unknown
 }
+export type RouteMode = "quick" | "deep";
 export interface QueryPlan {
   intent: string;
+  route: RouteMode;            // quick = answer from corpus/persona only (no tool phase); deep = needs live data/tools
+  needs_tools: boolean;        // true → run the tool phase (live prices/timing/financials/news/comparison)
   instruments: PlannedInstrument[];
   exact_entities: string[];
   aliases: string[];
@@ -28,6 +31,8 @@ export interface QueryPlan {
 
 export const EMPTY_PLAN: QueryPlan = {
   intent: "",
+  route: "deep",       // safe default: if classification fails, assume deep (keep tools)
+  needs_tools: true,
   instruments: [],
   exact_entities: [],
   aliases: [],
@@ -47,6 +52,8 @@ const PLAN_SYS =
   "Then output ONLY this JSON object (no markdown):\n" +
   "{\n" +
   '  "intent": "<one line: what kind of past view we are looking for>",\n' +
+  '  "route": "quick" | "deep",\n' +
+  '  "needs_tools": true | false,\n' +
   '  "instruments": [{"name":"<as written>","ticker":"<real ticker e.g. SOXL/NVDA/00700/600519/BTC>","market":"us|hk|a|crypto|unknown"}],\n' +
   '  "exact_entities": ["<named tickers/companies/people/products — keep tight & literal>"],\n' +
   '  "aliases": ["<every alternate surface form: CN name, EN name, ticker, abbreviation, codename, common misspelling — e.g. 英伟达, NVDA, Nvidia, 老黄>"],\n' +
@@ -65,7 +72,17 @@ const PLAN_SYS =
   "from the question. Think about which exact words a relevant tweet would contain.\n" +
   "- COVER THE ECOSYSTEM: include the closely-linked names the KOL discusses alongside the subject " +
   "(related/competitor tickers, key people, sub-products) in related_entities and aliases.\n" +
-  "- instruments: only genuinely tradable things; give the real ticker, leave it empty if unsure (never guess wildly).";
+  "- instruments: only genuinely tradable things; give the real ticker, leave it empty if unsure (never guess wildly).\n\n" +
+  "ROUTE CLASSIFICATION (critical for speed — this decides whether we spend extra seconds on live data):\n" +
+  'Set route="quick" and needs_tools=false when the answer lives in the KOL\'s CORPUS/methodology and does NOT ' +
+  "depend on fresh live data — e.g. asking the persona's view/opinion/framework on a company/sector/theme " +
+  "(他怎么看 / 怎么看 X / 怎么看 AI 泡沫), verifying a past stance (验证观点), definitional or framework " +
+  "questions, '他的逻辑是', '为什么', comparing the persona's positions. These are answered from past tweets.\n" +
+  'Set route="deep" and needs_tools=true ONLY when the user explicitly wants CURRENT actionable data the ' +
+  "corpus cannot supply: live price / 现在 / 今天 / 现在 该不该买 / 该不该抄底 / 现价, intraday or recent " +
+  "K-line/走势/技术面, fresh news/事件/利好利空/政策, fundamentals/财务/估值/财报/PE, multi-name live " +
+  "comparison, market-wide ranking/资金流/龙虎榜/板块. When unsure, prefer quick (the pre-fetched quote for " +
+  "any named instrument is still injected for context).";
 
 function strArr(v: any, max = 16): string[] {
   if (!Array.isArray(v)) return [];
@@ -111,6 +128,9 @@ export async function planQuery(
       : [];
     const plan: QueryPlan = {
       intent: typeof obj.intent === "string" ? obj.intent.slice(0, 240) : "",
+      route: obj.route === "quick" ? "quick" : "deep",
+      // needs_tools defaults to route==deep; explicit false always honored, explicit true forces tools.
+      needs_tools: obj.needs_tools === false ? false : obj.needs_tools === true ? true : (obj.route !== "quick"),
       instruments,
       exact_entities: strArr(obj.exact_entities),
       aliases: strArr(obj.aliases),

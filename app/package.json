@@ -12,7 +12,9 @@
     "tail": "wrangler tail",
     "seed:local": "wrangler d1 execute robindex-db --local --file=./schema.sql",
     "seed:remote": "wrangler d1 execute robindex-db --remote --file=./schema.sql",
-    "test:dsl": "node scripts/test_dsl_cleaners.mjs"
+    "test:dsl": "node scripts/test_dsl_cleaners.mjs",
+    "test:prompt": "node scripts/test_prompt_format.mjs",
+    "test:route": "node scripts/test_route_heuristics.mjs"
   },
   "dependencies": {
     "hono": "^4.6.14"

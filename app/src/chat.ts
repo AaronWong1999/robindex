@@ -3,6 +3,7 @@ import { retrieve, type Citation } from "./rag";
 import { getKlineCached, resolveSymbolCached, getQuotesCached, type Quote } from "./finance";
 import { getStockNews, getMarketNews, type NewsItem } from "./marketdata";
 import { TOOLS, executeTool } from "./tools";
+import { sourceTweetForPrompt } from "./source-format";
 
 // User is asking about news / macro / what's happening — pull fast-news into context.
 const NEWS_INTENT = /(news|headline|macro|happening|宏观|新闻|消息|资讯|事件|最近|发生|利好|利空|政策|加息|降息|cpi|fed|联储|财报)/i;
@@ -39,17 +40,14 @@ export async function gatherMarketData(
   // maintain — long-tail names (SOXL, CRCL, 茅台 …) are handled the same way as common ones.
   const quotes: Quote[] = [];
   const seen = new Set<string>();
-  for (const raw of opts.extraInstruments || []) {
+  const rawInstruments = Array.from(new Set((opts.extraInstruments || []).map((raw) => String(raw || "").trim()).filter(Boolean))).slice(0, 8);
+  const resolvedInstruments = await Promise.all(rawInstruments.map((name) => resolveSymbolCached(env.CACHE, name).catch(() => null)));
+  for (const q of resolvedInstruments) {
     if (quotes.length >= 3) break;
-    const name = String(raw || "").trim();
-    if (!name) continue;
-    try {
-      const q = await resolveSymbolCached(env.CACHE, name);
-      if (q && q.price > 0 && q.name && !seen.has(q.code)) {
-        seen.add(q.code);
-        quotes.push(q);
-      }
-    } catch {}
+    if (q && q.price > 0 && q.name && !seen.has(q.code)) {
+      seen.add(q.code);
+      quotes.push(q);
+    }
   }
   // primary (→ chart + per-stock kline/news) is ONLY ever a real user-named instrument.
   let primary: Quote | null = quotes[0] || null;
@@ -106,7 +104,9 @@ export function buildMessages(opts: {
     `Always respond in the SAME language as the user's message, regardless of the KOL's corpus language.\n` +
     `Speak in this persona's own voice, logic, and worldview. Do not break character or mention you are an AI.\n` +
     `Ground every market view in the persona's documented methodology and past statements below.\n` +
-    `CITE LIBERALLY: whenever a point connects to one of the persona's past tweets, cite it with its bracket id (e.g. [T1], [T5], [T12]). A thorough analysis should reference 8-18 source tweets. Only cite ids from SOURCE TWEETS.\n` +
+    `CITE LIBERALLY: whenever a point connects to one of the persona's past tweets, cite it with its bracket id (e.g. [T1], [T5], [T12]). A thorough analysis should reference 8-18 source tweets across different dates or facets, not one cluster. Only cite ids from SOURCE TWEETS.\n` +
+    `QUALITY BAR: first answer the user's concrete decision/question, then reconstruct the KOL's reasoning chain, separate direct source support from your inference, and name the evidence that would change the view. Avoid generic market commentary that is not tied to SOURCE TWEETS or LIVE MARKET DATA.\n` +
+    `When a SOURCE TWEET includes Quoted context, treat it as context for what the KOL was reacting to; do not attribute the quoted account's words to the KOL unless the KOL tweet itself endorses or comments on it.\n` +
     `Use the LIVE MARKET DATA for current prices/levels — never invent numbers. If data is missing, say so.\n` +
     `This is not investment advice; you are sharing the persona's perspective for discussion.\n\n` +
     `=== PERSONA PACK (identity · methodology · tone · taboos · format) ===\n${persona}\n`;
@@ -138,7 +138,7 @@ export function buildMessages(opts: {
   // ---- VARIABLE SUFFIX: retrieved tweets + live data + user turn. ----
   const tweetsBlock = citations.length
     ? `SOURCE TWEETS (cite by id):\n` +
-      citations.map((c) => `[${c.ref}] (${c.date}) ${c.snippet}`).join("\n")
+      citations.map(sourceTweetForPrompt).join("\n")
     : `SOURCE TWEETS: (none retrieved)`;
 
   const benchmarkBlock = market.benchmarks?.length
@@ -253,10 +253,8 @@ export async function completeChat(
   }
 }
 
-// Hybrid tool phase: 3-round structured tool calling.
-// Round 1: entity extraction + quotes (extract_financial_entities).
-// Round 2: deep data (financials, fund flow, sectors, etc.).
-// Round 3: cross-stock comparison / chain analysis (optional).
+// Hybrid tool phase: bounded structured tool calling.
+// Round 1 fetches missing quotes/news/primary data; round 2 deepens when the route really needs it.
 // Best-effort: on any failure, returns the messages collected so far.
 // Also returns a summary of tool calls for memory persistence.
 export interface ToolCallRecord {
@@ -268,12 +266,14 @@ export async function resolveToolPhase(
   env: Env,
   model: string,
   messages: { role: string; content: string }[],
-  onEvent?: (evt: { type: "progress" | "tool_call"; text?: string; name?: string; args?: string }) => void
+  onEvent?: (evt: { type: "progress" | "tool_call"; text?: string; name?: string; args?: string }) => void,
+  maxRounds = 2
 ): Promise<{ messages: any[]; toolCalls: ToolCallRecord[] }> {
   let msgs: any[] = [...messages];
   const toolCalls: ToolCallRecord[] = [];
   try {
-    for (let i = 0; i < 2; i++) { // 2 rounds: round 1 fetches, round 2 deepens; lower latency than 3
+    const rounds = Math.max(0, Math.min(2, Math.floor(maxRounds)));
+    for (let i = 0; i < rounds; i++) {
       onEvent?.({ type: "progress", text: `正在分析数据（第 ${i + 1} 轮）…` });
       const res = await fetch(env.GATEWAY_URL, {
         method: "POST",
@@ -288,7 +288,7 @@ export async function resolveToolPhase(
       const m = choice?.message;
       if (choice?.finish_reason !== "tool_calls" || !m?.tool_calls?.length) break;
       msgs.push({ role: "assistant", content: m.content || "", tool_calls: m.tool_calls });
-      for (const tc of m.tool_calls) {
+      const toolResults = await Promise.all(m.tool_calls.map(async (tc: any) => {
         let args: any = {};
         try {
           args = JSON.parse(tc.function?.arguments || "{}");
@@ -299,6 +299,9 @@ export async function resolveToolPhase(
           args: Object.keys(args).join(", "),
         });
         const out = await executeTool(env, tc.function?.name, args);
+        return { tc, args, out };
+      }));
+      for (const { tc, args, out } of toolResults) {
         msgs.push({ role: "tool", tool_call_id: tc.id, content: out });
         toolCalls.push({
           tool: tc.function?.name || "",

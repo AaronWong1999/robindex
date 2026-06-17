@@ -84,6 +84,32 @@ function renderMarkdown(text) {
   return html;
 }
 
+const PHASES = [
+  { key: "plan", label: "理解问题" },
+  { key: "market", label: "检索原文 / 行情" },
+  { key: "tools", label: "深度数据" },
+  { key: "thinking", label: "生成中" },
+];
+function phaseIndex(phase) {
+  if (phase === "rag") return 1;
+  const i = PHASES.findIndex((p) => p.key === phase);
+  return i < 0 ? 0 : i;
+}
+function renderPhaseStepper(activeKey = "plan", text = "正在理解问题…") {
+  const idx = phaseIndex(activeKey);
+  return `<div class="stream-status" data-phase="${esc(activeKey)}">
+    <div class="phase-steps">
+      ${PHASES.map((p, i) => `<span class="phase-step ${i < idx ? "done" : i === idx ? "active" : ""}">${p.label}</span>`).join("")}
+    </div>
+    <div class="stream-line"><span class="stream-dot"></span><span class="stream-text">${esc(text)}</span></div>
+  </div>`;
+}
+function updatePhaseStepper(md, phase, text) {
+  const statusEl = md.querySelector(".stream-status");
+  if (!statusEl) return;
+  statusEl.outerHTML = renderPhaseStepper(phase || "plan", text || "处理中…");
+}
+
 // ---------- conversation persistence (local) ----------
 const LS_KEY = "robindex_convs";
 function loadConvs() { try { return JSON.parse(localStorage.getItem(LS_KEY) || "[]"); } catch { return []; } }
@@ -388,7 +414,7 @@ async function send(text) {
 
   const wrap = addMessage("assistant", "", []);
   const md = wrap.querySelector(".md");
-  md.innerHTML = '<div class="stream-status"><span class="stream-dot"></span><span class="stream-text">正在准备…</span></div>';
+  md.innerHTML = renderPhaseStepper("plan", "正在准备…");
 
   let full = "", citeMap = {}, meta_ = null;
   state.toolCalls = [];
@@ -418,10 +444,7 @@ async function send(text) {
         if (!data) continue;
         if (type === "progress") {
           const p = JSON.parse(data);
-          const statusEl = md.querySelector(".stream-status");
-          if (statusEl) {
-            statusEl.querySelector(".stream-text").textContent = p.text || "处理中…";
-          }
+          updatePhaseStepper(md, p.phase, p.text);
         }
         else if (type === "meta") { meta_ = JSON.parse(data); for (const c of meta_.citations || []) citeMap[c.ref] = c; state.allCitations = meta_.citations || []; }
         else if (type === "tool_call") { const tc = JSON.parse(data); state.toolCalls.push(tc); updateWorkspaceTools(); }
