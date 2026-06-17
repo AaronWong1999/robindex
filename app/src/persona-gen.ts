@@ -457,7 +457,7 @@ export async function evolvePersona(
 
   const raw = await completeChat(
     env,
-    env.MODEL_FLASH,
+    env.MODEL_PRO,
     [
       { role: "system", content: EVOLUTION_SYSTEM },
       {
