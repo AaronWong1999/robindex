@@ -23,4 +23,6 @@ export interface KolRow {
   tagline: string | null;
   persona_pack: string | null;
   persona_version: string | null;
+  retrieval_mode?: string | null;   // 'query_side' (default) | 'tagged'
+  corpus_id?: string | null;        // search another KOL's corpus; null = own id
 }

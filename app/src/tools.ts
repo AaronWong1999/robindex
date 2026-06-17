@@ -1,46 +1,38 @@
 // Tool definitions + dispatcher for the hybrid chat path. The model may call these to fetch data the
-// pre-fetch didn't already inject (e.g. 1-minute K-line, fresh news, a symbol it couldn't resolve).
+// pre-fetch didn't already inject (e.g. a symbol not already quoted, intraday K-line, fresh news,
+// fundamentals). Kept deliberately lean (9 tools) — flash-tier function-calling degrades when the
+// menu is long, and the query planner already pre-detects + validates instruments before this phase.
 import type { Env } from "./env";
 import { resolveSymbolCached, getKlineCached, searchSymbolHits, getQuotesCached, type Quote } from "./finance";
 import { getStockNews, getMarketNews } from "./marketdata";
-import {
-  getSectorBlocks, getFundFlowMinute, getDragonTiger, getIndustryRanking,
-  getMarginTrading, getStockInfo, getResearchReports, getLockupExpiry,
-} from "./eastmoney-astock";
+import { getSectorBlocks, getFundFlowMinute, getDragonTiger } from "./eastmoney-astock";
 import {
   getFinancialStatements, getKeyIndicators, getAnalystData,
-  getMarketRanking, getSecFilings, getSinaKline,
+  getMarketRanking, getSecFilings,
 } from "./eastmoney-global";
 
 export const TOOLS = [
-  // ---- Round 1: Entity extraction + quotes ----
+  // ---- Core: quotes / candles / news (cover the common case) ----
   {
     type: "function",
     function: {
-      name: "extract_financial_entities",
+      name: "get_quote",
       description:
-        "Identify ALL tradeable financial instruments (stocks, ETFs, crypto) mentioned in the user message. " +
-        "Returns validated quotes with live prices. Always call this FIRST when the user mentions any company name, " +
-        "stock ticker, Chinese name, or alias. Outputs standardized symbols like AAPL, 00700.HK, 600519.SH.",
+        "Live quote(s) for one or more stocks/ETFs/indices/crypto by ticker or name (English, $TICKER, " +
+        "or Chinese name). Also use this to RESOLVE a name you're unsure about — it validates against the " +
+        "live feed and reports anything it couldn't resolve. Quotes for instruments already shown in " +
+        "LIVE MARKET DATA do not need re-fetching.",
       parameters: {
         type: "object",
         properties: {
           symbols: {
             type: "array",
             items: { type: "string" },
-            description: "All recognized financial instrument symbols from the user message. Use standard tickers: AAPL, TSLA, 00700.HK, 600519.SH, BTC, etc.",
+            description: "One or more instruments, e.g. [\"AAPL\"], [\"SOXL\",\"英伟达\",\"00700.HK\",\"BTC\"].",
           },
         },
         required: ["symbols"],
       },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "get_quote",
-      description: "Live quote for a stock/ETF/index by ticker or name (English, $TICKER, or Chinese name).",
-      parameters: { type: "object", properties: { symbol: { type: "string" } }, required: ["symbol"] },
     },
   },
   {
@@ -64,58 +56,13 @@ export const TOOLS = [
     type: "function",
     function: {
       name: "get_news",
-      description: "Recent news. Pass a symbol for stock-specific news (US), or omit for market/macro fast-news.",
+      description:
+        "Recent news. Pass a symbol for stock-specific news (US); omit the symbol for market/macro 7x24 " +
+        "fast-news (policy, rates, economic events).",
       parameters: { type: "object", properties: { symbol: { type: "string" } } },
     },
   },
-  {
-    type: "function",
-    function: {
-      name: "get_macro",
-      description: "Latest macro / market 7x24 fast-news (policy, rates, economic events).",
-      parameters: { type: "object", properties: {} },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "search_symbol",
-      description: "Resolve a free-text name/ticker to candidate instrument codes when unsure.",
-      parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
-    },
-  },
-  // ---- New tools from a-stock-data / global-stock-data ----
-  {
-    type: "function",
-    function: {
-      name: "get_sector_blocks",
-      description: "Get all sector/concept/industry boards a stock belongs to (A-share only, code like sh600519 or 600519). Returns board names, codes, daily change%, and leader stocks.",
-      parameters: { type: "object", properties: { symbol: { type: "string" } }, required: ["symbol"] },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "get_fund_flow",
-      description: "Intraday minute-level fund flow: main/large/mid/small order net inflow (A-share only). Use to analyze institutional vs retail money direction during trading hours.",
-      parameters: { type: "object", properties: { symbol: { type: "string" } }, required: ["symbol"] },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "get_dragon_tiger",
-      description: "Dragon-tiger board (龙虎榜): brokerage seat activity, top 5 buy/sell seats, institutional participation (A-share only). Shows which brokerages are actively trading a stock.",
-      parameters: {
-        type: "object",
-        properties: {
-          symbol: { type: "string" },
-          date: { type: "string", description: "Trade date YYYY-MM-DD, defaults to today" },
-        },
-        required: ["symbol"],
-      },
-    },
-  },
+  // ---- US / HK fundamentals ----
   {
     type: "function",
     function: {
@@ -136,7 +83,7 @@ export const TOOLS = [
     type: "function",
     function: {
       name: "get_key_indicators",
-      description: "Key financial indicators: ROE, ROA, EPS, margins, debt ratio, revenue/profit growth for US and HK stocks. Chinese field names from Eastmoney GMAININDICATOR.",
+      description: "Key financial indicators: ROE, ROA, EPS, margins, debt ratio, revenue/profit growth for US and HK stocks.",
       parameters: { type: "object", properties: { symbol: { type: "string" } }, required: ["symbol"] },
     },
   },
@@ -144,10 +91,26 @@ export const TOOLS = [
     type: "function",
     function: {
       name: "get_analyst_data",
-      description: "Analyst estimates, ratings, target price, upgrade/downgrade history, and institutional holders via Yahoo Finance. Works for US and HK stocks.",
+      description: "Analyst estimates, ratings, target price, upgrade/downgrade history, and institutional holders (US and HK stocks).",
       parameters: { type: "object", properties: { symbol: { type: "string" } }, required: ["symbol"] },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "get_sec_filings",
+      description: "SEC EDGAR filings for US stocks: 10-K, 10-Q, 8-K. Returns filing list with document URLs.",
+      parameters: {
+        type: "object",
+        properties: {
+          symbol: { type: "string", description: "US stock ticker, e.g. AAPL" },
+          form_type: { type: "string", enum: ["10-K", "10-Q", "8-K"], description: "Filter by form type" },
+        },
+        required: ["symbol"],
+      },
+    },
+  },
+  // ---- Market-wide ----
   {
     type: "function",
     function: {
@@ -164,18 +127,23 @@ export const TOOLS = [
       },
     },
   },
+  // ---- A-share-only deep microstructure (one grouped tool) ----
   {
     type: "function",
     function: {
-      name: "get_sec_filings",
-      description: "SEC EDGAR filings for US stocks: 10-K, 10-Q, 8-K annual/quarterly reports. Returns filing list with document URLs.",
+      name: "get_ashare_detail",
+      description:
+        "A-share-only deep data. kind='sectors': all sector/concept/industry boards a stock belongs to + " +
+        "leaders. kind='fund_flow': intraday main/large/mid/small order net inflow (institutional vs retail). " +
+        "kind='dragon_tiger': 龙虎榜 brokerage seat activity + institutional participation. Code like sh600519 or 600519.",
       parameters: {
         type: "object",
         properties: {
-          symbol: { type: "string", description: "US stock ticker, e.g. AAPL" },
-          form_type: { type: "string", enum: ["10-K", "10-Q", "8-K"], description: "Filter by form type" },
+          symbol: { type: "string" },
+          kind: { type: "string", enum: ["sectors", "fund_flow", "dragon_tiger"] },
+          date: { type: "string", description: "dragon_tiger only: trade date YYYY-MM-DD, defaults to today" },
         },
-        required: ["symbol"],
+        required: ["symbol", "kind"],
       },
     },
   },
@@ -190,11 +158,45 @@ function fmtNews(items: { time: string; title: string; digest?: string; source: 
   return items.map((n) => `- (${n.time}) ${n.title}${n.digest ? ` — ${n.digest}` : ""} [${n.source}]`).join("\n");
 }
 
+// Resolve one free-text symbol/name to a validated quote (direct resolve, then fuzzy search fallback).
+async function resolveQuote(env: Env, raw: string, seen: Set<string>): Promise<Quote | null> {
+  const sym = String(raw).trim();
+  if (!sym) return null;
+  const q = await resolveSymbolCached(env.CACHE, sym);
+  if (q && q.price > 0 && !seen.has(q.code)) return q;
+  const hits = await searchSymbolHits(sym, 3);
+  if (hits.length) {
+    const qs = await getQuotesCached(env.CACHE, [hits[0].code]);
+    if (qs[0] && qs[0].price > 0 && !seen.has(qs[0].code)) return qs[0];
+  }
+  return null;
+}
+
 export async function executeTool(env: Env, name: string, args: any): Promise<string> {
   try {
     if (name === "get_quote") {
-      const q = await resolveSymbolCached(env.CACHE, String(args.symbol || ""));
-      return q ? fmtQuote(q) : `No quote found for "${args.symbol}".`;
+      // Accept the new array form, plus the legacy single `symbol` for resilience.
+      const list: string[] = Array.isArray(args.symbols)
+        ? args.symbols
+        : args.symbol
+          ? [args.symbol]
+          : [];
+      if (!list.length) return "No symbols provided.";
+      const resolved: Quote[] = [];
+      const unresolved: string[] = [];
+      const seen = new Set<string>();
+      for (const raw of list.slice(0, 10)) {
+        const q = await resolveQuote(env, raw, seen);
+        if (q) {
+          seen.add(q.code);
+          resolved.push(q);
+        } else if (String(raw).trim()) {
+          unresolved.push(String(raw).trim());
+        }
+      }
+      let out = resolved.length ? resolved.map(fmtQuote).join("\n") : "";
+      if (unresolved.length) out += (out ? "\n" : "") + `Could not resolve: ${unresolved.join(", ")}`;
+      return out || "No instruments identified.";
     }
     if (name === "get_kline") {
       const q = await resolveSymbolCached(env.CACHE, String(args.symbol || ""));
@@ -215,90 +217,13 @@ export async function executeTool(env: Env, name: string, args: any): Promise<st
           if (n.length) return `News for ${q.symbol}:\n` + fmtNews(n);
         }
       }
-      return `Market news:\n` + fmtNews(await getMarketNews(env, 8));
-    }
-    if (name === "get_macro") {
-      return `Macro / market fast-news:\n` + fmtNews(await getMarketNews(env, 10));
-    }
-    if (name === "search_symbol") {
-      const hits = await searchSymbolHits(String(args.query || ""), 5);
-      return hits.length ? hits.map((h) => `${h.code} — ${h.name}${h.nameEn ? ` / ${h.nameEn}` : ""}`).join("\n") : "No match.";
-    }
-    if (name === "extract_financial_entities") {
-      const rawSymbols: string[] = Array.isArray(args.symbols) ? args.symbols : [];
-      if (!rawSymbols.length) return "No symbols provided.";
-      const resolved: Quote[] = [];
-      const unresolved: string[] = [];
-      const seen = new Set<string>();
-      for (const raw of rawSymbols.slice(0, 10)) {
-        const sym = String(raw).trim();
-        if (!sym) continue;
-        try {
-          const q = await resolveSymbolCached(env.CACHE, sym);
-          if (q && q.price > 0 && !seen.has(q.code)) {
-            seen.add(q.code);
-            resolved.push(q);
-          } else {
-            // Try search API as fuzzy fallback
-            const hits = await searchSymbolHits(sym, 3);
-            if (hits.length) {
-              const qs = await getQuotesCached(env.CACHE, [hits[0].code]);
-              if (qs[0] && qs[0].price > 0 && !seen.has(qs[0].code)) {
-                seen.add(qs[0].code);
-                resolved.push(qs[0]);
-                continue;
-              }
-            }
-            unresolved.push(sym);
-          }
-        } catch {
-          unresolved.push(sym);
-        }
-      }
-      let out = "";
-      if (resolved.length) {
-        out += `Identified ${resolved.length} instrument(s):\n` + resolved.map(fmtQuote).join("\n");
-      }
-      if (unresolved.length) {
-        out += (out ? "\n" : "") + `Could not resolve: ${unresolved.join(", ")}`;
-      }
-      return out || "No instruments identified.";
-    }
-    // ---- New tools ----
-    if (name === "get_sector_blocks") {
-      const code = String(args.symbol || "");
-      const r = await getSectorBlocks(env.CACHE, code);
-      if (!r.total) return `No sector/concept blocks found for "${code}".`;
-      return `Blocks for ${code} (${r.total}):\n` + r.boards.map((b) => `- ${b.name} (${b.code}) ${b.changePct}% leader:${b.leader}`).join("\n");
-    }
-    if (name === "get_fund_flow") {
-      const code = String(args.symbol || "");
-      const rows = await getFundFlowMinute(env.CACHE, code);
-      if (!rows.length) return `No fund flow data for "${code}".`;
-      const last = rows[rows.length - 1];
-      const total = rows.reduce((s, r) => s + r.mainNet, 0);
-      return `Fund flow for ${code} (${rows.length} min bars, latest: ${last.time}):\nmain:${last.mainNet} large:${last.largeNet} mid:${last.midNet} small:${last.smallNet} super:${last.superNet}\nTotal main net (day): ${total}`;
-    }
-    if (name === "get_dragon_tiger") {
-      const r = await getDragonTiger(env.CACHE, String(args.symbol || ""), args.date || undefined);
-      if (!r.records.length) return `No dragon-tiger records for "${args.symbol}".`;
-      let out = `Dragon-tiger for ${args.symbol} (${r.records.length} records):\n`;
-      out += r.records.map((rc) => `  ${rc.date}: ${rc.reason} net=${rc.netBuy}万 turnover=${rc.turnover}%`).join("\n");
-      if (r.seats.buy.length) {
-        out += `\nBuy seats:\n` + r.seats.buy.map((s) => `  ${s.name}: buy=${s.buyAmt}万 sell=${s.sellAmt}万 net=${s.net}万`).join("\n");
-      }
-      if (r.seats.sell.length) {
-        out += `\nSell seats:\n` + r.seats.sell.map((s) => `  ${s.name}: buy=${s.buyAmt}万 sell=${s.sellAmt}万 net=${s.net}万`).join("\n");
-      }
-      out += `\nInstitution: buy=${r.institution.buyAmt}万 sell=${r.institution.sellAmt}万 net=${r.institution.netAmt}万`;
-      return out;
+      return `Market / macro news:\n` + fmtNews(await getMarketNews(env, 8));
     }
     if (name === "get_financials") {
       const stmt = String(args.statement || "income") as "balance" | "income" | "cashflow";
       const periods = Math.min(Number(args.periods) || 4, 12);
       const rows = await getFinancialStatements(env.CACHE, String(args.symbol || ""), stmt, periods);
       if (!rows.length) return `No ${stmt} data for "${args.symbol}".`;
-      // Group by report date
       const byDate = new Map<string, typeof rows>();
       for (const r of rows) {
         const list = byDate.get(r.reportDate) || [];
@@ -336,6 +261,12 @@ export async function executeTool(env: Env, name: string, args: any): Promise<st
       }
       return out;
     }
+    if (name === "get_sec_filings") {
+      const r = await getSecFilings(env.CACHE, String(args.symbol || ""), args.form_type || undefined);
+      if (!r.filings.length) return `No SEC filings for "${args.symbol}".`;
+      return `SEC filings for ${r.companyName} (CIK:${r.cik}):\n` +
+        r.filings.slice(0, 20).map((f) => `  ${f.date} ${f.form}: ${f.description} ${f.url}`).join("\n");
+    }
     if (name === "get_market_ranking") {
       const sortMap: Record<string, string> = { change_pct: "f3", volume: "f5", amount: "f6" };
       const sortField = sortMap[String(args.sort || "change_pct")] || "f3";
@@ -345,11 +276,32 @@ export async function executeTool(env: Env, name: string, args: any): Promise<st
       return `Market ranking (${args.market}, ${r.total} total, showing top ${r.stocks.length}):\n` +
         r.stocks.map((s, i) => `${i + 1}. ${s.name}(${s.code}): ${s.changePct}% vol=${s.volume} amt=${s.amount}`).join("\n");
     }
-    if (name === "get_sec_filings") {
-      const r = await getSecFilings(env.CACHE, String(args.symbol || ""), args.form_type || undefined);
-      if (!r.filings.length) return `No SEC filings for "${args.symbol}".`;
-      return `SEC filings for ${r.companyName} (CIK:${r.cik}):\n` +
-        r.filings.slice(0, 20).map((f) => `  ${f.date} ${f.form}: ${f.description} ${f.url}`).join("\n");
+    if (name === "get_ashare_detail") {
+      const code = String(args.symbol || "");
+      const kind = String(args.kind || "");
+      if (kind === "sectors") {
+        const r = await getSectorBlocks(env.CACHE, code);
+        if (!r.total) return `No sector/concept blocks found for "${code}".`;
+        return `Blocks for ${code} (${r.total}):\n` + r.boards.map((b) => `- ${b.name} (${b.code}) ${b.changePct}% leader:${b.leader}`).join("\n");
+      }
+      if (kind === "fund_flow") {
+        const rows = await getFundFlowMinute(env.CACHE, code);
+        if (!rows.length) return `No fund flow data for "${code}".`;
+        const last = rows[rows.length - 1];
+        const total = rows.reduce((s, r) => s + r.mainNet, 0);
+        return `Fund flow for ${code} (${rows.length} min bars, latest: ${last.time}):\nmain:${last.mainNet} large:${last.largeNet} mid:${last.midNet} small:${last.smallNet} super:${last.superNet}\nTotal main net (day): ${total}`;
+      }
+      if (kind === "dragon_tiger") {
+        const r = await getDragonTiger(env.CACHE, code, args.date || undefined);
+        if (!r.records.length) return `No dragon-tiger records for "${code}".`;
+        let out = `Dragon-tiger for ${code} (${r.records.length} records):\n`;
+        out += r.records.map((rc) => `  ${rc.date}: ${rc.reason} net=${rc.netBuy}万 turnover=${rc.turnover}%`).join("\n");
+        if (r.seats.buy.length) out += `\nBuy seats:\n` + r.seats.buy.map((s) => `  ${s.name}: buy=${s.buyAmt}万 sell=${s.sellAmt}万 net=${s.net}万`).join("\n");
+        if (r.seats.sell.length) out += `\nSell seats:\n` + r.seats.sell.map((s) => `  ${s.name}: buy=${s.buyAmt}万 sell=${s.sellAmt}万 net=${s.net}万`).join("\n");
+        out += `\nInstitution: buy=${r.institution.buyAmt}万 sell=${r.institution.sellAmt}万 net=${r.institution.netAmt}万`;
+        return out;
+      }
+      return `Unknown get_ashare_detail kind "${kind}".`;
     }
     return `Unknown tool ${name}.`;
   } catch (e) {

@@ -1,9 +1,10 @@
 import { Hono } from "hono";
 import type { Env, KolRow } from "./env";
 import { getQuotesCached, getKlineCached, resolveSymbolCached } from "./finance";
-import { retrieve, expandQuery } from "./rag";
+import { retrieve } from "./rag";
+import { planQuery } from "./query-plan";
+import { indexTweets, indexRawTweets } from "./tagger";
 import { gatherMarketData, buildMessages, maybeUpdateSummary, resolveToolPhase } from "./chat";
-import { getKolUniverse } from "./entities";
 import { getStockNews, getMarketNews } from "./marketdata";
 import { runDailyIngest, runWeeklyPersonaRefresh } from "./ingest";
 import { generatePersonaPack, evolvePersona } from "./persona-gen";
@@ -124,13 +125,17 @@ app.get("/api/tweets", async (c) => {
     `SELECT COUNT(*) c FROM tweets WHERE kol_id=? AND is_retweet=0`
   ).bind(kolId).first<{ c: number }>();
   const r = await c.env.DB.prepare(
-    `SELECT id,text,created_at_iso,likes,retweets,replies,quotes,views,urls
+    `SELECT id,text,created_at_iso,likes,retweets,replies,quotes,views,urls,quoted
      FROM tweets WHERE kol_id=? AND is_retweet=0 ORDER BY created_at_ts DESC LIMIT ? OFFSET ?`
   ).bind(kolId, limit, offset).all();
   return c.json({
     handle: k?.handle || kolId,
     total: total?.c ?? 0,
-    tweets: (r.results || []).map((t: any) => ({ ...t, urls: t.urls ? JSON.parse(t.urls) : [] })),
+    tweets: (r.results || []).map((t: any) => ({
+      ...t,
+      urls: t.urls ? JSON.parse(t.urls) : [],
+      quoted: t.quoted ? (() => { try { return JSON.parse(t.quoted); } catch { return null; } })() : null,
+    })),
   });
 });
 
@@ -327,19 +332,34 @@ app.post("/api/chat", async (c) => {
         controller.enqueue(encoder.encode(`event: ${evt}\ndata: ${JSON.stringify(data)}\n\n`));
 
       try {
-        // Step 1: Market data gathering
-        send("progress", { phase: "market", text: "正在识别标的、获取实时行情…" });
-        const kolUniverse = await getKolUniverse(c.env, kol.id);
-        const market = await gatherMarketData(c.env, body.message, { kolUniverse });
+        // Step 1: LLM query planning — one flash call that ALSO identifies tradable instruments
+        // (name + ticker). We run it first so the market-data fetch can use the planner's instruments
+        // (validated against the live feed) instead of relying only on the cashtag/dict fast-path.
+        send("progress", { phase: "rag", text: "正在理解问题、识别标的并规划检索…" });
+        const plan = await planQuery(c.env, c.env.MODEL_FLASH, body.message, []);
+        // Candidates to price-check: the planner's explicit instruments FIRST, then its exact_entities as
+        // fallback. flash is often unsure whether a name is tradable (e.g. a just-IPO'd SpaceX→SPCX), so
+        // we let the LIVE FEED decide — gatherMarketData keeps only those that return a real quote.
+        const plannedInstruments = Array.from(new Set([
+          ...plan.instruments.map((i) => i.ticker || i.name).filter(Boolean),
+          ...plan.exact_entities,
+        ]));
+
+        // Step 2: Market data — resolve the planner's instruments against the live feed, then quote/K-line/news.
+        send("progress", { phase: "market", text: "正在获取实时行情与新闻…" });
+        const market = await gatherMarketData(c.env, body.message, { extraInstruments: plannedInstruments });
         const tickers = market.quotes.map((q) => q.symbol);
+        // Fold the validated tickers back into the plan so retrieval routes match them too.
+        for (const t of tickers) if (t && !plan.exact_entities.includes(t)) plan.exact_entities.push(t);
 
-        // Step 2: LLM query expansion (bridges semantic gap between user language and KOL vocabulary)
-        send("progress", { phase: "rag", text: "正在理解问题并扩展搜索关键词…" });
-        const expandedTerms = await expandQuery(c.env, model, body.message, tickers);
-
-        // Step 3: RAG retrieval
-        send("progress", { phase: "rag", text: "正在检索相关历史原文…" });
-        const { citations, knowledge } = await retrieve(c.env, kol.id, kol.handle, body.message, tickers, expandedTerms);
+        // Step 3: retrieval + LLM rerank. Default mode is query-side-only (bilingual planner terms vs
+        // original text); a 'tagged' KOL (A/B control) instead weights the machine tag columns. corpus_id
+        // lets a control reuse another KOL's tweets. Real original text only ever reaches the model.
+        send("progress", { phase: "rag", text: "正在检索并重排相关历史原文…" });
+        const mode = (kol.retrieval_mode === "tagged" ? "tagged" : "query_side") as "tagged" | "query_side";
+        const { citations, knowledge } = await retrieve(
+          c.env, kol.id, kol.handle, body.message, tickers, plan, c.env.MODEL_FLASH, mode, kol.corpus_id || kol.id
+        );
 
         const messages = buildMessages({
           kol,
@@ -594,6 +614,157 @@ app.get("/api/admin/stats", async (c) => {
   const k = await c.env.DB.prepare(`SELECT kol_id, COUNT(*) n FROM knowledge_chunks GROUP BY kol_id`).all();
   const s = await c.env.DB.prepare(`SELECT * FROM sync_state`).all();
   return c.json({ tweets: t.results, knowledge: k.results, sync_state: s.results });
+});
+
+// ---- FTS5 search index ----
+// Two passes, both driven by scripts/build_search_index.mjs in a loop until remaining=0:
+//   mode=raw  → write original text into tweet_search with empty tags (NO LLM). Fast; makes a KOL
+//               searchable/citable in minutes. Selection key: not yet in tweet_search.
+//   (default) → LLM-tag untagged tweets and fill the tag columns. Slow; the quality/recall layer.
+//               Selection key: no tweet_tags row yet. ?full=1 wipes + rebuilds this KOL once.
+app.post("/api/admin/reindex", async (c) => {
+  if (!adminOk(c)) return c.json({ error: "unauthorized" }, 401);
+  const kolId = c.req.query("kol_id");
+  if (!kolId) return c.json({ error: "kol_id required" }, 400);
+  const mode = c.req.query("mode") === "raw" ? "raw" : "tag";
+  const batch = Math.min(parseInt(c.req.query("batch") || "60", 10), 200);
+  const full = c.req.query("full") === "1";
+  // Sharding: run N parallel drivers with shards=N & shard=0..N-1. Each shard owns a disjoint set of
+  // tweet ids (id % N == shard), so parallel backfill never double-tags or races the FTS writes.
+  const shards = Math.max(1, Math.min(parseInt(c.req.query("shards") || "1", 10), 16));
+  const shard = Math.max(0, Math.min(parseInt(c.req.query("shard") || "0", 10), shards - 1));
+  // full=1 clears this KOL once (only shard 0 clears, to avoid wiping peers' just-written rows).
+  if (full && shard === 0 && mode === "tag") {
+    await c.env.DB.prepare(`DELETE FROM tweet_search WHERE kol_id=?`).bind(kolId).run();
+    await c.env.DB.prepare(`DELETE FROM tweet_tags WHERE kol_id=?`).bind(kolId).run();
+  }
+  const shardClause = shards > 1 ? `AND (abs(CAST(t.id AS INTEGER) % ?) = ?)` : "";
+  // raw pass keys off tweet_search membership; tag pass keys off tweet_tags membership.
+  // IMPORTANT: bind kol_id as a CONSTANT in the subquery (not correlated to t.kol_id). A correlated
+  // subquery against the FTS5 virtual table re-scans it per outer row → D1 500s at scale.
+  const missingClause =
+    mode === "raw"
+      ? `AND t.id NOT IN (SELECT tweet_id FROM tweet_search WHERE kol_id=?)`
+      : `AND t.id NOT IN (SELECT tweet_id FROM tweet_tags WHERE kol_id=?)`;
+  // bind order: t.kol_id, subquery kol_id, [shards, shard], LIMIT
+  const sel: any[] = [kolId, kolId];
+  if (shards > 1) sel.push(shards, shard);
+  sel.push(batch);
+  const rows = await c.env.DB.prepare(
+    `SELECT t.id, t.text FROM tweets t
+     WHERE t.kol_id=? AND t.is_retweet=0 ${missingClause} ${shardClause}
+     ORDER BY t.created_at_ts DESC LIMIT ?`
+  ).bind(...sel).all();
+  const items = ((rows.results || []) as any[]).map((r) => ({ id: String(r.id), text: String(r.text || "") }));
+  const indexed = items.length
+    ? mode === "raw"
+      ? await indexRawTweets(c.env, kolId, items)
+      : await indexTweets(c.env, kolId, c.env.MODEL_FLASH, items)
+    : 0;
+  const rem: any[] = [kolId, kolId];
+  if (shards > 1) rem.push(shards, shard);
+  const remaining = await c.env.DB.prepare(
+    `SELECT COUNT(*) c FROM tweets t
+     WHERE t.kol_id=? AND t.is_retweet=0 ${missingClause} ${shardClause}`
+  ).bind(...rem).first<{ c: number }>();
+  return c.json({ ok: true, kol_id: kolId, mode, shard, shards, indexed, remaining: remaining?.c ?? 0 });
+});
+
+// ---- Paid re-fetch of quoted-tweet content (GetXAPI) for EXISTING history ----
+// Budget-controlled: each call pages `pages` times from `cursor`, only UPDATEs rows we already have
+// (never inserts), and returns next_cursor so a driver can paginate + stop. Drive from a script and
+// watch the GetXAPI balance. New tweets already capture quoted natively via ingest.
+app.post("/api/admin/refetch-quotes", async (c) => {
+  if (!adminOk(c)) return c.json({ error: "unauthorized" }, 401);
+  const kolId = c.req.query("kol_id");
+  if (!kolId) return c.json({ error: "kol_id required" }, 400);
+  if (!c.env.GETXAPI_KEY) return c.json({ error: "GETXAPI_KEY not set" }, 400);
+  const kol = await c.env.DB.prepare(`SELECT twitter_uid, handle FROM kols WHERE id=?`).bind(kolId).first<any>();
+  if (!kol?.twitter_uid) return c.json({ error: "kol has no twitter_uid" }, 400);
+  const pages = Math.min(parseInt(c.req.query("pages") || "5", 10), 15);
+  let cursor = c.req.query("cursor") || "";
+  let scanned = 0, withQuote = 0, updated = 0, hasMore = false;
+  for (let p = 0; p < pages; p++) {
+    const url = new URL("https://api.getxapi.com/twitter/user/tweets");
+    url.searchParams.set("userId", String(kol.twitter_uid));
+    if (cursor) url.searchParams.set("cursor", cursor);
+    const res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${c.env.GETXAPI_KEY}` } });
+    if (!res.ok) return c.json({ ok: false, error: `getxapi ${res.status}`, updated, scanned, withQuote, next_cursor: cursor, has_more: false });
+    const json: any = await res.json().catch(() => null);
+    const tweets: any[] = json?.tweets || [];
+    const stmts: D1PreparedStatement[] = [];
+    for (const t of tweets) {
+      if (String(t.author?.userName || "").toLowerCase() !== String(kol.handle).toLowerCase()) continue;
+      scanned++;
+      const q = t.quoted_tweet;
+      if (!q || !(q.text || q.full_text)) continue;
+      withQuote++;
+      const u = q.user || {};
+      const handle = u.screen_name || u.userName || "";
+      const qid = String(q.id || "");
+      const quoted = JSON.stringify({
+        id: qid, text: q.text || q.full_text || "", handle, name: u.name || "",
+        url: handle && qid ? `https://x.com/${handle}/status/${qid}` : "",
+      });
+      stmts.push(c.env.DB.prepare(`UPDATE tweets SET quoted=? WHERE id=? AND kol_id=?`).bind(quoted, String(t.id), kolId));
+    }
+    if (stmts.length) { await c.env.DB.batch(stmts); updated += stmts.length; }
+    hasMore = !!json?.has_more;
+    cursor = json?.next_cursor || "";
+    if (!hasMore || !cursor || !tweets.length) break;
+  }
+  return c.json({ ok: true, kol_id: kolId, scanned, withQuote, updated, next_cursor: cursor, has_more: hasMore });
+});
+
+// ---- Self-serve onboarding: cost estimate (step 1 of the KOL marketplace flow) ----
+// Given a Twitter handle/uid, estimate tweet count and the one-time cost to clone the KOL, so we can
+// quote the KOL a price before spending. Money figures use the RATES below — tune to real provider
+// pricing. "go_live" = ingest + persona only (raw-index makes them searchable with NO LLM); the tag
+// layer is async/optional, billed separately.
+app.get("/api/admin/estimate", async (c) => {
+  if (!adminOk(c)) return c.json({ error: "unauthorized" }, 401);
+  const uid = c.req.query("uid") || "";
+  const handle = c.req.query("handle") || "";
+  let count = parseInt(c.req.query("count") || "0", 10);
+  let countSource = count ? "param" : "unknown";
+  // Best-effort: read the account's total tweet count cheaply (one GetXAPI page → author block).
+  if (!count && uid && c.env.GETXAPI_KEY) {
+    try {
+      const url = new URL("https://api.getxapi.com/twitter/user/tweets");
+      url.searchParams.set("userId", uid);
+      const res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${c.env.GETXAPI_KEY}` } });
+      if (res.ok) {
+        const j: any = await res.json();
+        const a = j?.tweets?.[0]?.author || {};
+        const cand = a.statusesCount ?? a.tweetsCount ?? a.statuses_count ?? a.tweet_count;
+        if (cand) { count = Number(cand); countSource = "getxapi_author"; }
+      }
+    } catch {}
+  }
+  // USD rates — placeholders, tune to actual provider pricing (X scrape per 1k, DeepSeek per 1M tokens).
+  const RATES = { X_PER_1K: 0.20, FLASH_IN_PER_M: 0.10, FLASH_OUT_PER_M: 0.30, PRO_IN_PER_M: 0.40, PRO_OUT_PER_M: 1.20 };
+  const r2 = (x: number) => Math.round(x * 100) / 100;
+  const tagCalls = Math.ceil(count / 16);
+  const ingest_usd = (count / 1000) * RATES.X_PER_1K;
+  const persona_usd = (13000 / 1e6) * RATES.PRO_IN_PER_M + (4800 / 1e6) * RATES.PRO_OUT_PER_M;
+  const tag_usd = (tagCalls * 1840 / 1e6) * RATES.FLASH_IN_PER_M + (tagCalls * 1600 / 1e6) * RATES.FLASH_OUT_PER_M;
+  return c.json({
+    handle, uid, estimated_tweets: count, count_source: countSource, rates: RATES,
+    breakdown_usd: { ingest: r2(ingest_usd), persona: r2(persona_usd), tagging: r2(tag_usd) },
+    go_live_usd: r2(ingest_usd + persona_usd),         // searchable + persona, NO tag LLM in the path
+    full_index_usd: r2(ingest_usd + persona_usd + tag_usd),
+    note: count ? "estimate" : "pass ?count=N or ?uid= (GetXAPI) to compute",
+  });
+});
+
+app.get("/api/admin/search-stats", async (c) => {
+  if (!adminOk(c)) return c.json({ error: "unauthorized" }, 401);
+  const tweets = await c.env.DB.prepare(
+    `SELECT kol_id, COUNT(*) n FROM tweets WHERE is_retweet=0 GROUP BY kol_id`
+  ).all();
+  const tagged = await c.env.DB.prepare(`SELECT kol_id, COUNT(*) n FROM tweet_tags GROUP BY kol_id`).all();
+  const indexed = await c.env.DB.prepare(`SELECT kol_id, COUNT(*) n FROM tweet_search GROUP BY kol_id`).all();
+  return c.json({ tweets: tweets.results, tagged: tagged.results, indexed: indexed.results });
 });
 
 // ---- Auto-onboard: full KOL clone pipeline from just a Twitter handle ----

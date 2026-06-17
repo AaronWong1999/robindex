@@ -1,6 +1,7 @@
 import type { Env } from "./env";
 import { completeChat } from "./chat";
 import { evolvePersona } from "./persona-gen";
+import { indexRawTweets } from "./tagger";
 
 const APIFY_ACTOR = "apidojo~tweet-scraper";
 const GETXAPI_BASE = "https://api.getxapi.com/twitter/user/tweets";
@@ -37,7 +38,25 @@ function mapApifyTweet(it: any, kolId: string) {
     views: it.viewCount ?? m.views ?? 0,
     urls: JSON.stringify(it.urls || it.entities?.urls || []),
     media: JSON.stringify(it.media || []),
+    quoted: mapQuoted(it),
   };
+}
+
+// Extract the quoted tweet (GetXAPI `quoted_tweet`: {id, text, user:{name, screen_name}}) into our
+// compact JSON shape, so the UI can render the nested original. Returns "" when not a quote-tweet.
+function mapQuoted(it: any): string {
+  const q = it.quoted_tweet || it.quotedTweet || it.quoted_status || null;
+  if (!q || !(q.text || q.full_text)) return "";
+  const u = q.user || q.author || {};
+  const handle = u.screen_name || u.userName || u.username || "";
+  const qid = String(q.id || q.id_str || "");
+  return JSON.stringify({
+    id: qid,
+    text: q.text || q.full_text || "",
+    handle,
+    name: u.name || u.display_name || "",
+    url: handle && qid ? `https://x.com/${handle}/status/${qid}` : "",
+  });
 }
 
 function mapGetxTweet(it: any, kolId: string) {
@@ -65,6 +84,7 @@ function mapGetxTweet(it: any, kolId: string) {
     views: it.viewCount || 0,
     urls: JSON.stringify(urls),
     media: JSON.stringify(it.media || []),
+    quoted: mapQuoted(it),
   };
 }
 
@@ -144,8 +164,8 @@ export async function insertTweets(env: Env, rows: TweetRow[]): Promise<number> 
     if (!t.id || !t.text) continue;
     const r = await env.DB.prepare(
       `INSERT OR IGNORE INTO tweets
-       (id,kol_id,text,created_at_iso,created_at_ts,is_retweet,lang,likes,retweets,replies,quotes,views,urls,media)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+       (id,kol_id,text,created_at_iso,created_at_ts,is_retweet,lang,likes,retweets,replies,quotes,views,urls,media,quoted)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     )
       .bind(
         t.id,
@@ -161,7 +181,8 @@ export async function insertTweets(env: Env, rows: TweetRow[]): Promise<number> 
         t.quotes,
         t.views,
         t.urls,
-        t.media
+        t.media,
+        (t as any).quoted || ""
       )
       .run();
     if (r.meta.changes) n++;
@@ -218,6 +239,20 @@ export async function runDailyIngest(env: Env): Promise<void> {
       if (rows.length) {
         await archiveRawToR2(env, k.id, rows);
         inserted = await insertTweets(env, rows);
+        // Query-side-only is the default scheme: raw-index new tweets (original text → FTS, NO LLM) so
+        // they are instantly searchable/citable. Cross-lingual recall comes from the planner's bilingual
+        // expansion at query time, not per-tweet tagging — so daily updates cost zero tagging tokens.
+        try {
+          const fresh = rows
+            .filter((r) => !r.is_retweet && r.id && r.text)
+            .map((r) => ({ id: r.id, text: r.text }));
+          if (fresh.length) {
+            const n = await indexRawTweets(env, k.id, fresh);
+            console.log(`ingest ${k.id}: raw search-indexed ${n} new tweets (query-side default)`);
+          }
+        } catch (e) {
+          console.log(`ingest ${k.id} search-index error: ${e}`);
+        }
         maxId = rows
           .map((r) => r.id)
           .filter(Boolean)

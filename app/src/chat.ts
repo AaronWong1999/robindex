@@ -1,12 +1,18 @@
 import type { Env, KolRow } from "./env";
 import { retrieve, type Citation } from "./rag";
-import { getKlineCached, type Quote } from "./finance";
-import { detectInstruments, type DetectOptions } from "./entities";
+import { getKlineCached, resolveSymbolCached, getQuotesCached, type Quote } from "./finance";
 import { getStockNews, getMarketNews, type NewsItem } from "./marketdata";
 import { TOOLS, executeTool } from "./tools";
 
 // User is asking about news / macro / what's happening — pull fast-news into context.
 const NEWS_INTENT = /(news|headline|macro|happening|宏观|新闻|消息|资讯|事件|最近|发生|利好|利空|政策|加息|降息|cpi|fed|联储|财报)/i;
+
+// Market-context intent: macro/market questions that name NO specific instrument (e.g. "最近宏观怎么看",
+// "现在该不该买", "大盘怎么走") still need live context → we inject a benchmark INDEX basket + macro news.
+const MACRO_INTENT =
+  /(宏观|大盘|后市|该不该买|值不值得|要不要买|能不能买|可以买|抄底|加仓|减仓|仓位|配置|牛市|熊市|行情|指数|纳指|标普|道指|恒生|上证|创业板|经济|衰退|加息|降息|通胀|cpi|联储|fed|macro|recession|rally|index|market)/i;
+// Reliable Tencent index codes (probed live): 纳指 / 标普 / 道指 / 恒生 / 上证.
+const BENCH_INDEX_CODES = ["usIXIC", "usINX", "usDJI", "hkHSI", "sh000001"];
 
 function fmtQuote(q: Quote): string {
   const sign = q.change >= 0 ? "+" : "";
@@ -14,7 +20,8 @@ function fmtQuote(q: Quote): string {
 }
 
 export interface MarketData {
-  quotes: Quote[];
+  quotes: Quote[];          // real, user-named instruments (drive chart + per-stock kline/news)
+  benchmarks: Quote[];      // macro index basket — TEXT context only, never charted
   klineText: string;
   primary: Quote | null;
   news: NewsItem[];
@@ -24,11 +31,42 @@ export interface MarketData {
 export async function gatherMarketData(
   env: Env,
   message: string,
-  opts: DetectOptions = {}
+  opts: { extraInstruments?: string[] } = {}
 ): Promise<MarketData> {
-  const quotes = await detectInstruments(env, message, { max: 2, ...opts });
-  let klineText = "";
+  // Single source of instrument detection: the query planner (an LLM call we make anyway) identifies
+  // the tradable names + tickers in the question. We resolve each through the quote feed, which
+  // VALIDATES (price>0 + real name) before we trust the model's ticker guess. No static dictionary to
+  // maintain — long-tail names (SOXL, CRCL, 茅台 …) are handled the same way as common ones.
+  const quotes: Quote[] = [];
+  const seen = new Set<string>();
+  for (const raw of opts.extraInstruments || []) {
+    if (quotes.length >= 3) break;
+    const name = String(raw || "").trim();
+    if (!name) continue;
+    try {
+      const q = await resolveSymbolCached(env.CACHE, name);
+      if (q && q.price > 0 && q.name && !seen.has(q.code)) {
+        seen.add(q.code);
+        quotes.push(q);
+      }
+    } catch {}
+  }
+  // primary (→ chart + per-stock kline/news) is ONLY ever a real user-named instrument.
   let primary: Quote | null = quotes[0] || null;
+
+  // No specific instrument but it's a macro / "should I buy" / 大盘 question → fetch a benchmark INDEX
+  // basket for live context (纳指/标普/道指/恒生/上证). These are TEXT context only — NOT charted (index
+  // K-line isn't reliably available, which is what produced the empty "IXIC · US" box).
+  const wantMacro = NEWS_INTENT.test(message) || MACRO_INTENT.test(message);
+  const benchmarks: Quote[] = [];
+  if (!quotes.length && wantMacro) {
+    try {
+      const idx = await getQuotesCached(env.CACHE, BENCH_INDEX_CODES);
+      benchmarks.push(...idx.filter((q) => q.price > 0).slice(0, 5));
+    } catch {}
+  }
+
+  let klineText = "";
   if (primary) {
     try {
       const k = await getKlineCached(env.CACHE, primary.code, "day", 30);
@@ -39,15 +77,14 @@ export async function gatherMarketData(
     } catch {}
   }
 
-  // News: per-stock for the primary US name, plus market/macro fast-news when the question is news/macro.
+  // News: per-stock for the primary name, plus market/macro fast-news for news/macro/advice questions.
   const news: NewsItem[] = [];
   try {
-    const wantMacro = NEWS_INTENT.test(message);
     if (primary) news.push(...(await getStockNews(env, primary, 4)));
     if (wantMacro) news.push(...(await getMarketNews(env, 8)));
   } catch {}
 
-  return { quotes, klineText, primary, news, extraContext: "" };
+  return { quotes, benchmarks, klineText, primary, news, extraContext: "" };
 }
 
 export function buildMessages(opts: {
@@ -74,26 +111,29 @@ export function buildMessages(opts: {
     `This is not investment advice; you are sharing the persona's perspective for discussion.\n\n` +
     `=== PERSONA PACK (identity · methodology · tone · taboos · format) ===\n${persona}\n`;
 
-  // Tool Usage SOP (serenity-style Agentic Protocol, works with 3-round structured calling)
+  // Tool Usage SOP (works with the 3-round structured calling phase). Quotes for the user's instrument
+  // are usually pre-fetched into LIVE MARKET DATA already — only call tools for what's missing.
   const toolSop =
-    `\n=== TOOL USAGE GUIDE (use tools in order) ===\n` +
-    `Round 1 (always): extract entities + get quotes first.\n` +
-    `Round 2: based on what the user is asking:\n` +
-    `- 基本面/估值/财务 → get_financials, get_key_indicators, get_analyst_data\n` +
-    `- 资金流向/主力/龙虎榜 → get_fund_flow (A-share), get_dragon_tiger\n` +
-    `- 板块/概念/行业 → get_sector_blocks, get_market_ranking\n` +
-    `- 宏观/新闻/事件 → get_news, get_macro\n` +
+    `\n=== TOOL USAGE GUIDE (only fetch what's missing; data may already be in LIVE MARKET DATA) ===\n` +
+    `- 价格/标的确认 → get_quote (pass one or many names/tickers; also resolves names you're unsure of)\n` +
+    `- 走势/K线 → get_kline (use minute periods for intraday)\n` +
+    `- 新闻/宏观/事件 → get_news (with symbol = stock news; no symbol = market/macro fast-news)\n` +
+    `- 基本面/估值/财务 → get_financials, get_key_indicators, get_analyst_data (US/HK)\n` +
     `- SEC 文件/年报 → get_sec_filings\n` +
-    `Round 3 (if needed): cross-stock comparison, chain analysis.\n` +
-    `Chain pattern: identify → fetch details → compare/verify.\n` +
-    `Fall back to get_quote if specialized tools fail.\n`;
+    `- 全市场涨跌幅排名 → get_market_ranking\n` +
+    `- A股资金流/龙虎榜/板块 → get_ashare_detail (kind = fund_flow | dragon_tiger | sectors)\n` +
+    `Pattern: identify → fetch only missing details → compare/verify. Don't re-fetch data already shown.\n`;
 
+  // NOTE: retrieved knowledge is query-dependent, so it must NOT live in the system message — that
+  // would break the cacheable stable prefix. Only persona pack + tool SOP (both per-turn-invariant)
+  // go in system; the knowledge block is emitted in the variable user suffix below.
   const knowledgeBlock = knowledge.length
-    ? `\n=== PERSONA KNOWLEDGE (distilled theses / methodology / analysis) ===\n` +
-      knowledge.map((k) => `# ${k.title || k.source}\n${k.text}`).join("\n\n")
+    ? `=== PERSONA KNOWLEDGE (distilled theses / methodology / analysis) ===\n` +
+      knowledge.map((k) => `# ${k.title || k.source}\n${k.text}`).join("\n\n") +
+      "\n\n"
     : "";
 
-  const system = personaBlock + toolSop + knowledgeBlock;
+  const system = personaBlock + toolSop;
 
   // ---- VARIABLE SUFFIX: retrieved tweets + live data + user turn. ----
   const tweetsBlock = citations.length
@@ -101,12 +141,18 @@ export function buildMessages(opts: {
       citations.map((c) => `[${c.ref}] (${c.date}) ${c.snippet}`).join("\n")
     : `SOURCE TWEETS: (none retrieved)`;
 
+  const benchmarkBlock = market.benchmarks?.length
+    ? `大盘指数 (live benchmark levels):\n` + market.benchmarks.map(fmtQuote).join("\n")
+    : "";
   const dataBlock = market.quotes.length
     ? `LIVE MARKET DATA (as of now):\n` +
       market.quotes.map(fmtQuote).join("\n") +
       (market.klineText ? `\n\nRecent daily candles for ${market.primary?.symbol}:\n${market.klineText}` : "") +
+      (benchmarkBlock ? `\n\n${benchmarkBlock}` : "") +
       (market.extraContext ? `\n\nADDITIONAL DATA (pre-fetched by intent):\n${market.extraContext}` : "")
-    : `LIVE MARKET DATA: (no specific instrument detected in the question)`;
+    : benchmarkBlock
+      ? `LIVE MARKET DATA (no specific instrument named; market-wide context):\n${benchmarkBlock}`
+      : `LIVE MARKET DATA: (no specific instrument detected in the question)`;
 
   const newsBlock = market.news.length
     ? `\n\nRECENT NEWS (use only if relevant; cite source/time, don't fabricate):\n` +
@@ -120,7 +166,7 @@ export function buildMessages(opts: {
   for (const h of history.slice(-6)) messages.push({ role: h.role, content: h.content });
   messages.push({
     role: "user",
-    content: `${summaryBlock}${toolMemoryBlock}${tweetsBlock}\n\n${dataBlock}${newsBlock}\n\n=== USER QUESTION ===\n${userMessage}`,
+    content: `${summaryBlock}${toolMemoryBlock}${knowledgeBlock}${tweetsBlock}\n\n${dataBlock}${newsBlock}\n\n=== USER QUESTION ===\n${userMessage}`,
   });
   return messages;
 }
@@ -227,12 +273,14 @@ export async function resolveToolPhase(
   let msgs: any[] = [...messages];
   const toolCalls: ToolCallRecord[] = [];
   try {
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 2; i++) { // 2 rounds: round 1 fetches, round 2 deepens; lower latency than 3
       onEvent?.({ type: "progress", text: `正在分析数据（第 ${i + 1} 轮）…` });
       const res = await fetch(env.GATEWAY_URL, {
         method: "POST",
         headers: gatewayHeaders(env),
-        body: JSON.stringify({ model, messages: msgs, tools: TOOLS, tool_choice: "auto", temperature: 0.2, max_tokens: 600 }),
+        // 1500 (not 600): leaves room for any reasoning text PLUS several tool_call JSON blocks so the
+        // assistant turn isn't truncated mid tool-call (which would end the tool phase early).
+        body: JSON.stringify({ model, messages: msgs, tools: TOOLS, tool_choice: "auto", temperature: 0.2, max_tokens: 1500 }),
       });
       if (!res.ok) break;
       const j: any = await res.json().catch(() => null);

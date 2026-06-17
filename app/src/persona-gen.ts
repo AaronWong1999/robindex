@@ -6,11 +6,20 @@ import { completeChat } from "./chat";
 
 // ---------- Types ----------
 
+// Each mental model carries a machine-checkable verification block (the "triple gate"): it must span
+// ≥2 distinct topics (cross-domain), let us infer a NEW stance (generative), and be specific to this
+// KOL rather than generic (exclusive). The gate is enforced in code, not just requested in the prompt.
+interface ModelVerification {
+  cross_domain_topics: string[]; // distinct topics where this model shows up (need ≥2)
+  generative_test: string;       // a fresh stance this model lets us predict
+  exclusive: boolean;            // true = specific to this KOL, false = generic truism
+}
 interface MentalModel {
   name: string;
   description: string;
   evidence: string[];
   limitation: string;
+  verification?: ModelVerification;
 }
 interface DecisionHeuristic {
   rule: string;
@@ -23,6 +32,12 @@ interface ExpressionDna {
   certainty: string;
   opening_pattern: string;
 }
+// A dated prediction + how it played out — the "track record" dimension (serenity evidence ladder).
+interface TrackRecordItem {
+  date: string;
+  call: string;
+  outcome: string;
+}
 interface PersonaJson {
   mental_models: MentalModel[];
   decision_heuristics: DecisionHeuristic[];
@@ -31,6 +46,10 @@ interface PersonaJson {
   anti_patterns: string[];
   tensions: string[];
   honest_boundaries: string[];
+  track_record?: TrackRecordItem[];   // C1: dated calls + outcomes
+  counter_views?: string[];           // C1: blind spots / what critics would say
+  sector_focus?: string[];            // C1: sectors/tickers this KOL covers most
+  signature_examples?: string[];      // C1: representative quotes / 金句 (voice exemplars)
 }
 
 interface EvolutionResult {
@@ -48,7 +67,17 @@ Output ONLY valid JSON (no markdown fences). Be precise and evidence-based.
 Output JSON schema:
 {
   "mental_models": [
-    { "name": "model name", "description": "one-line", "evidence": ["tweet snippet1","snippet2"], "limitation": "when this fails" }
+    {
+      "name": "model name",
+      "description": "one-line",
+      "evidence": ["tweet snippet1","snippet2"],
+      "limitation": "when this fails",
+      "verification": {
+        "cross_domain_topics": ["topic A","topic B"],
+        "generative_test": "a NEW stance this model lets us predict",
+        "exclusive": true
+      }
+    }
   ],
   "decision_heuristics": [
     { "rule": "if X then Y", "example": "concrete tweet example" }
@@ -63,14 +92,23 @@ Output JSON schema:
   "values": ["core value1","value2"],
   "anti_patterns": ["what this person explicitly opposes"],
   "tensions": ["value A vs value B internal contradiction"],
-  "honest_boundaries": ["limitation of this methodology"]
+  "honest_boundaries": ["limitation of this methodology"],
+  "track_record": [ { "date": "YYYY-MM-DD", "call": "what they predicted", "outcome": "what happened / TBD" } ],
+  "counter_views": ["blind spot or what a smart critic would say against this persona"],
+  "sector_focus": ["sectors/tickers/themes this KOL covers most"],
+  "signature_examples": ["a verbatim representative quote / 金句 that captures their voice"]
 }
 
 Rules:
-- mental_models: 3-7 items. Triple-verified: appears across ≥2 topics + can infer new stances + not generic.
+- mental_models: produce 5-8 CANDIDATES. For EACH, fill "verification": cross_domain_topics MUST list
+  the distinct topics where the model recurs (a real model recurs in ≥2), generative_test MUST state a
+  fresh stance it predicts, exclusive=false if it is a generic market truism (e.g. "buy low sell high").
+  Weak candidates will be filtered out downstream, so be honest in verification rather than inflating.
 - decision_heuristics: 5-10 rules grounded in actual tweets.
 - tensions: at least 2 pairs of internal contradictions.
-- All evidence must come from the provided tweets. Do not fabricate.`;
+- track_record: 3-8 dated calls actually found in the tweets (with outcome if determinable, else "TBD").
+- signature_examples: 3-6 verbatim short quotes copied from the tweets (do not paraphrase).
+- All evidence/examples must come from the provided tweets. Do not fabricate.`;
 
 const EVOLUTION_SYSTEM = `You are a financial KOL analyst performing incremental persona evolution.
 Compare NEW tweets against the EXISTING persona pack. Output ONLY valid JSON (no markdown fences).
@@ -126,7 +164,7 @@ export async function generatePersonaPack(
         content: `KOL: ${kol.display_name} (@${kol.handle})${kol.tagline ? ` — ${kol.tagline}` : ""}\n\nTweet corpus (${tweets.length} tweets):\n${corpus}`,
       },
     ],
-    { maxTokens: 4000, temperature: 0.2 }
+    { maxTokens: 4800, temperature: 0.2 }
   );
 
   // 4. Parse JSON output
@@ -140,6 +178,21 @@ export async function generatePersonaPack(
     if (match) {
       try { pj = JSON.parse(match[0]) as PersonaJson; } catch {}
     }
+  }
+
+  // 4b. Mechanical triple-verification gate (Plan §6c C2): enforce the gate in code, not just the
+  // prompt. Drop candidates that recur in <2 topics or are flagged non-exclusive (generic truisms).
+  // Models without a verification block are kept (we don't punish the model for omitting it), but if
+  // gating would wipe everything we fall back to the raw candidates to avoid an empty pack.
+  if (pj?.mental_models?.length) {
+    const passed = pj.mental_models.filter((m) => {
+      const v = m.verification;
+      if (!v) return true;
+      const crossDomain = Array.isArray(v.cross_domain_topics) && v.cross_domain_topics.length >= 2;
+      const exclusive = v.exclusive !== false;
+      return crossDomain && exclusive;
+    });
+    if (passed.length >= 3) pj.mental_models = passed.slice(0, 7);
   }
 
   // 5. Build Markdown persona_pack
@@ -202,6 +255,30 @@ function buildMarkdown(kol: any, pj: PersonaJson | null): string {
     lines.push("");
   }
 
+  if (pj?.sector_focus?.length) {
+    lines.push(`## Sector Focus（覆盖领域）`);
+    lines.push(pj.sector_focus.join(" · "));
+    lines.push("");
+  }
+
+  if (pj?.track_record?.length) {
+    lines.push(`## Track Record（历史判断与结果）`);
+    pj.track_record.forEach((t) => lines.push(`- (${t.date}) ${t.call} → ${t.outcome}`));
+    lines.push("");
+  }
+
+  if (pj?.counter_views?.length) {
+    lines.push(`## Counter-Views & Blind Spots（反方视角/盲区）`);
+    pj.counter_views.forEach((c) => lines.push(`- ${c}`));
+    lines.push("");
+  }
+
+  if (pj?.signature_examples?.length) {
+    lines.push(`## Signature Examples（金句/语气范例）`);
+    pj.signature_examples.forEach((s) => lines.push(`- “${s}”`));
+    lines.push("");
+  }
+
   if (pj?.honest_boundaries?.length) {
     lines.push(`## Honest Boundaries`);
     pj.honest_boundaries.forEach((b) => lines.push(`- ${b}`));
@@ -235,7 +312,7 @@ function deriveAgenticDimensions(pj: PersonaJson | null): AgenticDim[] {
     return [
       { dimension: "Price Action", rationale: "Check current price and recent movement", tools: ["get_quote", "get_kline"] },
       { dimension: "Fundamentals", rationale: "Verify valuation and financial health", tools: ["get_financials", "get_key_indicators"] },
-      { dimension: "Market Context", rationale: "Understand macro environment and sector trends", tools: ["get_macro", "get_sector_blocks"] },
+      { dimension: "Market Context", rationale: "Understand macro environment and sector trends", tools: ["get_news", "get_ashare_detail"] },
     ];
   }
 
@@ -253,14 +330,14 @@ function deriveAgenticDimensions(pj: PersonaJson | null): AgenticDim[] {
     dims.push({
       dimension: "Technical / Momentum",
       rationale: "This persona focuses on price action and market microstructure",
-      tools: ["get_kline", "get_fund_flow", "get_dragon_tiger"],
+      tools: ["get_kline", "get_ashare_detail"],
     });
   }
   if (/macro|policy|rate|fed|sector|industry|chain|宏观|政策|产业链|行业/.test(allText)) {
     dims.push({
       dimension: "Macro & Sector Context",
       rationale: "This persona reasons top-down from macro to sector to stock",
-      tools: ["get_macro", "get_sector_blocks", "get_industry_ranking"],
+      tools: ["get_news", "get_ashare_detail", "get_market_ranking"],
     });
   }
   if (/sentiment|narrative|crowd|psychology|情绪|叙事|人性/.test(allText)) {
@@ -295,9 +372,12 @@ async function validatePersona(
     return results;
   }
 
-  // Check 1: mental_models count
+  // Check 1: mental_models count + how many carry a passing triple-verification block
   const mmCount = pj.mental_models?.length || 0;
-  results.push(mmCount >= 3 ? `PASS: ${mmCount} mental models extracted` : `WARN: Only ${mmCount} mental models (expected ≥3)`);
+  const verified = (pj.mental_models || []).filter(
+    (m) => m.verification && (m.verification.cross_domain_topics?.length || 0) >= 2 && m.verification.exclusive !== false
+  ).length;
+  results.push(mmCount >= 3 ? `PASS: ${mmCount} mental models (${verified} triple-verified)` : `WARN: Only ${mmCount} mental models (expected ≥3)`);
 
   // Check 2: evidence grounding — verify evidence snippets exist in corpus
   const corpusText = tweets.map((t) => t.text).join(" ");

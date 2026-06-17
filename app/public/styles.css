@@ -393,6 +393,11 @@ body.history-collapsed .side { display: none; }
 .src .stext.expanded { max-height: none; }
 .src .slinks { display: flex; gap: 14px; margin-top: 10px; font-size: 12.5px; }
 .src .slinks a, .src .slinks button { color: var(--green); background: transparent; border: 0; padding: 0; display: inline-flex; align-items: center; gap: 5px; font-weight: 500; }
+/* nested quoted tweet (themarketbrew-style) */
+.src .squote { margin-top: 10px; padding: 10px 12px; border: 1px solid rgba(245,244,239,.10); border-radius: 10px; background: rgba(245,244,239,.03); }
+.src .squote .sqh { color: var(--muted); font-size: 11.5px; margin-bottom: 5px; }
+.src .squote .sqtext { font-size: 12.5px; color: #bdb9af; white-space: pre-wrap; max-height: 6em; overflow: hidden; line-height: 1.65; }
+.src .squote .sqlink { color: var(--green); font-size: 11.5px; margin-top: 6px; display: inline-block; }
 
 /* responsive */
 @media (max-width: 1023px) {

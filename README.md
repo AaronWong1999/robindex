@@ -1,113 +1,157 @@
 # Robindex
 
-Robindex is a Cloudflare-native KOL research assistant. Users ask questions as if they were consulting a specific finance KOL, and the app answers with that KOL's persona, reasoning style, historical source tweets, and live market data.
+Robindex is a Cloudflare-native "AI Trader Desk". You chat with an AI that faithfully impersonates a
+chosen finance KOL — its knowledge, logic, tone — grounded in that KOL's real historical tweets and
+live market data, with clickable citations back to the source tweets.
 
-Production: https://robindex.ai
+Production: https://robindex.ai · Research room: `https://robindex.ai/research?agent=kol&persona=<kol_id>`
 
-## Current Architecture
+Distillation is **API + retrieval only — no fine-tuning** (so we ride model upgrades for free).
 
-Robindex now uses **D1 original text + sparse retrieval + KOL playbooks**. It does **not** use Vectorize or embedding in the chat path.
+---
 
-| Layer | Current implementation |
+## Architecture (Cloudflare-only)
+
+Single Hono Worker (`app/src/index.ts`) serving a vanilla static frontend (Workers Static Assets) + a
+JSON/SSE API. No build step. All LLM calls go through the **Cloudflare AI Gateway**.
+
+| Concern | Implementation |
 | --- | --- |
-| Frontend | Cloudflare Workers Static Assets, vanilla HTML/CSS/JS |
-| API / SSE chat | Hono Worker in `app/src/index.ts` |
-| Store | Cloudflare D1 `robindex-db` |
-| Raw archive | R2 `robindex-raw` for paid tweet data |
-| Cache | KV `CACHE` for quotes/kline/news-style runtime data |
-| LLM | Cloudflare AI Gateway → `deepseek/deepseek-v4-flash` / `deepseek/deepseek-v4-pro` |
-| Retrieval | D1 sparse retrieval in `app/src/rag.ts`: terms, tickers, priority topics, recency, engagement, local rerank |
-| KOL memory | `persona_pack`, `knowledge_chunks`, weekly stance refresh, bounded conversation summaries |
-| Scheduled jobs | Daily tweet ingest and weekly persona refresh via Cloudflare Cron |
+| Frontend | Workers Static Assets (`app/public`), vanilla HTML/CSS/JS, mobile-first |
+| API / SSE chat | Hono Worker (`app/src/index.ts`) |
+| Store | D1 `robindex-db` |
+| Raw tweet archive | R2 `robindex-raw` |
+| Cache (quotes/kline/news + resolved symbols) | KV `CACHE` |
+| LLM | AI Gateway → `deepseek/deepseek-v4-flash` (cheap path) / `deepseek/deepseek-v4-pro` (answer/persona) |
+| Live market data | public Tencent endpoints (quote/kline/minute) + Yahoo (US fundamentals) |
+| Charts | benji.org/liveline (frontend renders from chart meta) |
+| Scheduled jobs | daily incremental ingest (`0 9 * * *`), weekly persona refresh (`30 9 * * 1`) |
 
-Explicitly removed:
-- No Vectorize binding in `app/wrangler.jsonc`.
-- No `embedding` / `embedded` columns in D1.
-- No `bge-m3`, `embedBatch`, `embedPending`, or vector backfill scripts.
-- Migration: `app/migrations/0002_remove_embeddings.sql`.
+**No vectors / no embeddings anywhere.** Retrieval is sparse (FTS5). This is a deliberate decision —
+short, jargon-dense, bilingual finance text retrieves better with full-text + LLM expansion than with
+embeddings.
+
+### Retrieval — the core (`app/src/query-plan.ts` + `app/src/rag.ts`)
+
+Default mode is **query-side-only**: the LLM does the work, no hardcoded dictionaries (so it improves as
+models improve).
+
+1. **Plan** — `planQuery()` (flash): turns the question into a structured plan — tradable `instruments`
+   `{name,ticker,market}`, plus **bilingual (CN/EN) keyword expansion** (the only cross-language bridge).
+2. **Search** — `retrieve()` runs multi-route FTS5 over `tweet_search` (trigram tokenizer) scoped to the
+   `{text}` column, matching the planner's bilingual terms against the **original tweet text**. An
+   `instr()` route covers <3-char terms trigram can't match. Recency is a weak tie-breaker only.
+3. **Rerank** — `llmRerank()` (flash) is the relevance **authority**: it selects the final ≤20 citations
+   by topic-specificity, the KOL's own view, set coverage (facets + ecosystem), and concrete substance —
+   explicitly *not* by recency.
+4. The answer model is shown **only the real original tweet text**; citations are normalized to `[T#]`.
+
+Cross-lingual recall works because the planner expands a Chinese question into the English words a
+relevant tweet would contain (and vice-versa), matched against the raw text.
+
+**Per-KOL retrieval mode** (`kols.retrieval_mode`, `kols.corpus_id`):
+- `query_side` (default) — matches the `{text}` column only.
+- `tagged` (opt-in A/B control) — also weights machine tag columns (`entities/aliases/topics/stances/style`
+  generated offline by flash, stored in `tweet_tags` + `tweet_search`). `corpus_id` lets a control KOL
+  reuse another KOL's corpus without duplicating the tweets table.
+  Tagging is **optional** — query-side-only is the default and needs zero per-tweet LLM cost.
+
+### Live data + tools (`app/src/chat.ts`, `app/src/tools.ts`)
+
+- The planner's instruments (and `exact_entities` as fallback) are resolved against the live quote feed;
+  only those that return a real price are used → quote + 30-day K-line + per-stock news.
+- Macro/"should I buy"/大盘 questions with no named instrument inject a benchmark **index basket**
+  (纳指/标普/道指/恒生/上证) as text context (not charted).
+- A bounded **tool phase** (≤2 rounds) lets the model fetch anything missing via **9 tools**: `get_quote`
+  (one or many, also resolves names), `get_kline`, `get_news`, `get_financials`, `get_key_indicators`,
+  `get_analyst_data`, `get_sec_filings`, `get_market_ranking`, `get_ashare_detail` (sectors/fund_flow/
+  dragon_tiger).
+
+### Quoted tweets (themarketbrew-style nested citations)
+
+Each citation can carry the nested **quoted tweet**. `tweets.quoted` stores it (JSON); ingest captures
+GetXAPI's `quoted_tweet` natively. For older tweets without it, `attachQuoted()` falls back to parsing
+the self-quote `x.com/<handle>/status/<id>` link and resolving the original from our own corpus. The
+right-side 原文支持 panel renders it.
+
+### Persona (`app/src/persona-gen.ts`)
+
+Per-KOL `persona_pack` (mental models with a code-enforced triple-verification gate, decision heuristics,
+expression DNA, track record, counter-views, sector focus, signature quotes), generated by **pro** from
+~500 tweets. Re-injected every turn (not remembered by the model). Weekly cron evolves it
+(append-only, anti-drift). History capped at last 6 turns; older turns compressed to a rolling summary.
+
+### Anti-contamination (hard rules)
+Every retrieval/data query is scoped `WHERE kol_id=?` — the model never chooses which library to search.
+A conversation is bound to one `kol_id`. Persona is re-injected each turn.
+
+---
+
+## Data model (D1, `app/schema.sql`)
+
+- `kols` — id, display, handle, twitter_uid, avatar, tagline, `persona_pack`, `retrieval_mode`, `corpus_id`
+- `tweets` — id, kol_id, text, timestamps, engagement, urls, media, **`quoted`** (JSON)
+- `tweet_tags` — per-tweet machine search fields (only used by `tagged` mode)
+- `tweet_search` — FTS5 (trigram): `text` + tag columns + `tweet_id`/`kol_id`
+- `knowledge_chunks` — distilled methodology/theses/weekly-stance
+- `conversations` / `messages` — bound to one kol_id; messages store used citations
+- `sync_state` — per-KOL `last_tweet_id` for incremental ingest
+
+Migrations in `app/migrations/` (apply with `wrangler d1 execute robindex-db --remote --file=...`):
+`0002_remove_embeddings` · `0003_fts5_search` · `0004_retrieval_mode` · `0005_quoted_tweet`.
 
 ## KOLs
 
-| id | Display | Handle | Current corpus |
+| id | Display | Handle | Mode |
 | --- | --- | --- | --- |
-| `qinbafrank` | Qinbafrank | `@qinbafrank` | 13,756 original tweets in D1, 2021-10-03 to 2026-06-16 |
-| `aleabitoreddit` | Serenity | `@aleabitoreddit` | 5,935 original tweets in D1, 2025-07-02 to 2026-06-16; 201 distilled knowledge chunks |
+| `qinbafrank` | Qinbafrank | @qinbafrank | query_side (main, 13.7k tweets) |
+| `qinbafrank-tag` | Qinbafrank（打标签对照）| @qinbafrank | tagged (A/B control, reuses qinbafrank corpus) |
+| `aleabitoreddit` | Serenity | @aleabitoreddit | query_side (5.9k tweets + 201 knowledge chunks) |
 
-Each conversation is bound to one `kol_id`. All tweet, knowledge, message, and sync rows carry a KOL boundary, so personas do not contaminate each other.
+---
 
-## Chat Flow
+## Operations
 
-1. The user sends `{ kol_id, model, conversation_id, message }` to `/api/chat`.
-2. The Worker loads the KOL row and stable `persona_pack`.
-3. It detects tickers/entities and fetches live market data/tools where relevant.
-4. It expands search terms with a small LLM call.
-5. `retrieve()` searches D1 original tweets and knowledge chunks using sparse retrieval only.
-6. The prompt is assembled as stable persona/methodology first, then source tweets, live data, news/tools, bounded history, and user question.
-7. The model streams the final answer via SSE, with citations normalized to `[T#]`.
-8. The frontend renders the answer, chart metadata, and right-side source tweet panel.
-
-## Data Ingest
-
-Tweet data is paid, so the ingest path is conservative:
-
-- Daily cron uses GetXAPI by `twitter_uid` and `sync_state.last_tweet_id`.
-- It strictly validates the returned author before inserting.
-- New tweets are inserted into D1 and archived to R2.
-- No embedding job is triggered; new tweets are searchable immediately through D1 sparse retrieval.
-- Weekly cron distills recent posts into dated stance knowledge and optionally evolves persona packs.
-
-## Important Files
-
-- `app/src/index.ts` — Worker routes, chat SSE, admin APIs, deploy entrypoint
-- `app/src/rag.ts` — D1 sparse retrieval and citation construction
-- `app/src/chat.ts` — prompt assembly, market data gathering, tool phase
-- `app/src/ingest.ts` — daily tweet ingest and weekly persona refresh
-- `app/src/persona-gen.ts` — persona generation/evolution helpers
-- `app/schema.sql` — current no-embedding D1 schema
-- `app/migrations/0002_remove_embeddings.sql` — production migration that removed embedding fields
-- `app/wrangler.jsonc` — Cloudflare Worker config; no Vectorize binding
-
-## Local Checks
+Cloudflare auth uses the **Global API Key** (KEY + EMAIL), not a bearer token. Requires Node ≥ 22.
+Secrets live in `account.guard.json` (gitignored) — `CLOUDFLARE_API_KEY`, `expectedEmail`, `ADMIN_KEY`,
+`CFGATEWAYKEY`. Worker secrets (set via `wrangler secret`): `CFGATEWAYKEY`, `GETXAPI_KEY`, `ADMIN_KEY`,
+optional `OPENROUTER_KEY`.
 
 ```bash
 cd app
-npx tsc --noEmit
-npm run test:dsl
-rg -n "embedding|embedded|VECTORIZE|vectorize|embedBatch|embedPending|indexVectors|bge-m3" src scripts schema.sql wrangler.jsonc package.json public
+export CLOUDFLARE_API_KEY=$(node -p "require('../account.guard.json').CLOUDFLARE_API_KEY")
+export CLOUDFLARE_EMAIL=$(node -p "require('../account.guard.json').expectedEmail")
+export NODE_OPTIONS='--require ./scripts/cloudflare-dns-patch.cjs'
+unset CLOUDFLARE_API_TOKEN
+npx tsc --noEmit && npm run test:dsl   # local checks
+npx wrangler deploy                    # deploy
 ```
 
-The final `rg` command should return no runtime-code matches.
+Admin APIs (header `x-admin-key: $ADMIN_KEY`):
+- `GET /api/admin/stats` · `GET /api/admin/search-stats` — corpus / index coverage
+- `POST /api/admin/reindex?kol_id=&mode=raw|tag&shards=&shard=&batch=` — build FTS index. `mode=raw`
+  writes original text (no LLM, instant searchable); `mode=tag` adds machine tags. Drive with
+  `scripts/build_search_index.mjs` (`MODE=raw|tag SHARDS=4 SHARD=k`).
+- `POST /api/admin/refetch-quotes?kol_id=&pages=&cursor=` — backfill `quoted` from GetXAPI
+  (budget-controlled, UPDATE-only; note: GetXAPI's timeline only exposes a recent window).
+- `GET /api/admin/estimate?count=N` (or `?uid=`) — self-serve onboarding cost quote.
+- `POST /api/admin/onboard {handle}` — clone a new KOL: create row → ingest → raw-index → persona.
 
-## Deploy
-
-Cloudflare auth in this workspace uses the Global API Key from `account.guard.json`, not a bearer API token.
-
-```bash
-cd app
-CLOUDFLARE_API_KEY=$(node -p "require('../account.guard.json').CLOUDFLARE_API_KEY") \
-CLOUDFLARE_EMAIL=$(node -p "require('../account.guard.json').expectedEmail") \
-NODE_OPTIONS='--require ./scripts/cloudflare-dns-patch.cjs' \
-npx wrangler deploy
-```
-
-Latest known deployed Worker version after the no-vector migration:
-
-```text
-ee3941de-5c1c-4f56-9d71-7037f78af800
-```
-
-## Production Smoke
-
+Smoke:
 ```bash
 curl https://robindex.ai/api/kols
 curl "https://robindex.ai/api/tweets?kol_id=qinbafrank&limit=1"
-curl "https://robindex.ai/api/tweets?kol_id=aleabitoreddit&limit=1"
 ```
 
-Admin-only smoke:
+## Important files
+- `app/src/index.ts` — routes, chat SSE, admin APIs, cron entrypoint
+- `app/src/query-plan.ts` — flash query planner (bilingual expansion + instruments)
+- `app/src/rag.ts` — FTS5 retrieval, LLM rerank, quoted-tweet attach, legacy fallback
+- `app/src/chat.ts` — prompt assembly (cache-friendly), market data, tool phase, streaming, summary
+- `app/src/tagger.ts` — offline/inline flash tagging (raw + tag indexing)
+- `app/src/ingest.ts` — daily GetXAPI incremental ingest (+ quoted capture) + weekly refresh
+- `app/src/persona-gen.ts` — persona distillation/evolution
+- `app/src/finance.ts` / `eastmoney-*.ts` / `marketdata.ts` — live market data
+- `app/schema.sql` + `app/migrations/` — D1 schema
 
-```bash
-curl https://robindex.ai/api/admin/stats -H "x-admin-key: $ADMIN_KEY"
-```
-
-Expected shape: tweet totals, non-retweet counts, date ranges, knowledge counts, and `sync_state`; no `emb` field.
+See `Plan.md` for the decision history and roadmap (incl. the self-serve KOL marketplace).
