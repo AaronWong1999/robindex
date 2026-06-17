@@ -50,6 +50,7 @@ interface PersonaJson {
   counter_views?: string[];           // C1: blind spots / what critics would say
   sector_focus?: string[];            // C1: sectors/tickers this KOL covers most
   signature_examples?: string[];      // C1: representative quotes / 金句 (voice exemplars)
+  analytical_exemplars?: string[];    // C2: full analytical paragraphs where the KOL applies their framework to a specific instrument
 }
 
 interface EvolutionResult {
@@ -96,7 +97,8 @@ Output JSON schema:
   "track_record": [ { "date": "YYYY-MM-DD", "call": "what they predicted", "outcome": "what happened / TBD" } ],
   "counter_views": ["blind spot or what a smart critic would say against this persona"],
   "sector_focus": ["sectors/tickers/themes this KOL covers most"],
-  "signature_examples": ["a verbatim representative quote / 金句 that captures their voice"]
+  "signature_examples": ["a verbatim representative quote / 金句 that captures their voice"],
+  "analytical_exemplars": ["a complete analytical paragraph (3-8 sentences) where the KOL applies their framework to a specific instrument — showing reasoning chain, data usage, and conclusion style. Copy verbatim from tweets, do not summarize."]
 }
 
 Rules:
@@ -108,6 +110,7 @@ Rules:
 - tensions: at least 2 pairs of internal contradictions.
 - track_record: 3-8 dated calls actually found in the tweets (with outcome if determinable, else "TBD").
 - signature_examples: 3-6 verbatim short quotes copied from the tweets (do not paraphrase).
+- analytical_exemplars: 2-4 complete analytical paragraphs where the KOL applies their framework to a specific instrument or question. Copy VERBATIM (3-8 sentences each). Pick ones that show the KOL's reasoning chain: how they use data, how they weigh evidence, how they reach conclusions. These teach the answer model HOW to analyze, not just what methodology to use.
 - All evidence/examples must come from the provided tweets. Do not fabricate.`;
 
 const EVOLUTION_SYSTEM = `You are a financial KOL analyst performing incremental persona evolution.
@@ -275,8 +278,17 @@ function buildMarkdown(kol: any, pj: PersonaJson | null): string {
 
   if (pj?.signature_examples?.length) {
     lines.push(`## Signature Examples（金句/语气范例）`);
-    pj.signature_examples.forEach((s) => lines.push(`- “${s}”`));
+    pj.signature_examples.forEach((s) => lines.push(`- "${s}"`));
     lines.push("");
+  }
+
+  if (pj?.analytical_exemplars?.length) {
+    lines.push(`## Analytical Exemplars（分析范例 — 展示博主如何应用框架）`);
+    pj.analytical_exemplars.forEach((e, i) => {
+      lines.push(`### Exemplar ${i + 1}`);
+      lines.push(e);
+      lines.push("");
+    });
   }
 
   if (pj?.honest_boundaries?.length) {

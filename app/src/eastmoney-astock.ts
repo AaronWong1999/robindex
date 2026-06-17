@@ -287,6 +287,13 @@ export interface AshareValuation {
   revenueYoY: number;
   profitYoY: number;
   epsTTM: number;
+  revenue: number;
+  netProfit: number;
+  prevRevenue: number;
+  prevNetProfit: number;
+  reportDate: string;
+  debtRatio: number;
+  bps: number;
 }
 
 export async function getAshareValuation(kv: KVNamespace | undefined, code: string): Promise<AshareValuation | null> {
@@ -309,6 +316,7 @@ export async function getAshareValuation(kv: KVNamespace | undefined, code: stri
     }).catch(() => [] as any[]);
 
     const latest = sh_fin[0] || {};
+    const prev = sh_fin[1] || {};
     return {
       code: data.f57 || c,
       name: data.f58 || "",
@@ -323,6 +331,58 @@ export async function getAshareValuation(kv: KVNamespace | undefined, code: stri
       revenueYoY: latest.YSTZ || 0,
       profitYoY: latest.SJLTZ || 0,
       epsTTM: latest.BASIC_EPS || 0,
+      revenue: latest.TOTAL_OPERATE_INCOME || 0,
+      netProfit: latest.PARENT_NETPROFIT || 0,
+      prevRevenue: prev.TOTAL_OPERATE_INCOME || 0,
+      prevNetProfit: prev.PARENT_NETPROFIT || 0,
+      reportDate: String(latest.REPORT_DATE || "").slice(0, 10),
+      debtRatio: latest.DEBT_ASSET_RATIO || 0,
+      bps: latest.BPS || 0,
+    };
+  });
+}
+
+// ---- 10. A-share analyst consensus estimates ----
+
+export interface AshareEstimates {
+  thisYearEps: number;
+  nextYearEps: number;
+  thisYearPe: number;
+  nextYearPe: number;
+  thisYearNetProfit: number;
+  nextYearNetProfit: number;
+  analystCount: number;
+  buyCount: number;
+  avgRating: string;
+}
+
+export async function getAshareEstimates(
+  kv: KVNamespace | undefined, code: string, price: number, totalShares: number
+): Promise<AshareEstimates | null> {
+  const c = rawCode(code);
+  return cached(kv, `emest:${c}`, 3600, async () => {
+    const reports = await getResearchReports(kv, c, 30);
+    if (!reports.length || price <= 0) return null;
+    const thisYear = reports.filter((r) => r.predictThisYearEps > 0);
+    const nextYear = reports.filter((r) => r.predictNextYearEps > 0);
+    if (!thisYear.length) return null;
+    const avgThisEps = thisYear.reduce((s, r) => s + r.predictThisYearEps, 0) / thisYear.length;
+    const avgNextEps = nextYear.length
+      ? nextYear.reduce((s, r) => s + r.predictNextYearEps, 0) / nextYear.length : 0;
+    const shares = totalShares || 1;
+    const thisYearProfit = avgThisEps * shares;
+    const nextYearProfit = avgNextEps ? avgNextEps * shares : 0;
+    const buyRatings = reports.filter((r) => ["买入", "强烈推荐", "推荐", "buy", "strong_buy"].includes(r.rating.toLowerCase())).length;
+    return {
+      thisYearEps: Math.round(avgThisEps * 100) / 100,
+      nextYearEps: Math.round(avgNextEps * 100) / 100,
+      thisYearPe: avgThisEps > 0 ? Math.round(price / avgThisEps * 100) / 100 : 0,
+      nextYearPe: avgNextEps > 0 ? Math.round(price / avgNextEps * 100) / 100 : 0,
+      thisYearNetProfit: thisYearProfit,
+      nextYearNetProfit: nextYearProfit,
+      analystCount: reports.length,
+      buyCount: buyRatings,
+      avgRating: buyRatings > reports.length * 0.6 ? "偏多" : buyRatings > reports.length * 0.3 ? "中性" : "偏空",
     };
   });
 }

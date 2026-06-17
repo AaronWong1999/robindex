@@ -4,7 +4,8 @@ import { getKlineCached, resolveSymbolCached, getQuotesCached, type Quote } from
 import { getStockNews, getMarketNews, type NewsItem } from "./marketdata";
 import { TOOLS, executeTool } from "./tools";
 import { sourceTweetForPrompt } from "./source-format";
-import { getAshareValuation } from "./eastmoney-astock";
+import { getAshareValuation, getAshareEstimates } from "./eastmoney-astock";
+import { getStockFinancialProfile } from "./eastmoney-global";
 
 // User is asking about news / macro / what's happening — pull fast-news into context.
 const NEWS_INTENT = /(news|headline|macro|happening|宏观|新闻|消息|资讯|事件|最近|发生|利好|利空|政策|加息|降息|cpi|fed|联储|财报)/i;
@@ -84,24 +85,52 @@ export async function gatherMarketData(
     if (primary) newsPromises.push(getStockNews(env, primary, 4).then((n) => { news.push(...n); }));
     if (wantMacro) newsPromises.push(getMarketNews(env, 8).then((n) => { news.push(...n); }));
 
-    // A-share valuation: auto-fetch PE/PB/ROE/margins/growth for the primary instrument (always useful,
-    // especially for "该不该买" / valuation questions). Runs in parallel with news — no added latency.
-    if (primary && primary.market === "cn") {
-      newsPromises.push(
-        getAshareValuation(env.CACHE, primary.code).then((v) => {
-          if (v && v.peTTM) {
+    // Cross-market financial profile: auto-fetch rich valuation + financials for the primary instrument.
+    // A-shares: PE/PB/ROE/margins/growth/revenue/profit + analyst consensus (forward PE).
+    // US/HK: key indicators + Yahoo analyst data (trailing/forward PE, PEG, target price, holders).
+    // Runs in parallel with news — no added latency.
+    if (primary) {
+      if (primary.market === "cn") {
+        newsPromises.push(
+          getAshareValuation(env.CACHE, primary.code).then(async (v) => {
+            if (!v || !v.peTTM) return;
             const fmtMcap = (n: number) => n >= 1e12 ? `${(n / 1e12).toFixed(1)}万亿` : n >= 1e8 ? `${(n / 1e8).toFixed(0)}亿` : `${n}`;
-            extraContext = [
-              `VALUATION (${v.name} ${v.code}):`,
-              `PE-TTM: ${v.peTTM.toFixed(2)} | PE-static: ${v.peStatic.toFixed(2)} | PB: ${v.pb.toFixed(2)}`,
+            const fmtAmt = (n: number) => n >= 1e8 ? `${(n / 1e8).toFixed(2)}亿` : n >= 1e4 ? `${(n / 1e4).toFixed(0)}万` : `${n}`;
+            const lines = [
+              `FINANCIALS (${v.name} ${v.code}):`,
+              `PE-TTM: ${v.peTTM.toFixed(1)} | PE-static: ${v.peStatic.toFixed(1)} | PB: ${v.pb.toFixed(2)}`,
               `Total MCap: ${fmtMcap(v.totalMcap)} | Float MCap: ${fmtMcap(v.floatMcap)}`,
-              `ROE: ${v.roe.toFixed(2)}% | Gross Margin: ${v.grossMargin.toFixed(2)}% | Net Margin: ${v.netMargin.toFixed(2)}%`,
-              `Revenue YoY: ${v.revenueYoY.toFixed(2)}% | Profit YoY: ${v.profitYoY.toFixed(2)}%`,
-              `EPS-TTM: ${v.epsTTM.toFixed(2)}`,
-            ].join("\n");
-          }
-        }).catch(() => {})
-      );
+              `Revenue: ${fmtAmt(v.revenue)} (YoY +${v.revenueYoY.toFixed(1)}%) | Net Profit: ${fmtAmt(v.netProfit)} (YoY +${v.profitYoY.toFixed(1)}%)`,
+              `ROE: ${v.roe.toFixed(2)}% | Gross: ${v.grossMargin.toFixed(2)}% | Net: ${v.netMargin.toFixed(2)}% | Debt: ${v.debtRatio.toFixed(1)}%`,
+              `EPS-TTM: ${v.epsTTM.toFixed(2)} | Report: ${v.reportDate}`,
+            ];
+            // Fetch analyst consensus for forward PE (uses price + totalShares from valuation).
+            const totalShares = v.totalMcap > 0 && primary.price > 0 ? Math.round(v.totalMcap / primary.price) : 0;
+            const est = await getAshareEstimates(env.CACHE, primary.code, primary.price, totalShares).catch(() => null);
+            if (est) {
+              lines.push(`Forward PE (this year): ${est.thisYearPe.toFixed(1)} | Forward PE (next year): ${est.nextYearPe.toFixed(1)}`);
+              lines.push(`Consensus EPS: ${est.thisYearEps} (this yr) / ${est.nextYearEps} (next yr) | ${est.analystCount} analysts, ${est.buyCount} buy`);
+            }
+            extraContext = lines.join("\n");
+          }).catch(() => {})
+        );
+      } else {
+        newsPromises.push(
+          getStockFinancialProfile(env.CACHE, primary.code).then((p) => {
+            if (!p) return;
+            const lines = [
+              `FINANCIALS (${primary.name} ${primary.symbol}):`,
+              `PE: ${p.pe.toFixed(1)} | Forward PE: ${p.forwardPe.toFixed(1)} | PEG: ${p.peg.toFixed(2)} | PB: ${p.pb.toFixed(2)}`,
+              `Revenue: ${p.revenue > 1e9 ? (p.revenue / 1e9).toFixed(2) + "B" : p.revenue > 1e6 ? (p.revenue / 1e6).toFixed(0) + "M" : p.revenue} (YoY +${p.revenueYoY.toFixed(1)}%)`,
+              `ROE: ${p.roe.toFixed(2)}% | ROA: ${p.roa.toFixed(2)}% | Gross: ${p.grossMargin.toFixed(2)}% | Net: ${p.netMargin.toFixed(2)}% | Debt: ${p.debtRatio.toFixed(1)}%`,
+              `EPS: ${p.eps.toFixed(2)} (YoY +${p.epsYoY.toFixed(1)}%) | Beta: ${p.beta.toFixed(2)}`,
+            ];
+            if (p.targetPrice) lines.push(`Analyst target: ${p.targetPrice} (${p.targetRange}) | ${p.recommendation} (${p.analystCount} analysts)`);
+            if (p.topHolders.length) lines.push(`Top holders: ${p.topHolders.join(", ")}`);
+            extraContext = lines.join("\n");
+          }).catch(() => {})
+        );
+      }
     }
 
     await Promise.all(newsPromises);
@@ -134,6 +163,7 @@ export function buildMessages(opts: {
     `QUALITY BAR: first answer the user's concrete decision/question directly, then reconstruct your reasoning chain. Ground views in SOURCE TWEETS and LIVE MARKET DATA; if something isn't supported by either, say so.\n` +
     `If the corpus has no direct coverage of the asked-about instrument, say so, then apply your framework using adjacent peers or the macro chain to give a bounded inference. Never just stop at "no coverage".\n` +
     `When analyzing a specific instrument, always compare its valuation against industry peers, not in isolation.\n` +
+    `QUANTITATIVE REASONING: reason with numbers, don't just list them. Use growth rates to estimate forward valuation (e.g. PE-TTM / (1+profit-growth) ≈ forward PE), compare against peer multiples and historical range, and state a clear numeric verdict. If data shows PE-TTM=500x with profit growth of 120%, say what that implies — don't just show the raw figures.\n` +
     `Quantify risk with numeric ranges (e.g. 5-10% pullback, 15-20% correction, 25%+ drawdown), not vague words like "恐慌" or "大幅".\n` +
     `When a SOURCE TWEET includes Quoted context, treat it as context for what you were reacting to; do not attribute the quoted account's words to yourself unless your tweet itself endorses or comments on it.\n` +
     `Use the LIVE MARKET DATA for current prices/levels — never invent numbers. If data is missing, say so.\n` +
@@ -152,6 +182,7 @@ export function buildMessages(opts: {
     `- 全市场涨跌幅排名 → get_market_ranking\n` +
     `- A股资金流/龙虎榜/板块 → get_ashare_detail (kind = fund_flow | dragon_tiger | sectors)\n` +
     `- A股估值/财务 → get_ashare_valuation (PE/PB/ROE/毛利率/营收增速/利润增速; primary已在LIVE DATA里)\n` +
+    `- 跨市场统一画像 → get_stock_profile (任何市场的PE/Forward PE/PEG/ROE/利润率/分析师目标价; 一个调用搞定)\n` +
     `Pattern: identify → fetch only missing details → compare/verify. Don't re-fetch data already shown.\n`;
 
   // NOTE: retrieved knowledge is query-dependent, so it must NOT live in the system message — that

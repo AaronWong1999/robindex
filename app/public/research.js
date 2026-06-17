@@ -174,10 +174,10 @@ function loadConv(id) {
   renderSources(c.messages.flatMap((m) => m.citations || []), { fallback: true });
 }
 
-// ---------- daily limit (cosmetic, matches reference) ----------
+// ---------- daily limit (disabled for testing) ----------
 function remainingKey() { return "robindex_quota_" + new Date().toISOString().slice(0, 10); }
-function getRemaining() { const v = localStorage.getItem(remainingKey()); return v == null ? 2 : parseInt(v, 10); }
-function setRemaining(n) { localStorage.setItem(remainingKey(), String(n)); $("#remaining").textContent = `今日剩余 ${Math.max(0, n)} 次`; }
+function getRemaining() { return 999; }
+function setRemaining(n) { $("#remaining").textContent = `测试期间无限使用`; }
 
 // ---------- persona ----------
 function setPersona(id) {

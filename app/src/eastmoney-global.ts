@@ -320,3 +320,68 @@ export async function getSinaKline(kv: KVNamespace | undefined, symbol: string, 
     } catch { return []; }
   });
 }
+
+// ---- 7. Unified financial profile for US/HK stocks ----
+
+export interface GlobalFinancialProfile {
+  pe: number;
+  forwardPe: number;
+  peg: number;
+  pb: number;
+  roe: number;
+  roa: number;
+  grossMargin: number;
+  netMargin: number;
+  debtRatio: number;
+  revenueYoY: number;
+  epsYoY: number;
+  eps: number;
+  revenue: number;
+  beta: number;
+  targetPrice: number;
+  targetRange: string;
+  recommendation: string;
+  analystCount: number;
+  topHolders: string[];
+}
+
+export async function getStockFinancialProfile(
+  kv: KVNamespace | undefined, code: string
+): Promise<GlobalFinancialProfile | null> {
+  const isHK = code.startsWith("hk");
+  const isUS = code.startsWith("us");
+  if (!isHK && !isUS) return null;
+
+  const [indicators, analyst] = await Promise.all([
+    getKeyIndicators(kv, code, 2).catch(() => [] as KeyIndicatorRow[]),
+    getAnalystData(kv, code).catch(() => null),
+  ]);
+
+  const latest = indicators[0] || ({} as KeyIndicatorRow);
+  if (!latest.reportDate && !analyst) return null;
+
+  return {
+    pe: analyst?.trailingPe || 0,
+    forwardPe: analyst?.forwardPe || 0,
+    peg: analyst?.pegRatio || 0,
+    pb: analyst?.priceToBook || 0,
+    roe: latest.roe || analyst?.returnOnEquity || 0,
+    roa: latest.roa || 0,
+    grossMargin: latest.grossProfitRatio || 0,
+    netMargin: latest.netProfitRatio || analyst?.profitMargin || 0,
+    debtRatio: latest.debtAssetRatio || 0,
+    revenueYoY: latest.incomeYoy || 0,
+    epsYoY: latest.epsYoy || 0,
+    eps: latest.basicEps || 0,
+    revenue: latest.operateIncome || 0,
+    beta: analyst?.beta || 0,
+    targetPrice: analyst?.targetMean || 0,
+    targetRange: analyst ? `${analyst.targetLow}-${analyst.targetHigh}` : "",
+    recommendation: analyst?.recommendation || "",
+    analystCount: analyst?.ratingTrend?.[0]
+      ? Object.values(analyst.ratingTrend[0] as Record<string, number>).reduce((a: number, b: number) => a + (typeof b === "number" ? b : 0), 0)
+      : 0,
+    topHolders: analyst?.topHolders?.slice(0, 5).map((h) => `${h.name} ${h.pctHeld}%`) || [],
+  };
+}
+

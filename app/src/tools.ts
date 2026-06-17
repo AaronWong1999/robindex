@@ -5,10 +5,10 @@
 import type { Env } from "./env";
 import { resolveSymbolCached, getKlineCached, searchSymbolHits, getQuotesCached, type Quote } from "./finance";
 import { getStockNews, getMarketNews } from "./marketdata";
-import { getSectorBlocks, getFundFlowMinute, getDragonTiger, getAshareValuation } from "./eastmoney-astock";
+import { getSectorBlocks, getFundFlowMinute, getDragonTiger, getAshareValuation, getAshareEstimates } from "./eastmoney-astock";
 import {
   getFinancialStatements, getKeyIndicators, getAnalystData,
-  getMarketRanking, getSecFilings,
+  getMarketRanking, getSecFilings, getStockFinancialProfile,
 } from "./eastmoney-global";
 
 export const TOOLS = [
@@ -153,9 +153,21 @@ export const TOOLS = [
     function: {
       name: "get_ashare_valuation",
       description:
-        "A-share valuation & financial metrics: PE-TTM, PE-static, PB, market cap, ROE, gross/net margin, " +
-        "revenue/profit YoY growth, EPS. Code like sz300308 or 300308. Already in LIVE MARKET DATA for the " +
-        "primary instrument — use for comparison stocks.",
+        "A-share deep financials: PE-TTM, PE-static, PB, market cap, ROE, gross/net margin, " +
+        "revenue/profit (amount + YoY), EPS, debt ratio. Plus analyst consensus forward PE estimates. " +
+        "Code like sz300308 or 300308. Primary instrument already in FINANCIALS block — use for comparison stocks.",
+      parameters: { type: "object", properties: { symbol: { type: "string" } }, required: ["symbol"] },
+    },
+  },
+  // ---- Cross-market financial profile ----
+  {
+    type: "function",
+    function: {
+      name: "get_stock_profile",
+      description:
+        "Unified financial profile for any market (US/HK/CN). Returns: PE, forward PE, PEG, PB, " +
+        "ROE, margins, revenue/profit growth, EPS, analyst target price, top holders. " +
+        "Use for cross-market comparison or when you need a full financial picture in one call.",
       parameters: { type: "object", properties: { symbol: { type: "string" } }, required: ["symbol"] },
     },
   },
@@ -319,14 +331,58 @@ export async function executeTool(env: Env, name: string, args: any): Promise<st
       const v = await getAshareValuation(env.CACHE, String(args.symbol || ""));
       if (!v) return `No valuation data for "${args.symbol}".`;
       const fmtMcap = (n: number) => n >= 1e12 ? `${(n / 1e12).toFixed(1)}万亿` : n >= 1e8 ? `${(n / 1e8).toFixed(0)}亿` : `${n}`;
-      return [
-        `Valuation for ${v.name} (${v.code}):`,
-        `PE-TTM: ${v.peTTM.toFixed(2)} | PE-static: ${v.peStatic.toFixed(2)} | PB: ${v.pb.toFixed(2)}`,
+      const fmtAmt = (n: number) => n >= 1e8 ? `${(n / 1e8).toFixed(2)}亿` : n >= 1e4 ? `${(n / 1e4).toFixed(0)}万` : `${n}`;
+      const lines = [
+        `Financials for ${v.name} (${v.code}):`,
+        `PE-TTM: ${v.peTTM.toFixed(1)} | PE-static: ${v.peStatic.toFixed(1)} | PB: ${v.pb.toFixed(2)}`,
         `Total MCap: ${fmtMcap(v.totalMcap)} | Float MCap: ${fmtMcap(v.floatMcap)}`,
-        `ROE: ${v.roe.toFixed(2)}% | Gross Margin: ${v.grossMargin.toFixed(2)}% | Net Margin: ${v.netMargin.toFixed(2)}%`,
-        `Revenue YoY: ${v.revenueYoY.toFixed(2)}% | Profit YoY: ${v.profitYoY.toFixed(2)}%`,
-        `EPS-TTM: ${v.epsTTM.toFixed(2)}`,
-      ].join("\n");
+        `Revenue: ${fmtAmt(v.revenue)} (YoY +${v.revenueYoY.toFixed(1)}%) | Net Profit: ${fmtAmt(v.netProfit)} (YoY +${v.profitYoY.toFixed(1)}%)`,
+        `ROE: ${v.roe.toFixed(2)}% | Gross: ${v.grossMargin.toFixed(2)}% | Net: ${v.netMargin.toFixed(2)}% | Debt: ${v.debtRatio.toFixed(1)}%`,
+        `EPS-TTM: ${v.epsTTM.toFixed(2)} | Report: ${v.reportDate}`,
+      ];
+      // Forward PE from analyst consensus
+      const q = await resolveSymbolCached(env.CACHE, String(args.symbol || "")).catch(() => null);
+      if (q && q.price > 0) {
+        const totalShares = v.totalMcap > 0 ? Math.round(v.totalMcap / q.price) : 0;
+        const est = await getAshareEstimates(env.CACHE, v.code, q.price, totalShares).catch(() => null);
+        if (est) {
+          lines.push(`Forward PE: ${est.thisYearPe.toFixed(1)} (this yr) / ${est.nextYearPe.toFixed(1)} (next yr)`);
+          lines.push(`Consensus EPS: ${est.thisYearEps}/${est.nextYearEps} | ${est.analystCount} analysts, ${est.buyCount} buy (${est.avgRating})`);
+        }
+      }
+      return lines.join("\n");
+    }
+    if (name === "get_stock_profile") {
+      const raw = String(args.symbol || "").trim();
+      const q = await resolveSymbolCached(env.CACHE, raw);
+      if (!q) return `Unknown symbol "${raw}".`;
+      if (q.market === "cn") {
+        const v = await getAshareValuation(env.CACHE, q.code);
+        if (!v) return `No financial data for "${raw}".`;
+        const fmtMcap = (n: number) => n >= 1e12 ? `${(n / 1e12).toFixed(1)}万亿` : n >= 1e8 ? `${(n / 1e8).toFixed(0)}亿` : `${n}`;
+        const fmtAmt = (n: number) => n >= 1e8 ? `${(n / 1e8).toFixed(2)}亿` : n >= 1e4 ? `${(n / 1e4).toFixed(0)}万` : `${n}`;
+        const lines = [
+          `${v.name} (${v.code}) Financial Profile:`,
+          `PE-TTM: ${v.peTTM.toFixed(1)} | PB: ${v.pb.toFixed(2)} | MCap: ${fmtMcap(v.totalMcap)}`,
+          `Revenue: ${fmtAmt(v.revenue)} (+${v.revenueYoY.toFixed(1)}%) | Profit: ${fmtAmt(v.netProfit)} (+${v.profitYoY.toFixed(1)}%)`,
+          `ROE: ${v.roe.toFixed(1)}% | Gross: ${v.grossMargin.toFixed(1)}% | Net: ${v.netMargin.toFixed(1)}%`,
+        ];
+        const totalShares = v.totalMcap > 0 && q.price > 0 ? Math.round(v.totalMcap / q.price) : 0;
+        const est = await getAshareEstimates(env.CACHE, v.code, q.price, totalShares).catch(() => null);
+        if (est) lines.push(`Forward PE: ${est.thisYearPe.toFixed(1)} (this yr) / ${est.nextYearPe.toFixed(1)} (next yr) | ${est.analystCount} analysts`);
+        return lines.join("\n");
+      }
+      const p = await getStockFinancialProfile(env.CACHE, q.code);
+      if (!p) return `No financial data for "${raw}".`;
+      const lines = [
+        `${q.name} (${q.symbol}) Financial Profile:`,
+        `PE: ${p.pe.toFixed(1)} | Forward PE: ${p.forwardPe.toFixed(1)} | PEG: ${p.peg.toFixed(2)} | PB: ${p.pb.toFixed(2)}`,
+        `Revenue: ${p.revenue > 1e9 ? (p.revenue / 1e9).toFixed(2) + "B" : (p.revenue / 1e6).toFixed(0) + "M"} (+${p.revenueYoY.toFixed(1)}%) | EPS: ${p.eps.toFixed(2)} (+${p.epsYoY.toFixed(1)}%)`,
+        `ROE: ${p.roe.toFixed(1)}% | Gross: ${p.grossMargin.toFixed(1)}% | Net: ${p.netMargin.toFixed(1)}% | Debt: ${p.debtRatio.toFixed(1)}%`,
+      ];
+      if (p.targetPrice) lines.push(`Target: ${p.targetPrice} (${p.targetRange}) | ${p.recommendation} | Beta: ${p.beta.toFixed(2)}`);
+      if (p.topHolders.length) lines.push(`Top holders: ${p.topHolders.join(", ")}`);
+      return lines.join("\n");
     }
     return `Unknown tool ${name}.`;
   } catch (e) {
