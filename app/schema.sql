@@ -151,3 +151,19 @@ CREATE TABLE IF NOT EXISTS eval_results (
   created_at      TEXT DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_eval_results_kol ON eval_results(kol_id, created_at DESC);
+
+-- Durable persona fact store for full-corpus map-reduce distillation (see migration 0007).
+-- Persists per-chunk partials (resumable backfill) + the final merged facts (incremental weekly reduce).
+CREATE TABLE IF NOT EXISTS persona_facts (
+  id             TEXT PRIMARY KEY,         -- '<kol>:merged' | '<kol>:chunk:<idx>:<corpusHash>'
+  kol_id         TEXT NOT NULL,
+  kind           TEXT NOT NULL,            -- 'chunk' | 'merged'
+  chunk_idx      INTEGER,
+  corpus_hash    TEXT,
+  json           TEXT NOT NULL,
+  tweets_covered INTEGER,
+  date_min       TEXT,
+  date_max       TEXT,
+  updated_at     TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_persona_facts_kol ON persona_facts(kol_id, kind);

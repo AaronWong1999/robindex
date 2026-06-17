@@ -8,6 +8,8 @@ import { gatherMarketData, buildMessages, maybeUpdateSummary, resolveToolPhase }
 import { getStockNews, getMarketNews } from "./marketdata";
 import { runDailyIngest, runWeeklyPersonaRefresh } from "./ingest";
 import { generatePersonaPack, evolvePersona, diagnosePersonaGeneration, logPersonaExperiment } from "./persona-gen";
+import { buildEvalSet, runEval, autoRollback, evalAndMaybeRollback } from "./eval";
+import { distillPersonaFull, distillPersonaIncremental, mapStage, reduceStage, reduceGroup, reduceFinal, renderMergedPack, refineVoice } from "./persona-distill";
 import {
   getSectorBlocks, getFundFlowMinute, getDragonTiger, getLockupExpiry,
   getIndustryRanking, getMarginTrading, getStockInfo, getResearchReports,
@@ -869,7 +871,193 @@ app.post("/api/persona-generate", async (c) => {
     }
     await c.env.DB.prepare(`UPDATE kols SET persona_pack=?, persona_version='v1-auto', updated_at=datetime('now') WHERE id=?`)
       .bind(persona_pack, kolId).run();
+    // Self-healing: if a golden eval set exists, score the fresh pack in the background and roll back
+    // to the last good pack if it regressed vs the previous version. No-op when no eval set exists.
+    c.executionCtx.waitUntil(
+      evalAndMaybeRollback(c.env, kolId).catch((e) =>
+        logPersonaExperiment(c.env, kolId, {
+          content: "", finish_reason: "error", content_len: 0, duration_ms: 0,
+          parse_ok: false, error_type: null, note: `post-generate eval failed: ${String(e).slice(0, 300)}`,
+        }, 0, "eval"),
+      ),
+    );
     return c.json({ ok: true, validation, pack_length: persona_pack.length });
+  } catch (e: any) {
+    return c.json({ error: e.message || String(e) }, 500);
+  }
+});
+
+// ---- Eval / auto-rollback (Phase 2) ----
+
+// Build (or rebuild) the golden eval set for a KOL by mining Q&A from their own tweets + synthesizing
+// follower questions. Idempotent. Query: ?kol_id=X
+app.post("/api/admin/eval-build", async (c) => {
+  if (!adminOk(c)) return c.json({ error: "unauthorized" }, 401);
+  const kolId = c.req.query("kol_id");
+  if (!kolId) return c.json({ error: "kol_id required" }, 400);
+  try {
+    const r = await buildEvalSet(c.env, kolId);
+    return c.json({ ok: true, kol_id: kolId, ...r });
+  } catch (e: any) {
+    return c.json({ error: e.message || String(e) }, 500);
+  }
+});
+
+// Run the golden eval set against the current persona, write per-case results, and auto-rollback if the
+// run regressed vs the previous persona version. Query: ?kol_id=X&limit=12&rollback=1 (rollback on by
+// default; pass rollback=0 to score only, no self-healing).
+app.post("/api/admin/eval-run", async (c) => {
+  if (!adminOk(c)) return c.json({ error: "unauthorized" }, 401);
+  const kolId = c.req.query("kol_id");
+  if (!kolId) return c.json({ error: "kol_id required" }, 400);
+  const limit = parseInt(c.req.query("limit") || "12", 10);
+  const rollback = c.req.query("rollback") !== "0";
+  try {
+    if (rollback) {
+      const r = await evalAndMaybeRollback(c.env, kolId, { limit });
+      return c.json({ ok: true, kol_id: kolId, ...r });
+    }
+    const summary = await runEval(c.env, kolId, { limit });
+    return c.json({ ok: true, kol_id: kolId, summary, rolled_back: false });
+  } catch (e: any) {
+    return c.json({ error: e.message || String(e) }, 500);
+  }
+});
+
+// Manually roll a KOL's persona back to its last backup/snapshot. Query: ?kol_id=X
+app.post("/api/admin/eval-rollback", async (c) => {
+  if (!adminOk(c)) return c.json({ error: "unauthorized" }, 401);
+  const kolId = c.req.query("kol_id");
+  if (!kolId) return c.json({ error: "kol_id required" }, 400);
+  try {
+    const r = await autoRollback(c.env, kolId, "manual rollback via admin endpoint");
+    return c.json({ ok: r.rolled_back, kol_id: kolId, ...r });
+  } catch (e: any) {
+    return c.json({ error: e.message || String(e) }, 500);
+  }
+});
+
+// Back up the current pack (so eval auto-rollback has a target), then write the new one. Shared by the
+// synchronous and background distill paths.
+async function publishDistilledPack(env: Env, kolId: string, pack: string, version: string): Promise<void> {
+  const current = await env.DB.prepare(`SELECT persona_pack, persona_version FROM kols WHERE id=?`).bind(kolId).first<any>();
+  if (current?.persona_pack && current.persona_pack.length > 100) {
+    const backupId = `${kolId}:persona_backup:${new Date().toISOString().slice(0, 10)}:${Date.now()}`;
+    await env.DB.prepare(
+      `INSERT OR REPLACE INTO knowledge_chunks (id,kol_id,source,title,text) VALUES (?,?,?,?,?)`
+    ).bind(backupId, kolId, `persona_backup:${current.persona_version || "unknown"}`, `Persona backup ${new Date().toISOString().slice(0, 10)}`, current.persona_pack).run();
+  }
+  await env.DB.prepare(`UPDATE kols SET persona_pack=?, persona_version=?, updated_at=datetime('now') WHERE id=?`)
+    .bind(pack, version, kolId).run();
+}
+
+// Full-corpus map-reduce persona distillation. Reads 100% of the corpus (chunk → flash map → pro
+// reduce), verifies quotes verbatim, and writes the resulting pack (backing up the current one).
+// Query: ?kol_id=X&mode=full|incremental&days=7  (full = whole history; incremental = last `days`).
+// This can take several minutes (many LLM calls) — call with a long client timeout.
+app.post("/api/admin/persona-distill", async (c) => {
+  if (!adminOk(c)) return c.json({ error: "unauthorized" }, 401);
+  const kolId = c.req.query("kol_id");
+  if (!kolId) return c.json({ error: "kol_id required" }, 400);
+  const mode = c.req.query("mode") || "full";
+  const days = Math.max(1, parseInt(c.req.query("days") || "7", 10));
+  try {
+    // Resumable map stage: call repeatedly until remaining===0 (stays under the edge timeout). Does not
+    // touch the live pack — only fills the chunk fact store.
+    if (mode === "map") {
+      const batch = Math.max(1, parseInt(c.req.query("batch") || "8", 10));
+      const prog = await mapStage(c.env, kolId, { batch });
+      return c.json({ ok: true, mode, ...prog });
+    }
+    // Staged reduce (resumable, one pro call each) for large corpora — neither stage writes the pack:
+    //   reduce_group?group=i  → merge chunk partials [i] into an intermediate (call 0..groups-1)
+    //   reduce_final          → merge intermediates → final (falls through to the write block)
+    if (mode === "reduce_group") {
+      const group = parseInt(c.req.query("group") || "0", 10);
+      // bg=1 runs the (one) pro merge detached so the client edge timeout can't kill it mid-call.
+      if (c.req.query("bg") === "1") {
+        c.executionCtx.waitUntil(
+          reduceGroup(c.env, kolId, group).then((p) =>
+            logPersonaExperiment(c.env, kolId, {
+              content: "", finish_reason: p.ok ? "stop" : "empty", content_len: 0, duration_ms: 0,
+              parse_ok: p.ok, error_type: null, note: `reduce_group_bg ${group}/${p.groups} ok=${p.ok}`,
+            }, 0, "distill"),
+          ).catch((e) =>
+            logPersonaExperiment(c.env, kolId, {
+              content: "", finish_reason: "error", content_len: 0, duration_ms: 0,
+              parse_ok: false, error_type: null, note: `reduce_group_bg ${group} failed: ${String(e).slice(0, 200)}`,
+            }, 0, "distill"),
+          ),
+        );
+        return c.json({ ok: true, mode, group, bg: true, note: "group reduce running in background" });
+      }
+      const prog = await reduceGroup(c.env, kolId, group);
+      return c.json({ mode, ...prog });
+    }
+    // Final reduce in the BACKGROUND: a single pro merge of the intermediates needs ~100-130s (a full
+    // persona JSON), which exceeds the client edge timeout. waitUntil runs for minutes here, so we do it
+    // detached, publish the pack, and log completion to persona_experiments (poll that to confirm).
+    if (mode === "reduce_final_bg") {
+      c.executionCtx.waitUntil((async () => {
+        try {
+          const result = await reduceFinal(c.env, kolId);
+          if (result.persona_pack.length >= 500) {
+            await publishDistilledPack(c.env, kolId, result.persona_pack, "v2-mapreduce");
+            await logPersonaExperiment(c.env, kolId, {
+              content: "", finish_reason: "stop", content_len: result.persona_pack.length, duration_ms: 0,
+              parse_ok: true, error_type: null, note: `reduce_final_bg published: models=${result.stats.models} exemplars=${result.stats.exemplars} tweets=${result.stats.tweets}`,
+            }, 0, "distill");
+            await evalAndMaybeRollback(c.env, kolId).catch(() => {});
+          } else {
+            await logPersonaExperiment(c.env, kolId, {
+              content: "", finish_reason: "empty", content_len: result.persona_pack.length, duration_ms: 0,
+              parse_ok: false, error_type: null, note: "reduce_final_bg: pack too short, not published",
+            }, 0, "distill");
+          }
+        } catch (e: any) {
+          await logPersonaExperiment(c.env, kolId, {
+            content: "", finish_reason: "error", content_len: 0, duration_ms: 0,
+            parse_ok: false, error_type: null, note: `reduce_final_bg failed: ${String(e).slice(0, 300)}`,
+          }, 0, "distill");
+        }
+      })());
+      return c.json({ ok: true, mode, note: "final reduce running in background; poll persona-experiments (trigger=distill) + persona_version" });
+    }
+    // Reduce stage: merge stored chunks → write the pack (with backup) + trigger eval. Run after map
+    // reports remaining===0. Falls through to the shared write block below.
+    const out = mode === "incremental"
+      ? await distillPersonaIncremental(c.env, kolId, Math.floor(Date.now() / 1000) - days * 86400)
+      : mode === "voice_refine"
+        ? { changed: true, result: await refineVoice(c.env, kolId), note: "voice_refine" }
+        : mode === "publish_merged"
+        ? { changed: true, result: await renderMergedPack(c.env, kolId), note: "publish_merged" }
+        : mode === "reduce_final"
+          ? { changed: true, result: await reduceFinal(c.env, kolId), note: "reduce_final" }
+          : mode === "reduce"
+            ? { changed: true, result: await reduceStage(c.env, kolId), note: "reduce" }
+            : { changed: true, result: await distillPersonaFull(c.env, kolId), note: "full" };
+
+    if (!out.changed || !out.result) {
+      return c.json({ ok: false, mode, changed: false, note: out.note });
+    }
+    const { persona_pack, validation, stats } = out.result;
+    if (persona_pack.length < 500) {
+      return c.json({ ok: false, mode, validation, pack_length: persona_pack.length, error: "Generated pack too short — existing pack preserved" });
+    }
+    const version = mode === "incremental" ? `v2-mapreduce-inc-${new Date().toISOString().slice(0, 10)}`
+      : mode === "voice_refine" ? "v3-voice"
+      : "v2-mapreduce";
+    await publishDistilledPack(c.env, kolId, persona_pack, version);
+    // Score the fresh pack + self-heal in the background (no-op without an eval set).
+    c.executionCtx.waitUntil(
+      evalAndMaybeRollback(c.env, kolId).catch((e) =>
+        logPersonaExperiment(c.env, kolId, {
+          content: "", finish_reason: "error", content_len: 0, duration_ms: 0,
+          parse_ok: false, error_type: null, note: `post-distill eval failed: ${String(e).slice(0, 300)}`,
+        }, 0, "eval"),
+      ),
+    );
+    return c.json({ ok: true, mode, version, validation, pack_length: persona_pack.length, stats });
   } catch (e: any) {
     return c.json({ error: e.message || String(e) }, 500);
   }

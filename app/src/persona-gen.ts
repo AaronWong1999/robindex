@@ -211,7 +211,7 @@ interface TrackRecordItem {
   call: string;
   outcome: string;
 }
-interface PersonaJson {
+export interface PersonaJson {
   mental_models: MentalModel[];
   decision_heuristics: DecisionHeuristic[];
   expression_dna: ExpressionDna;
@@ -317,7 +317,7 @@ Output JSON:
 }`;
 
 // Best-effort JSON extraction from a possibly-noisy / fenced model output.
-function extractPersonaJson(raw: string): PersonaJson | null {
+export function extractPersonaJson(raw: string): PersonaJson | null {
   const cleaned = raw.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
   try {
     return JSON.parse(cleaned) as PersonaJson;
@@ -346,26 +346,47 @@ async function buildCorpus(env: Env, kolId: string): Promise<{ kol: any; tweets:
 
   const [recentR, topR] = await Promise.all([
     env.DB.prepare(
-      `SELECT text,created_at_iso,likes,retweets FROM tweets
-       WHERE kol_id=? AND is_retweet=0 ORDER BY created_at_ts DESC LIMIT 1000`
+      `SELECT text,created_at_iso,created_at_ts,likes,retweets FROM tweets
+       WHERE kol_id=? AND is_retweet=0 ORDER BY created_at_ts DESC LIMIT 1200`
     ).bind(kolId).all(),
     env.DB.prepare(
-      `SELECT text,created_at_iso,likes,retweets FROM tweets
-       WHERE kol_id=? AND is_retweet=0 ORDER BY (likes + retweets * 2) DESC LIMIT 500`
+      `SELECT text,created_at_iso,created_at_ts,likes,retweets FROM tweets
+       WHERE kol_id=? AND is_retweet=0 ORDER BY (likes + retweets * 2) DESC LIMIT 800`
     ).bind(kolId).all(),
   ]);
+
+  // Fill an ~80K-char corpus by INTERLEAVING the recent feed and the all-time top-engagement feed so
+  // both share the budget. (Previously the two lists were concatenated recent-first then sliced to 80K,
+  // which for a prolific KOL truncated the entire engagement list away — the persona ended up distilled
+  // from only the last couple of weeks. Interleaving guarantees historical high-signal posts are seen.)
+  const CORPUS_BUDGET = 80000;
+  const fmt = (t: any) => `[${(t.created_at_iso || "").slice(0, 10)}] ❤${t.likes} RT${t.retweets} ${t.text}`;
+  const recent = (recentR.results || []) as any[];
+  const top = (topR.results || []) as any[];
   const seen = new Set<string>();
   const tweets: any[] = [];
-  for (const r of [...(recentR.results || []), ...(topR.results || [])] as any[]) {
-    const key = String(r.text || "").slice(0, 80);
-    if (!seen.has(key)) { seen.add(key); tweets.push(r); }
+  let size = 0;
+  let ri = 0, ti = 0, turn = 0;
+  while (size < CORPUS_BUDGET && (ri < recent.length || ti < top.length)) {
+    // Pull the next not-yet-seen row from whichever feed's turn it is.
+    let row: any = null;
+    if (turn === 0) {
+      while (ri < recent.length) { const r = recent[ri++]; const k = String(r.text || "").slice(0, 80); if (!seen.has(k)) { seen.add(k); row = r; break; } }
+    } else {
+      while (ti < top.length) { const r = top[ti++]; const k = String(r.text || "").slice(0, 80); if (!seen.has(k)) { seen.add(k); row = r; break; } }
+    }
+    turn ^= 1;
+    if (!row) continue; // this feed is exhausted/all-dup; the while-condition ends the loop when both are
+    const lineLen = fmt(row).length + 1;
+    if (size + lineLen > CORPUS_BUDGET) continue; // skip this oversized one, try to fit smaller ones
+    tweets.push(row);
+    size += lineLen;
   }
   if (tweets.length < 10) throw new Error(`Not enough tweets (${tweets.length}) for ${kolId}`);
 
-  const corpus = tweets
-    .map((t) => `[${(t.created_at_iso || "").slice(0, 10)}] ❤${t.likes} RT${t.retweets} ${t.text}`)
-    .join("\n")
-    .slice(0, 80000);
+  // Present chronologically (newest first) so dated reasoning reads naturally; each line is self-dated.
+  tweets.sort((a, b) => (b.created_at_ts || 0) - (a.created_at_ts || 0));
+  const corpus = tweets.map(fmt).join("\n").slice(0, CORPUS_BUDGET);
   return { kol, tweets, corpus };
 }
 
@@ -489,7 +510,7 @@ export async function generatePersonaPack(
 
 // ---------- Markdown assembly ----------
 
-function buildMarkdown(kol: any, pj: PersonaJson | null): string {
+export function buildMarkdown(kol: any, pj: PersonaJson | null): string {
   const lines: string[] = [];
   const tagline = pj?.mental_models?.[0]?.description || kol.tagline || "Finance commentator";
   lines.push(`## Identity`);
@@ -652,7 +673,7 @@ function deriveAgenticDimensions(pj: PersonaJson | null): AgenticDim[] {
 
 // ---------- Quality validation (3 sanity checks) ----------
 
-async function validatePersona(
+export async function validatePersona(
   env: Env,
   kol: any,
   pj: PersonaJson | null,

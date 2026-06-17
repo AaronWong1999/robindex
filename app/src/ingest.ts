@@ -1,6 +1,8 @@
 import type { Env } from "./env";
 import { completeChat } from "./chat";
 import { evolvePersona, logPersonaExperiment } from "./persona-gen";
+import { evalAndMaybeRollback } from "./eval";
+import { distillPersonaIncremental, loadMergedFacts } from "./persona-distill";
 import { indexRawTweets } from "./tagger";
 
 const APIFY_ACTOR = "apidojo~tweet-scraper";
@@ -322,10 +324,37 @@ export async function runWeeklyPersonaRefresh(env: Env): Promise<number> {
           updated++;
         }
 
-        // --- Incremental persona evolution (colleague-skill pattern) ---
+        // --- Weekly persona update ---
+        // If this KOL has been migrated to the map-reduce fact store, do an INCREMENTAL distill (map the
+        // new week's tweets, reduce into the stored facts). Otherwise fall back to the legacy text-append
+        // evolution. Either way, score + auto-rollback afterward (no-op without a golden eval set).
         try {
-          const evo = await evolvePersona(env, k.id);
-          console.log(`persona evolve ${k.id}: evolved=${evo.evolved} v=${evo.version} notes=${evo.notes.join("; ")} review=${evo.needs_review}`);
+          const hasFacts = await loadMergedFacts(env, k.id);
+          if (hasFacts) {
+            const inc = await distillPersonaIncremental(env, k.id, since);
+            if (inc.changed && inc.result && inc.result.persona_pack.length >= 500) {
+              if (k.persona_pack && k.persona_pack.length > 100) {
+                const backupId = `${k.id}:persona_backup:${week}:${Date.now()}`;
+                await env.DB.prepare(
+                  `INSERT OR REPLACE INTO knowledge_chunks (id,kol_id,source,title,text) VALUES (?,?,?,?,?)`
+                ).bind(backupId, k.id, `persona_backup:${k.persona_version || "unknown"}`, `Persona backup ${week}`, k.persona_pack).run();
+              }
+              await env.DB.prepare(`UPDATE kols SET persona_pack=?, persona_version=?, updated_at=datetime('now') WHERE id=?`)
+                .bind(inc.result.persona_pack, `v2-mapreduce-inc-${week}`, k.id).run();
+              console.log(`persona distill-inc ${k.id}: +${inc.result.stats.tweets} tweets, models=${inc.result.stats.models}`);
+              const er = await evalAndMaybeRollback(env, k.id);
+              if (!er.skipped) console.log(`eval ${k.id}: composite=${er.summary?.composite?.toFixed(3)} regressed=${er.summary?.regressed} rolled_back=${er.rolled_back}`);
+            } else {
+              console.log(`persona distill-inc ${k.id}: ${inc.note}`);
+            }
+          } else {
+            const evo = await evolvePersona(env, k.id);
+            console.log(`persona evolve ${k.id}: evolved=${evo.evolved} v=${evo.version} notes=${evo.notes.join("; ")} review=${evo.needs_review}`);
+            if (evo.evolved) {
+              const er = await evalAndMaybeRollback(env, k.id);
+              if (!er.skipped) console.log(`eval ${k.id}: composite=${er.summary?.composite?.toFixed(3)} regressed=${er.summary?.regressed} rolled_back=${er.rolled_back}`);
+            }
+          }
         } catch (e: any) {
           console.log(`persona evolve ${k.id} error: ${e}`);
           // Persist to D1 so weekly evolve failures survive Worker log rotation. A KOL with no
