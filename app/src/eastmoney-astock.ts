@@ -270,3 +270,59 @@ export async function getResearchReports(kv: KVNamespace | undefined, code: stri
     }));
   });
 }
+
+// ---- 9. A-share valuation & key financials ----
+
+export interface AshareValuation {
+  code: string;
+  name: string;
+  peTTM: number;
+  peStatic: number;
+  pb: number;
+  totalMcap: number;
+  floatMcap: number;
+  roe: number;
+  grossMargin: number;
+  netMargin: number;
+  revenueYoY: number;
+  profitYoY: number;
+  epsTTM: number;
+}
+
+export async function getAshareValuation(kv: KVNamespace | undefined, code: string): Promise<AshareValuation | null> {
+  const c = rawCode(code);
+  return cached(kv, `emval:${c}`, 3600, async () => {
+    const secid = toSecid(code);
+    const d = await emFetch(`${PUSH2_URL}/stock/get`, {
+      fltt: "2", invt: "2",
+      fields: "f57,f58,f9,f23,f115,f116,f117,f162,f167",
+      secid,
+    });
+    const data = d?.data;
+    if (!data) return null;
+
+    const fin = await emDatacenter("RPT_LICO_FN_CPD", `(SECUCODE="${c}.SZ")`, {
+      pageSize: 4, sortColumns: "REPORT_DATE", sortTypes: "-1",
+    }).catch(() => [] as any[]);
+    const sh_fin = fin.length ? fin : await emDatacenter("RPT_LICO_FN_CPD", `(SECUCODE="${c}.SH")`, {
+      pageSize: 4, sortColumns: "REPORT_DATE", sortTypes: "-1",
+    }).catch(() => [] as any[]);
+
+    const latest = sh_fin[0] || {};
+    return {
+      code: data.f57 || c,
+      name: data.f58 || "",
+      peTTM: typeof data.f115 === "number" ? data.f115 : (typeof data.f9 === "number" ? data.f9 : 0),
+      peStatic: typeof data.f162 === "number" ? data.f162 : 0,
+      pb: typeof data.f23 === "number" ? data.f23 : 0,
+      totalMcap: data.f116 || 0,
+      floatMcap: data.f117 || 0,
+      roe: latest.WEIGHTAVG_ROE || 0,
+      grossMargin: latest.XSMLL || 0,
+      netMargin: latest.XSJLL || 0,
+      revenueYoY: latest.YSTZ || 0,
+      profitYoY: latest.SJLTZ || 0,
+      epsTTM: latest.BASIC_EPS || 0,
+    };
+  });
+}

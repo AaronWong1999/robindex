@@ -38,6 +38,19 @@ Last updated: 2026-06-17.
 
 ## 2. Changelog (condensed, newest first)
 
+- **KOL persona voice fix (2026-06-17):** The system prompt previously overrode the persona pack's
+  first-person instructions with "Do not use first person on behalf of the KOL" and "do not claim to be
+  the KOL" — making the model speak ABOUT the KOL as a third-party analyst instead of AS the KOL.
+  This was the #1 quality gap vs TMB. Fix: system prompt now enables authentic KOL voice simulation
+  ("speaks AS", "authentic voice", first-person permitted). Final-answer prompt simplified to let the
+  model drive quality naturally instead of imposing rigid structure mandates. The persona pack's own
+  voice/tone/format instructions now take precedence. Principle: let the model do the work, not rules.
+- **A-share valuation auto-inject (2026-06-17):** TMB shows rich financial data (PE-TTM, forward PE,
+  revenue/profit growth, margins, ROE) inline; Robindex showed only price. Fix: added `getAshareValuation`
+  (Eastmoney push2 + datacenter `RPT_LICO_FN_CPD`) that fetches PE-TTM, PE-static, PB, market cap, ROE,
+  gross/net margin, revenue/profit YoY, EPS for A-share stocks. Auto-fetched in `gatherMarketData` for the
+  primary instrument (parallel with news — no added latency) and injected as `extraContext` in LIVE MARKET
+  DATA. Also exposed as `get_ashare_valuation` tool (10th tool) for comparison stocks in the tool phase.
 - **Speed overhaul (2026-06-17):** Latency was ~88s first-token / ~104s total. Root causes:
   (a) retrieval+rerank and market-data ran serially (~36s wasted), (b) tool phase ran unconditionally
   for all questions (~35s wasted on corpus-answerable queries), (c) rerank pool was too large (50→30),

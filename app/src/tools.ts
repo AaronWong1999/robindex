@@ -1,11 +1,11 @@
 // Tool definitions + dispatcher for the hybrid chat path. The model may call these to fetch data the
 // pre-fetch didn't already inject (e.g. a symbol not already quoted, intraday K-line, fresh news,
-// fundamentals). Kept deliberately lean (9 tools) — flash-tier function-calling degrades when the
+// fundamentals). Kept deliberately lean (10 tools) — flash-tier function-calling degrades when the
 // menu is long, and the query planner already pre-detects + validates instruments before this phase.
 import type { Env } from "./env";
 import { resolveSymbolCached, getKlineCached, searchSymbolHits, getQuotesCached, type Quote } from "./finance";
 import { getStockNews, getMarketNews } from "./marketdata";
-import { getSectorBlocks, getFundFlowMinute, getDragonTiger } from "./eastmoney-astock";
+import { getSectorBlocks, getFundFlowMinute, getDragonTiger, getAshareValuation } from "./eastmoney-astock";
 import {
   getFinancialStatements, getKeyIndicators, getAnalystData,
   getMarketRanking, getSecFilings,
@@ -145,6 +145,18 @@ export const TOOLS = [
         },
         required: ["symbol", "kind"],
       },
+    },
+  },
+  // ---- A-share valuation ----
+  {
+    type: "function",
+    function: {
+      name: "get_ashare_valuation",
+      description:
+        "A-share valuation & financial metrics: PE-TTM, PE-static, PB, market cap, ROE, gross/net margin, " +
+        "revenue/profit YoY growth, EPS. Code like sz300308 or 300308. Already in LIVE MARKET DATA for the " +
+        "primary instrument — use for comparison stocks.",
+      parameters: { type: "object", properties: { symbol: { type: "string" } }, required: ["symbol"] },
     },
   },
 ];
@@ -302,6 +314,19 @@ export async function executeTool(env: Env, name: string, args: any): Promise<st
         return out;
       }
       return `Unknown get_ashare_detail kind "${kind}".`;
+    }
+    if (name === "get_ashare_valuation") {
+      const v = await getAshareValuation(env.CACHE, String(args.symbol || ""));
+      if (!v) return `No valuation data for "${args.symbol}".`;
+      const fmtMcap = (n: number) => n >= 1e12 ? `${(n / 1e12).toFixed(1)}万亿` : n >= 1e8 ? `${(n / 1e8).toFixed(0)}亿` : `${n}`;
+      return [
+        `Valuation for ${v.name} (${v.code}):`,
+        `PE-TTM: ${v.peTTM.toFixed(2)} | PE-static: ${v.peStatic.toFixed(2)} | PB: ${v.pb.toFixed(2)}`,
+        `Total MCap: ${fmtMcap(v.totalMcap)} | Float MCap: ${fmtMcap(v.floatMcap)}`,
+        `ROE: ${v.roe.toFixed(2)}% | Gross Margin: ${v.grossMargin.toFixed(2)}% | Net Margin: ${v.netMargin.toFixed(2)}%`,
+        `Revenue YoY: ${v.revenueYoY.toFixed(2)}% | Profit YoY: ${v.profitYoY.toFixed(2)}%`,
+        `EPS-TTM: ${v.epsTTM.toFixed(2)}`,
+      ].join("\n");
     }
     return `Unknown tool ${name}.`;
   } catch (e) {
