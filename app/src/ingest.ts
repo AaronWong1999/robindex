@@ -1,6 +1,6 @@
 import type { Env } from "./env";
 import { completeChat } from "./chat";
-import { evolvePersona } from "./persona-gen";
+import { evolvePersona, logPersonaExperiment } from "./persona-gen";
 import { indexRawTweets } from "./tagger";
 
 const APIFY_ACTOR = "apidojo~tweet-scraper";
@@ -326,16 +326,31 @@ export async function runWeeklyPersonaRefresh(env: Env): Promise<number> {
         try {
           const evo = await evolvePersona(env, k.id);
           console.log(`persona evolve ${k.id}: evolved=${evo.evolved} v=${evo.version} notes=${evo.notes.join("; ")} review=${evo.needs_review}`);
-        } catch (e) {
+        } catch (e: any) {
           console.log(`persona evolve ${k.id} error: ${e}`);
+          // Persist to D1 so weekly evolve failures survive Worker log rotation. A KOL with no
+          // persona_pack yet legitimately throws here — tag it so post-mortems can tell that
+          // apart from a real evolution failure.
+          const noPersona = /No existing persona_pack/.test(String(e?.message || e));
+          await logPersonaExperiment(env, k.id, {
+            content: "", finish_reason: noPersona ? "no_persona" : "error",
+            content_len: 0, duration_ms: 0, parse_ok: false,
+            error_type: null, note: String(e?.message || e).slice(0, 400),
+          }, 0, "evolve");
         }
       }
 
       await env.DB.prepare(`UPDATE kols SET persona_version=?, updated_at=datetime('now') WHERE id=?`)
         .bind(k.persona_pack ? version : k.persona_version, k.id)
         .run();
-    } catch (e) {
+    } catch (e: any) {
       console.log(`weekly refresh ${k.id} error: ${e}`);
+      // Outer failure (DB query, stance chunk, version update). Record as a cron-level row.
+      await logPersonaExperiment(env, k.id, {
+        content: "", finish_reason: "error",
+        content_len: 0, duration_ms: 0, parse_ok: false,
+        error_type: null, note: `weekly refresh: ${String(e?.message || e).slice(0, 400)}`,
+      }, 0, "cron");
     }
   }
   console.log(`weekly persona refresh: ${updated} dated stance chunks @ ${version}`);

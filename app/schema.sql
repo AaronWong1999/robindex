@@ -103,3 +103,51 @@ CREATE VIRTUAL TABLE IF NOT EXISTS tweet_search USING fts5(
   kol_id UNINDEXED,
   tokenize = 'trigram'
 );
+
+-- Persona generation experiments: one row per persona-gen LLM call. Lets us see WHY a
+-- generation failed (finish_reason=length? body-read timeout? JSON parse?) instead of
+-- guessing, and survives beyond the 1-hour TTL of KV persona_debug:* keys. See migration 0006.
+CREATE TABLE IF NOT EXISTS persona_experiments (
+  id            TEXT PRIMARY KEY,
+  kol_id        TEXT NOT NULL,
+  started_at    TEXT DEFAULT (datetime('now')),
+  max_tokens    INTEGER,
+  finish_reason TEXT,                      -- 'stop'|'length'|'content_filter'|'body_read_timeout'|'error'
+  content_len   INTEGER,
+  duration_ms   INTEGER,
+  parse_ok      INTEGER DEFAULT 0,
+  error_type    TEXT,                      -- 'truncation'|'timeout'|'http_error'|'parse_error'|NULL
+  note          TEXT,
+  trigger       TEXT                       -- 'diagnose'|'generate'|'evolve'|'onboard'
+);
+CREATE INDEX IF NOT EXISTS idx_persona_exp_kol ON persona_experiments(kol_id, started_at DESC);
+
+-- Golden eval set per KOL (mined from Q&A tweets + synthesized follower questions).
+CREATE TABLE IF NOT EXISTS eval_cases (
+  id            TEXT PRIMARY KEY,
+  kol_id        TEXT NOT NULL,
+  question      TEXT NOT NULL,
+  ground_truth_type TEXT,                  -- 'real_qa' | 'synth_follower'
+  expected_stance   TEXT,
+  expected_citation_tweet_ids TEXT,        -- JSON array
+  source_tweet_id   TEXT,
+  created_at    TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_eval_cases_kol ON eval_cases(kol_id);
+
+-- One row per (case x persona_version x model_version) eval run. Drives regression
+-- detection and auto-rollback.
+CREATE TABLE IF NOT EXISTS eval_results (
+  id            TEXT PRIMARY KEY,
+  kol_id        TEXT NOT NULL,
+  case_id       TEXT NOT NULL,
+  persona_version TEXT,
+  model_version    TEXT,
+  score_citation  REAL,
+  score_voice     REAL,
+  score_stance    REAL,
+  passed          INTEGER DEFAULT 0,
+  regressed       INTEGER DEFAULT 0,
+  created_at      TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_eval_results_kol ON eval_results(kol_id, created_at DESC);

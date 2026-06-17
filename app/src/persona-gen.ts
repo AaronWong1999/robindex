@@ -4,6 +4,179 @@
 import type { Env } from "./env";
 import { completeChat } from "./chat";
 
+// ---------- Persona-gen LLM primitives ----------
+
+// Distinguishable error classes so the retry layer can decide *what* to do on failure
+// rather than guessing from an error string. Truncation and timeout get different responses.
+export class PersonaGenError extends Error {
+  constructor(public kind: "truncation" | "timeout" | "http_error" | "parse_error" | "empty", message: string) {
+    super(message);
+    this.name = "PersonaGenError";
+  }
+}
+
+// What one persona-gen LLM call produced, with enough signal to decide success vs failure.
+// `finish_reason === "stop"` + `parse_ok === true` is the only fully-successful path.
+export interface PersonaGenAttempt {
+  content: string;          // raw model output (may be partial/truncated)
+  finish_reason: string;    // 'stop' | 'length' | 'content_filter' | 'body_read_timeout' | 'http_error' | 'unknown'
+  content_len: number;
+  duration_ms: number;
+  parse_ok: boolean;        // did the content parse as our persona JSON?
+  error_type: PersonaGenError["kind"] | null;
+  note?: string;            // human-readable detail (HTTP body, error message, etc.)
+}
+
+// Persist one attempt to persona_experiments so failures survive beyond KV's 1h TTL.
+// This is the observability backbone for both diagnose and production paths.
+export async function logPersonaExperiment(
+  env: Env,
+  kolId: string,
+  attempt: PersonaGenAttempt,
+  maxTokens: number,
+  trigger: string,
+): Promise<void> {
+  const id = `${kolId}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    await env.DB.prepare(
+      `INSERT INTO persona_experiments (id, kol_id, max_tokens, finish_reason, content_len, duration_ms, parse_ok, error_type, note, trigger)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`
+    ).bind(
+      id, kolId, maxTokens, attempt.finish_reason, attempt.content_len,
+      attempt.duration_ms, attempt.parse_ok ? 1 : 0, attempt.error_type,
+      (attempt.note || "").slice(0, 1000), trigger,
+    ).run();
+  } catch {
+    // Logging must never break generation. Mirror key facts to KV as a fallback.
+    if (env.CACHE) {
+      await env.CACHE.put(`persona_debug:${kolId}`, `LOG_FAIL: ${JSON.stringify(attempt).slice(0, 500)}`, { expirationTtl: 3600 });
+    }
+  }
+}
+
+// Single persona-gen LLM call with full observability. Reads the body chunked (AI Gateway
+// keeps the connection open for long reasoning outputs) and classifies the outcome by
+// finish_reason + parse success. Throws PersonaGenError so callers can branch on the cause.
+//
+// maxTokens: the request budget (CoT + output share it on deepseek-v4-pro — reasoning
+// models consume tokens before emitting the answer, which is the root cause of historical
+// `finish_reason=length` with empty content).
+export async function callPersonaLLM(
+  env: Env,
+  messages: { role: string; content: string }[],
+  maxTokens: number,
+  kolId: string,
+  opts: { timeoutMs?: number; systemPrompt?: string } = {},
+): Promise<{ content: string; attempt: PersonaGenAttempt }> {
+  const timeoutMs = opts.timeoutMs ?? 600000;
+  // If a custom systemPrompt is given (e.g. the CoT-suppressing variant for the retry),
+  // splice it into the messages; otherwise use whatever was passed.
+  const finalMessages = opts.systemPrompt
+    ? messages.map((m) => (m.role === "system" ? { role: "system", content: opts.systemPrompt! } : m))
+    : messages;
+  const debug = async (s: string) => {
+    if (env.CACHE) await env.CACHE.put(`persona_debug:${kolId}`, s, { expirationTtl: 3600 }).catch(() => {});
+  };
+  const start = Date.now();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  let finishReason = "unknown";
+  let content = "";
+  let errorType: PersonaGenAttempt["error_type"] = null;
+  let note: string | undefined;
+  let bodyReadTimedOut = false;
+
+  try {
+    await debug(`BEFORE_FETCH: max_tokens=${maxTokens} timeout=${timeoutMs}ms at ${new Date().toISOString()}`);
+    const res = await fetch(env.GATEWAY_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "cf-aig-authorization": `Bearer ${env.CFGATEWAYKEY}`,
+        "cf-aig-request-timeout": String(timeoutMs),
+        ...(env.OPENROUTER_KEY ? { Authorization: `Bearer ${env.OPENROUTER_KEY}` } : {}),
+        "HTTP-Referer": "https://robindex.ai",
+        "X-Title": "Robindex",
+      },
+      body: JSON.stringify({ model: env.MODEL_PRO, messages: finalMessages, temperature: 0.2, max_tokens: maxTokens }),
+      signal: controller.signal,
+    });
+    await debug(`FETCH_RETURNED: status=${res.status} at ${new Date().toISOString()}`);
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      errorType = "http_error";
+      finishReason = "http_error";
+      note = `HTTP ${res.status}: ${errText.slice(0, 400)}`;
+      await debug(`HTTP_ERR: ${note}`);
+      throw new PersonaGenError("http_error", note);
+    }
+    // Read body chunked — AI Gateway keeps the connection open for long reasoning outputs.
+    // Per-chunk timeout (was a flat 120s) scales with the budget so a large max_tokens
+    // request isn't killed mid-stream, while still bounding a stalled connection.
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let bodyText = "";
+    const bodyStart = Date.now();
+    const perChunkTimeout = Math.max(120000, Math.min(timeoutMs, maxTokens * 200)); // ~200ms/token headroom
+    while (true) {
+      const readPromise = reader.read();
+      const timeoutPromise = new Promise<{ done: boolean; value?: Uint8Array }>((_, reject) =>
+        setTimeout(() => reject(new Error("body_read_timeout")), perChunkTimeout),
+      );
+      try {
+        const { done, value } = await Promise.race([readPromise, timeoutPromise]);
+        if (done) break;
+        bodyText += decoder.decode(value, { stream: true });
+      } catch {
+        bodyReadTimedOut = true;
+        await debug(`BODY_READ_TIMEOUT: got ${bodyText.length} chars after ${Date.now() - bodyStart}ms`);
+        break;
+      }
+    }
+    await debug(`BODY: ${bodyText.length} chars in ${Date.now() - bodyStart}ms at ${new Date().toISOString()}`);
+    let j: any;
+    try { j = JSON.parse(bodyText); } catch {
+      errorType = "parse_error";
+      finishReason = bodyReadTimedOut ? "body_read_timeout" : "parse_error";
+      note = `body JSON parse failed (len=${bodyText.length}${bodyReadTimedOut ? ", read timed out" : ""}); head=${bodyText.slice(0, 200)}`;
+      throw new PersonaGenError(bodyReadTimedOut ? "timeout" : "parse_error", note);
+    }
+    content = j?.choices?.[0]?.message?.content || "";
+    finishReason = j?.choices?.[0]?.finish_reason || "unknown";
+    await debug(`PARSED: raw=${content.length} chars, finish=${finishReason} at ${new Date().toISOString()}`);
+  } catch (e: any) {
+    if (e instanceof PersonaGenError) throw e;
+    const msg = String(e?.message || e);
+    if (controller.signal.aborted || /abort/i.test(msg)) {
+      errorType = "timeout";
+      finishReason = "abort_timeout";
+      note = `aborted after ${Date.now() - start}ms: ${msg}`;
+    } else {
+      errorType = errorType ?? "parse_error";
+      note = note ?? msg.slice(0, 400);
+    }
+    await debug(`ERROR: ${note}`);
+    throw new PersonaGenError(errorType === "timeout" ? "timeout" : "parse_error", note);
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  const duration_ms = Date.now() - start;
+  // finish_reason === "length" means the budget ran out — on reasoning models this usually
+  // means CoT consumed the tokens and content is empty/truncated. This is NOT success.
+  if (finishReason === "length") {
+    const note = `finish_reason=length (truncated; likely CoT ate the budget). content_len=${content.length}`;
+    throw new PersonaGenError("truncation", note);
+  }
+  if (!content) {
+    const note = `empty content (finish_reason=${finishReason})`;
+    throw new PersonaGenError("empty", note);
+  }
+  const attempt: PersonaGenAttempt = { content, finish_reason: finishReason, content_len: content.length, duration_ms, parse_ok: false, error_type: null };
+  return { content, attempt };
+}
+
 // ---------- Types ----------
 
 // Each mental model carries a machine-checkable verification block (the "triple gate"): it must span
@@ -113,6 +286,18 @@ Rules:
 - analytical_exemplars: 2-4 complete analytical paragraphs where the KOL applies their framework to a specific instrument or question. Copy VERBATIM (3-8 sentences each). Pick ones that show the KOL's reasoning chain: how they use data, how they weigh evidence, how they reach conclusions. These teach the answer model HOW to analyze, not just what methodology to use.
 - All evidence/examples must come from the provided tweets. Do not fabricate.`;
 
+// CoT-suppressing variant used by the retry path. deepseek-v4-pro is a reasoning model: CoT
+// tokens share the max_tokens budget with the output, so when a generation fails with
+// finish_reason=length, an over-long chain-of-thought has usually consumed the budget before
+// the JSON was emitted. This prompt asks for the JSON directly with minimal preamble, which
+// both shortens the reasoning and makes truncation less destructive if it still happens.
+const DISTILL_SYSTEM_DIRECT = `You are a financial KOL analyst. Output ONLY valid JSON (no markdown fences, no preamble, no chain-of-thought, no explanation). Begin your response with the character "{" and end with "}". Do not think step by step; emit the JSON object directly.
+
+Schema (same as standard distillation):
+{ "mental_models": [{ "name": "", "description": "", "evidence": [], "limitation": "", "verification": { "cross_domain_topics": [], "generative_test": "", "exclusive": true } }], "decision_heuristics": [{ "rule": "", "example": "" }], "expression_dna": { "sentence_style": "", "vocabulary": [], "humor": "", "certainty": "", "opening_pattern": "" }, "values": [], "anti_patterns": [], "tensions": [], "honest_boundaries": [], "track_record": [{ "date": "YYYY-MM-DD", "call": "", "outcome": "" }], "counter_views": [], "sector_focus": [], "signature_examples": [], "analytical_exemplars": [] }
+
+Produce 5-8 mental_models (fill verification honestly: cross_domain_topics ≥2, exclusive=false for generic truisms), 5-10 decision_heuristics, ≥2 tensions, 3-8 track_record items, 3-6 verbatim signature_examples, 2-4 verbatim analytical_exemplars (3-8 sentences each). All evidence/examples MUST come from the provided tweets — do not fabricate. Keep the JSON as compact as the schema allows.`;
+
 const EVOLUTION_SYSTEM = `You are a financial KOL analyst performing incremental persona evolution.
 Compare NEW tweets against the EXISTING persona pack. Output ONLY valid JSON (no markdown fences).
 
@@ -131,13 +316,29 @@ Output JSON:
   "contradictions": ["description of conflict between old model and new tweets"]
 }`;
 
-// ---------- Core: generate persona from scratch ----------
+// Best-effort JSON extraction from a possibly-noisy / fenced model output.
+function extractPersonaJson(raw: string): PersonaJson | null {
+  const cleaned = raw.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
+  try {
+    return JSON.parse(cleaned) as PersonaJson;
+  } catch {
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (match) {
+      try {
+        return JSON.parse(match[0]) as PersonaJson;
+      } catch (e2) {
+        console.log(`persona-gen JSON parse failed (raw len ${raw.length}, match len ${match[0].length}): ${e2}`);
+        return null;
+      }
+    }
+    console.log(`persona-gen: no JSON found in output (raw len ${raw.length}), first 200 chars: ${raw.slice(0, 200)}`);
+    return null;
+  }
+}
 
-export async function generatePersonaPack(
-  env: Env,
-  kolId: string
-): Promise<{ persona_pack: string; persona_json: PersonaJson | null; validation: string[] }> {
-  // 1. Fetch KOL metadata + tweets (recent + high-engagement for better coverage)
+// ---------- Corpus + message assembly (shared by generate / diagnose) ----------
+
+async function buildCorpus(env: Env, kolId: string): Promise<{ kol: any; tweets: any[]; corpus: string }> {
   const kol = await env.DB.prepare(
     `SELECT id,display_name,handle,tagline FROM kols WHERE id=?`
   ).bind(kolId).first<any>();
@@ -153,7 +354,6 @@ export async function generatePersonaPack(
        WHERE kol_id=? AND is_retweet=0 ORDER BY (likes + retweets * 2) DESC LIMIT 500`
     ).bind(kolId).all(),
   ]);
-  // Merge and dedup by text content
   const seen = new Set<string>();
   const tweets: any[] = [];
   for (const r of [...(recentR.results || []), ...(topR.results || [])] as any[]) {
@@ -162,85 +362,100 @@ export async function generatePersonaPack(
   }
   if (tweets.length < 10) throw new Error(`Not enough tweets (${tweets.length}) for ${kolId}`);
 
-  // 2. Build corpus (chronological, most recent first)
   const corpus = tweets
     .map((t) => `[${(t.created_at_iso || "").slice(0, 10)}] ❤${t.likes} RT${t.retweets} ${t.text}`)
     .join("\n")
     .slice(0, 80000);
+  return { kol, tweets, corpus };
+}
 
-  // 3. Single structured LLM call for multi-dimensional analysis (direct fetch with debug logging)
-  const messages = [
+function buildDistillMessages(kol: any, corpus: string, tweetCount: number): { role: string; content: string }[] {
+  return [
     { role: "system", content: DISTILL_SYSTEM },
-    { role: "user", content: `KOL: ${kol.display_name} (@${kol.handle})${kol.tagline ? ` — ${kol.tagline}` : ""}\n\nTweet corpus (${tweets.length} tweets):\n${corpus}` },
+    { role: "user", content: `KOL: ${kol.display_name} (@${kol.handle})${kol.tagline ? ` — ${kol.tagline}` : ""}\n\nTweet corpus (${tweetCount} tweets):\n${corpus}` },
   ];
-  let raw = "";
-  try {
-    if (env.CACHE) await env.CACHE.put(`persona_debug:${kolId}`, `BEFORE_FETCH: corpus=${corpus.length} chars, msgs=${messages.length} at ${new Date().toISOString()}`, { expirationTtl: 3600 });
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 600000);
-    const res = await fetch(env.GATEWAY_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "cf-aig-authorization": `Bearer ${env.CFGATEWAYKEY}`,
-        "cf-aig-request-timeout": "600000",
-        ...(env.OPENROUTER_KEY ? { Authorization: `Bearer ${env.OPENROUTER_KEY}` } : {}),
-        "HTTP-Referer": "https://robindex.ai",
-        "X-Title": "Robindex",
-      },
-      body: JSON.stringify({ model: env.MODEL_PRO, messages, temperature: 0.2, max_tokens: 32768 }),
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-    if (env.CACHE) await env.CACHE.put(`persona_debug:${kolId}`, `FETCH_RETURNED: status=${res.status} at ${new Date().toISOString()}`, { expirationTtl: 3600 });
-    if (!res.ok) {
-      const errText = await res.text().catch(() => "");
-      if (env.CACHE) await env.CACHE.put(`persona_debug:${kolId}`, `HTTP ${res.status}: ${errText.slice(0, 500)}`, { expirationTtl: 3600 });
-      throw new Error(`HTTP ${res.status}`);
-    }
-    // Read body via streaming with timeout — AI Gateway may keep connection open
-    const reader = res.body!.getReader();
-    const decoder = new TextDecoder();
-    let bodyText = "";
-    const bodyStart = Date.now();
-    while (true) {
-      const readPromise = reader.read();
-      const timeoutPromise = new Promise<{ done: boolean; value?: Uint8Array }>((_, reject) =>
-        setTimeout(() => reject(new Error("body_read_timeout")), 120000)
-      );
-      try {
-        const { done, value } = await Promise.race([readPromise, timeoutPromise]);
-        if (done) break;
-        bodyText += decoder.decode(value, { stream: true });
-      } catch {
-        if (env.CACHE) await env.CACHE.put(`persona_debug:${kolId}`, `BODY_READ_TIMEOUT: got ${bodyText.length} chars after ${Date.now() - bodyStart}ms`, { expirationTtl: 3600 });
-        break;
-      }
-    }
-    if (env.CACHE) await env.CACHE.put(`persona_debug:${kolId}`, `BODY: ${bodyText.length} chars in ${Date.now() - bodyStart}ms at ${new Date().toISOString()}`, { expirationTtl: 3600 });
-    const j: any = JSON.parse(bodyText);
-    raw = j?.choices?.[0]?.message?.content || "";
-    const finishReason = j?.choices?.[0]?.finish_reason || "unknown";
-    if (env.CACHE) await env.CACHE.put(`persona_debug:${kolId}`, `PARSED: raw=${raw.length} chars, finish=${finishReason} at ${new Date().toISOString()}`, { expirationTtl: 3600 });
-  } catch (e: any) {
-    if (env.CACHE) await env.CACHE.put(`persona_debug:${kolId}`, `ERROR: ${String(e).slice(0, 500)}`, { expirationTtl: 3600 });
-    raw = "";
-  }
+}
 
-  // 4. Parse JSON output
+// ---------- Diagnose: probe multiple max_tokens budgets to find the real bottleneck ----------
+// Returns the outcome of each probe WITHOUT writing to kols. Drives the decision of what
+// production max_tokens / strategy to use, instead of guessing.
+export async function diagnosePersonaGeneration(
+  env: Env,
+  kolId: string,
+  budgets: number[] = [8192, 16384, 32768],
+): Promise<{ probes: Array<{ max_tokens: number; ok: boolean; attempt: PersonaGenAttempt | null; error: string | null }>; best: number | null }> {
+  const { kol, corpus, tweets } = await buildCorpus(env, kolId);
+  const messages = buildDistillMessages(kol, corpus, tweets.length);
+  const probes: Array<{ max_tokens: number; ok: boolean; attempt: PersonaGenAttempt | null; error: string | null }> = [];
+  let best: number | null = null;
+
+  for (const maxTokens of budgets) {
+    let attempt: PersonaGenAttempt | null = null;
+    let errorMsg: string | null = null;
+    let ok = false;
+    try {
+      const { content, attempt: att } = await callPersonaLLM(env, messages, maxTokens, kolId, { timeoutMs: 600000 });
+      attempt = att;
+      const pj = extractPersonaJson(content);
+      ok = !!(pj && (pj.mental_models?.length || 0) >= 3);
+      attempt = { ...att, parse_ok: !!pj };
+      if (ok && best === null) best = maxTokens;
+    } catch (e: any) {
+      errorMsg = e instanceof PersonaGenError ? `${e.kind}: ${e.message}` : String(e?.message || e);
+      attempt = {
+        content: "", finish_reason: e instanceof PersonaGenError ? e.kind : "error",
+        content_len: 0, duration_ms: 0, parse_ok: false,
+        error_type: e instanceof PersonaGenError ? e.kind : "parse_error", note: errorMsg,
+      };
+    }
+    probes.push({ max_tokens: maxTokens, ok, attempt, error: errorMsg });
+    // Log every probe so the diagnose run is fully auditable in D1.
+    if (attempt) await logPersonaExperiment(env, kolId, attempt, maxTokens, "diagnose");
+  }
+  return { probes, best };
+}
+
+// ---------- Core: generate persona from scratch ----------
+
+// Token budget ladder for the auto-retry. The first (production) attempt uses a moderate
+// budget; on truncation/timeout we shrink the budget AND switch to the direct (CoT-suppressed)
+// system prompt, since an over-long reasoning trace is the usual culprit. Values are deliberately
+// far below deepseek-v4-pro's 384k ceiling: a persona JSON realistically needs ~4-8k tokens of
+// output, so giving the model more headroom mostly grows the CoT, not the answer.
+const GEN_BUDGETS = [
+  { maxTokens: 16384, systemPrompt: undefined as string | undefined, timeoutMs: 600000 },
+  { maxTokens: 8192, systemPrompt: DISTILL_SYSTEM_DIRECT, timeoutMs: 300000 },
+];
+
+export async function generatePersonaPack(
+  env: Env,
+  kolId: string
+): Promise<{ persona_pack: string; persona_json: PersonaJson | null; validation: string[] }> {
+  const { kol, tweets, corpus } = await buildCorpus(env, kolId);
+  const baseMessages = buildDistillMessages(kol, corpus, tweets.length);
+
+  // 3. Distillation with auto-retry: try each budget in GEN_BUDGETS until one parses into a
+  // usable persona. Every attempt is logged to persona_experiments so failures are observable
+  // (not silently swallowed to "" like the old code).
   let pj: PersonaJson | null = null;
-  try {
-    const cleaned = raw.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-    pj = JSON.parse(cleaned) as PersonaJson;
-  } catch {
-    // Try to extract JSON from the response
-    const match = raw.match(/\{[\s\S]*\}/);
-    if (match) {
-      try { pj = JSON.parse(match[0]) as PersonaJson; } catch (e2) {
-        console.log(`persona-gen JSON parse failed (raw length: ${raw.length}, match length: ${match[0].length}): ${e2}`);
-      }
-    } else {
-      console.log(`persona-gen: no JSON found in output (raw length: ${raw.length}), first 200 chars: ${raw.slice(0, 200)}`);
+  let usedMaxTokens = 0;
+  let lastError: string | null = null;
+  for (const { maxTokens, systemPrompt, timeoutMs } of GEN_BUDGETS) {
+    try {
+      const { content, attempt } = await callPersonaLLM(env, baseMessages, maxTokens, kolId, { timeoutMs, systemPrompt });
+      pj = extractPersonaJson(content);
+      usedMaxTokens = maxTokens;
+      await logPersonaExperiment(env, kolId, { ...attempt, parse_ok: !!pj }, maxTokens, "generate");
+      if (pj && (pj.mental_models?.length || 0) >= 1) break; // got something usable
+    } catch (e: any) {
+      lastError = e instanceof PersonaGenError ? `${e.kind}: ${e.message}` : String(e?.message || e);
+      const failAttempt: PersonaGenAttempt = {
+        content: "", finish_reason: e instanceof PersonaGenError ? e.kind : "error",
+        content_len: 0, duration_ms: 0, parse_ok: false,
+        error_type: e instanceof PersonaGenError ? e.kind : "parse_error", note: lastError,
+      };
+      await logPersonaExperiment(env, kolId, failAttempt, maxTokens, "generate");
+      // continue to next budget
     }
   }
 
@@ -264,6 +479,10 @@ export async function generatePersonaPack(
 
   // 6. Quality validation (lightweight sanity checks)
   const validation = await validatePersona(env, kol, pj, tweets);
+  if (!pj) validation.unshift(`FAIL: All ${GEN_BUDGETS.length} distillation attempts failed. Last error: ${lastError || "unknown"}`);
+
+  // Stash which budget succeeded (useful for the caller / logs); harmless if unused by caller.
+  void usedMaxTokens;
 
   return { persona_pack: pack, persona_json: pj, validation };
 }

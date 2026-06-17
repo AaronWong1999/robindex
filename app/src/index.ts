@@ -7,7 +7,7 @@ import { indexTweets, indexRawTweets } from "./tagger";
 import { gatherMarketData, buildMessages, maybeUpdateSummary, resolveToolPhase } from "./chat";
 import { getStockNews, getMarketNews } from "./marketdata";
 import { runDailyIngest, runWeeklyPersonaRefresh } from "./ingest";
-import { generatePersonaPack, evolvePersona } from "./persona-gen";
+import { generatePersonaPack, evolvePersona, diagnosePersonaGeneration, logPersonaExperiment } from "./persona-gen";
 import {
   getSectorBlocks, getFundFlowMinute, getDragonTiger, getLockupExpiry,
   getIndustryRanking, getMarginTrading, getStockInfo, getResearchReports,
@@ -366,6 +366,19 @@ app.post("/api/chat", async (c) => {
         // Fold the validated tickers back into the plan so any downstream consumer matches them too.
         for (const t of tickers) if (t && !plan.exact_entities.includes(t)) plan.exact_entities.push(t);
         const { citations, knowledge } = retrieved;
+
+        // Observability: when persona_pack is NULL the KOL silently runs on the 3-line generic
+        // DEFAULT_PERSONA. Record it (once per conversation, on the first turn) so we can see how
+        // often and for which KOLs distillation never produced a usable pack. Non-blocking.
+        if (!kol.persona_pack && history.length === 0) {
+          c.executionCtx.waitUntil(
+            logPersonaExperiment(c.env, kol.id, {
+              content: "", finish_reason: "fallback",
+              content_len: 0, duration_ms: 0, parse_ok: false,
+              error_type: null, note: `chat used DEFAULT_PERSONA (no persona_pack); conv=${convId}`,
+            }, 0, "chat_fallback"),
+          );
+        }
 
         const messages = buildMessages({
           kol,
@@ -860,6 +873,39 @@ app.post("/api/persona-generate", async (c) => {
   } catch (e: any) {
     return c.json({ error: e.message || String(e) }, 500);
   }
+});
+
+// Diagnose WHY persona generation fails for a KOL: probes several max_tokens budgets and reports
+// finish_reason / content length / parse outcome for each, WITHOUT writing anything to kols. The
+// outcome is logged to persona_experiments so it's auditable. Use this to pick the production
+// budget instead of guessing. Query: ?kol_id=X&budgets=8192,16384,32768 (defaults to a small ladder).
+app.post("/api/admin/persona-diagnose", async (c) => {
+  if (!adminOk(c)) return c.json({ error: "unauthorized" }, 401);
+  const kolId = c.req.query("kol_id");
+  if (!kolId) return c.json({ error: "kol_id required" }, 400);
+  const budgetsParam = c.req.query("budgets");
+  const budgets = budgetsParam
+    ? budgetsParam.split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => n > 0)
+    : [8192, 16384, 32768];
+  try {
+    const result = await diagnosePersonaGeneration(c.env, kolId, budgets);
+    return c.json({ ok: true, kol_id: kolId, probes: result.probes, best_budget: result.best });
+  } catch (e: any) {
+    return c.json({ error: e.message || String(e) }, 500);
+  }
+});
+
+// Inspect persona generation history for a KOL (from persona_experiments) — shows the trail of
+// attempts, their finish_reasons, and parse outcomes. Useful for post-mortems on failed onboarding.
+app.get("/api/admin/persona-experiments", async (c) => {
+  if (!adminOk(c)) return c.json({ error: "unauthorized" }, 401);
+  const kolId = c.req.query("kol_id");
+  const limit = Math.min(parseInt(c.req.query("limit") || "50", 10), 200);
+  const stmt = kolId
+    ? c.env.DB.prepare(`SELECT * FROM persona_experiments WHERE kol_id=? ORDER BY started_at DESC LIMIT ?`).bind(kolId, limit)
+    : c.env.DB.prepare(`SELECT * FROM persona_experiments ORDER BY started_at DESC LIMIT ?`).bind(limit);
+  const r = await stmt.all();
+  return c.json({ experiments: r.results });
 });
 
 app.get("/api/persona/:kol_id", async (c) => {
