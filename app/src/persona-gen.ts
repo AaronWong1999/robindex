@@ -166,7 +166,7 @@ export async function generatePersonaPack(
   const corpus = tweets
     .map((t) => `[${(t.created_at_iso || "").slice(0, 10)}] ❤${t.likes} RT${t.retweets} ${t.text}`)
     .join("\n")
-    .slice(0, 50000);
+    .slice(0, 80000);
 
   // 3. Single structured LLM call for multi-dimensional analysis
   const raw = await completeChat(
@@ -179,7 +179,7 @@ export async function generatePersonaPack(
         content: `KOL: ${kol.display_name} (@${kol.handle})${kol.tagline ? ` — ${kol.tagline}` : ""}\n\nTweet corpus (${tweets.length} tweets):\n${corpus}`,
       },
     ],
-    { maxTokens: 8192, temperature: 0.2, timeoutMs: 300000 }
+    { maxTokens: 16384, temperature: 0.2, timeoutMs: 600000 }
   );
 
   // 4. Parse JSON output
