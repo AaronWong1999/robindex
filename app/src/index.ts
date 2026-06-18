@@ -9,7 +9,7 @@ import { getStockNews, getMarketNews } from "./marketdata";
 import { runDailyIngest, runWeeklyPersonaRefresh } from "./ingest";
 import { generatePersonaPack, evolvePersona, diagnosePersonaGeneration, logPersonaExperiment } from "./persona-gen";
 import { buildEvalSet, runEval, autoRollback, evalAndMaybeRollback } from "./eval";
-import { distillPersonaFull, distillPersonaIncremental, mapStage, reduceStage, reduceGroup, reduceFinal, renderMergedPack, refineVoice } from "./persona-distill";
+import { distillPersonaFull, distillPersonaIncremental, mapStage, reduceStage, reduceGroup, reduceFinal, reduceFinalDraft, finalizeMerged, renderMergedPack, refineVoice } from "./persona-distill";
 import {
   getSectorBlocks, getFundFlowMinute, getDragonTiger, getLockupExpiry,
   getIndustryRanking, getMarginTrading, getStockInfo, getResearchReports,
@@ -1063,6 +1063,118 @@ app.post("/api/admin/persona-distill", async (c) => {
   }
 });
 
+// Run ONE pipeline step (the work happens IN-REQUEST — the response is held until it finishes; deferring
+// it to waitUntil does NOT keep the worker alive here, the work just never runs). Returns the next phase
+// to chain to (or null when the pipeline is done / should stop), so the caller can advance it via whatever
+// driver. Steps skip work already persisted (idempotent/resumable).
+async function runDistillStep(
+  env: Env, kolId: string, phase: string, groupIdx: number, steps: number, stepKey: string,
+): Promise<{ next: string | null; extra: string }> {
+  const log = (note: string) => logPersonaExperiment(env, kolId, {
+    content: "", finish_reason: "step", content_len: 0, duration_ms: 0, parse_ok: true, error_type: null,
+    note: `[${steps}] ${note}`,
+  }, 0, "distill_auto");
+  try {
+    if (phase === "map") {
+      const prog = await mapStage(env, kolId, { batch: 6 });
+      await log(`map ${prog.cached}/${prog.total} (rem ${prog.remaining})`);
+      return prog.remaining > 0 ? { next: "map", extra: "" } : { next: "group", extra: "&i=0" };
+    }
+    if (phase === "group") {
+      const prog = await reduceGroup(env, kolId, groupIdx);
+      await log(`reduce_group ${groupIdx + 1}/${prog.groups} ok=${prog.ok}`);
+      return groupIdx + 1 < prog.groups ? { next: "group", extra: `&i=${groupIdx + 1}` } : { next: "final", extra: "" };
+    }
+    if (phase === "final") {
+      // Final reduce, step 1/2: the pro merge ONLY (no full-corpus load) → 'merged_draft' fact. LLM-only
+      // so this single pro call stays under the ~100s limit (the combined verify-too version got killed).
+      const d = await reduceFinalDraft(env, kolId);
+      await log(`final draft: groups=${d.groups} draft_len=${d.len}`);
+      return { next: "finalize", extra: "" };
+    }
+    if (phase === "finalize") {
+      // Final reduce, step 2/2: LLM-free verify + exemplars + publish (fast). Date-stamp the version so
+      // eval scores THIS pack fresh — runEval keys results by persona_version and skips already-scored
+      // cases, so reusing a bare "v2-mapreduce" would make eval a stale no-op and disable the regression
+      // check; a unique version also makes the prior run the comparison baseline.
+      const result = await finalizeMerged(env, kolId);
+      if (result.persona_pack.length >= 500) {
+        const version = `v2-mapreduce-${new Date().toISOString().slice(0, 10)}`;
+        await publishDistilledPack(env, kolId, result.persona_pack, version);
+        await log(`finalize published ${version}: models=${result.stats.models} exemplars=${result.stats.exemplars} len=${result.persona_pack.length}`);
+        return { next: "eval", extra: "" };
+      }
+      await log(`finalize: pack too short (${result.persona_pack.length}), not published`);
+      return { next: null, extra: "" };
+    }
+    if (phase === "eval") {
+      const cnt = await env.DB.prepare(`SELECT COUNT(*) n FROM eval_cases WHERE kol_id=?`).bind(kolId).first<{ n: number }>();
+      if (!cnt?.n) { await buildEvalSet(env, kolId); await log(`eval set built`); }
+      // limit=2 per invocation: each case (retrieve + flash answer + 3 flash judges) runs ~25-30s, so a
+      // batch of 2 (~55s) fits the ~100s worker budget; limit=4 (~110s) would be killed mid-step.
+      const s = await runEval(env, kolId, { limit: 2 });
+      await log(`eval rem=${s.remaining} composite=${s.composite.toFixed(3)} regressed=${s.regressed}`);
+      if (s.remaining > 0) return { next: "eval", extra: "" };
+      // Full set scored: self-heal if regressed, then finish.
+      let rolled = false;
+      if (s.regressed) { const rb = await autoRollback(env, kolId, "distill-auto eval regression"); rolled = rb.rolled_back; }
+      await env.CACHE.delete(stepKey);
+      await log(`DONE composite=${s.composite.toFixed(3)} regressed=${s.regressed} rolled_back=${rolled}`);
+      return { next: null, extra: "" };
+    }
+    await log(`ERROR unknown phase ${phase}`);
+    return { next: null, extra: "" };
+  } catch (e: any) {
+    await log(`ERROR phase=${phase}: ${String(e).slice(0, 200)}`);
+    return { next: null, extra: "" };
+  }
+}
+
+// Automated backfill orchestrator. Runs the current step IN-REQUEST, then self-triggers the next via a
+// waitUntil(SELF.fetch). This reliably chains the fast + single-heavy steps (map → group* → final →
+// finalize → first eval batch). A long *sequence* of slow steps (the many eval batches) can't fully
+// self-chain on CF — each parent must waitUntil the child's response, and a ~55s parent has too little
+// budget left to await a ~55s child — so it also records the in-progress job in KV (`distill_job:<kol>`)
+// for an external/cron driver to resume. Start: POST /api/admin/distill-auto?kol_id=X&reset=1, then poll
+// persona-experiments (trigger=distill_auto) for the DONE row.
+app.post("/api/admin/distill-auto", async (c) => {
+  if (!adminOk(c)) return c.json({ error: "unauthorized" }, 401);
+  const kolId = c.req.query("kol_id");
+  if (!kolId) return c.json({ error: "kol_id required" }, 400);
+  const phase = c.req.query("phase") || "map";
+  const groupIdx = parseInt(c.req.query("i") || "0", 10);
+  const STEP_CAP = 80;
+
+  // Runaway guard: a KV-backed step counter (TTL 2h), reset on a fresh start.
+  const stepKey = `distill_steps:${kolId}`;
+  let steps = c.req.query("reset") === "1" ? 0 : parseInt((await c.env.CACHE.get(stepKey)) || "0", 10);
+  steps++;
+  await c.env.CACHE.put(stepKey, String(steps), { expirationTtl: 7200 });
+
+  if (steps > STEP_CAP) {
+    await logPersonaExperiment(c.env, kolId, {
+      content: "", finish_reason: "step", content_len: 0, duration_ms: 0, parse_ok: true, error_type: null,
+      note: `[${steps}] STOP: step cap ${STEP_CAP} hit at phase=${phase}`,
+    }, 0, "distill_auto");
+    await c.env.CACHE.delete(`distill_job:${kolId}`);
+    return c.json({ stopped: "step_cap", steps });
+  }
+
+  const result = await runDistillStep(c.env, kolId, phase, groupIdx, steps, stepKey);
+  if (result.next) {
+    const nextI = result.extra.includes("i=") ? parseInt(result.extra.split("i=")[1], 10) : 0;
+    await c.env.CACHE.put(`distill_job:${kolId}`, JSON.stringify({ phase: result.next, i: nextI }), { expirationTtl: 7200 });
+    const origin = new URL(c.req.url).origin;
+    const url = `${origin}/api/admin/distill-auto?kol_id=${encodeURIComponent(kolId)}&phase=${result.next}${result.extra}`;
+    const init = { method: "POST", headers: { "x-admin-key": c.env.ADMIN_KEY || "" } };
+    const fire = c.env.SELF ? c.env.SELF.fetch(url, init) : fetch(url, init);
+    c.executionCtx.waitUntil(Promise.resolve(fire).then(() => {}).catch(() => {}));
+  } else {
+    await c.env.CACHE.delete(`distill_job:${kolId}`); // pipeline finished/stopped
+  }
+  return c.json({ ok: true, phase, next: result.next, steps });
+});
+
 // Diagnose WHY persona generation fails for a KOL: probes several max_tokens budgets and reports
 // finish_reason / content length / parse outcome for each, WITHOUT writing anything to kols. The
 // outcome is logged to persona_experiments so it's auditable. Use this to pick the production
@@ -1082,6 +1194,33 @@ app.post("/api/admin/persona-diagnose", async (c) => {
     return c.json({ error: e.message || String(e) }, 500);
   }
 });
+
+// Cron-driven step driver. Advances every in-progress distill job (`distill_job:<kol>` in KV) by ONE step
+// per tick, running entirely on the worker. This is what completes the parts of the pipeline the
+// self-chain can't (the long sequence of slow eval batches): each cron tick is an independent invocation
+// with a fresh ~100s budget, so it never hits the await-the-slow-child wall. One step/min → a full eval
+// (~13 batches) finishes in ~13 min, hands-off. Idempotent steps mean overlap with the self-chain is safe.
+async function driveDistillJobs(env: Env): Promise<void> {
+  const list = await env.CACHE.list({ prefix: "distill_job:" });
+  for (const key of list.keys) {
+    const kolId = key.name.slice("distill_job:".length);
+    const jobRaw = await env.CACHE.get(key.name);
+    if (!jobRaw) continue;
+    let job: { phase: string; i: number };
+    try { job = JSON.parse(jobRaw); } catch { await env.CACHE.delete(key.name); continue; }
+    const stepKey = `distill_steps:${kolId}`;
+    const steps = parseInt((await env.CACHE.get(stepKey)) || "0", 10) + 1;
+    await env.CACHE.put(stepKey, String(steps), { expirationTtl: 7200 });
+    if (steps > 200) { await env.CACHE.delete(key.name); continue; } // runaway guard
+    const result = await runDistillStep(env, kolId, job.phase, job.i || 0, steps, stepKey);
+    if (result.next) {
+      const nextI = result.extra.includes("i=") ? parseInt(result.extra.split("i=")[1], 10) : 0;
+      await env.CACHE.put(key.name, JSON.stringify({ phase: result.next, i: nextI }), { expirationTtl: 7200 });
+    } else {
+      await env.CACHE.delete(key.name);
+    }
+  }
+}
 
 // Inspect persona generation history for a KOL (from persona_experiments) — shows the trail of
 // attempts, their finish_reasons, and parse outcomes. Useful for post-mortems on failed onboarding.
@@ -1210,6 +1349,11 @@ export default {
     return app.fetch(req, env, ctx);
   },
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext) {
+    if (event.cron === "* * * * *") {
+      // Every minute: advance any in-progress distill backfill by one step (no-op when none are running).
+      ctx.waitUntil(driveDistillJobs(env));
+      return;
+    }
     if (event.cron === "30 9 * * 1") {
       ctx.waitUntil(runWeeklyPersonaRefresh(env));
       return;

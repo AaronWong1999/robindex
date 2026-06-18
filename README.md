@@ -25,7 +25,7 @@ JSON/SSE API. No build step. All LLM calls go through the **Cloudflare AI Gatewa
 | LLM | AI Gateway → `deepseek/deepseek-v4-flash` (cheap path) / `deepseek/deepseek-v4-pro` (answer/persona) |
 | Live market data | public Tencent endpoints (quote/kline/minute) + Yahoo (US fundamentals) |
 | Charts | benji.org/liveline (frontend renders from chart meta) |
-| Scheduled jobs | daily incremental ingest (`0 9 * * *`), weekly persona refresh (`30 9 * * 1`) |
+| Scheduled jobs | daily incremental ingest (`0 9 * * *`), weekly persona refresh (`30 9 * * 1`), per-minute distill-job driver (`* * * * *`, advances any in-progress `distill-auto` backfill) |
 
 **No vectors / no embeddings anywhere.** Retrieval is sparse (FTS5). This is a deliberate decision —
 short, jargon-dense, bilingual finance text retrieves better with full-text + LLM expansion than with
@@ -101,9 +101,13 @@ persona version is scored on citation accuracy (hard/verifiable), voice fidelity
 the last good pack. This is the self-healing "one generation better than the last" ratchet.
 
 > **Cloudflare ~100s limit:** a single `pro` call near max output flirts with the worker execution limit,
-> so map/reduce are **staged + resumable** (`mode=map` / `reduce_group` / `reduce_final` / `publish_merged`,
-> driven by repeated admin calls), and reduce output is capped low (~4–6k tokens). See `Plan.md` for the
-> full runbook, costs (~$1 / ~20 min one-time backfill per KOL), and pitfalls.
+> so map/reduce are **staged + resumable**. The whole pipeline is automated by
+> `POST /api/admin/distill-auto?kol_id=X&reset=1` — it runs server-side via a self-fetch chain for the fast
+> steps plus a per-minute cron (`driveDistillJobs`) for the slow eval sequence. Distill LLM calls send
+> `reasoning:{enabled:false}` (the reasoning models otherwise burn the whole token budget on CoT and return
+> empty), the final merge is hard-capped so it finishes/parses, and it's split into `reduceFinalDraft`
+> (pro-only) + `finalizeMerged` (LLM-free). See `Plan.md` for the orchestrator design, the four CF/model
+> gotchas, the manual-mode fallback runbook, and costs (~$1 / ~20 min one-time backfill per KOL).
 
 ### Anti-contamination (hard rules)
 Every retrieval/data query is scoped `WHERE kol_id=?` — the model never chooses which library to search.
@@ -164,6 +168,8 @@ Admin APIs (header `x-admin-key: $ADMIN_KEY`):
   (budget-controlled, UPDATE-only; note: GetXAPI's timeline only exposes a recent window).
 - `GET /api/admin/estimate?count=N` (or `?uid=`) — self-serve onboarding cost quote.
 - `POST /api/admin/onboard {handle}` — clone a new KOL: create row → ingest → raw-index → persona.
+- `POST /api/admin/distill-auto?kol_id=&reset=1` — automated full-corpus persona backfill (map→reduce→
+  finalize→eval, server-side; poll `persona-experiments?kol_id=` trigger=`distill_auto` for the `DONE` row).
 
 Smoke:
 ```bash

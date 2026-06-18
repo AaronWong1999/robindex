@@ -4,8 +4,51 @@
 > query-side / no-fine-tuning). This file holds only what README doesn't: the **persona pipeline runbook**
 > (the one genuinely tricky part), the condensed **changelog**, and the **roadmap**. Keep it lean.
 
-Last updated: 2026-06-18. Live personas: `qinbafrank` = **v2-mapreduce** (full-corpus); `aleabitoreddit`,
-`qinbafrank-tag` on earlier packs.
+Last updated: 2026-06-18. Live personas: `qinbafrank` = **v2-mapreduce-2026-06-18** (full-corpus, via the
+automated `distill-auto` orchestrator); `aleabitoreddit`, `qinbafrank-tag` on earlier packs.
+
+## ▶ AUTOMATED BACKFILL — `distill-auto` orchestrator (built 2026-06-18; qinbafrank reconciled)
+
+`POST /api/admin/distill-auto?kol_id=X&reset=1` runs the **whole** map→group→final→finalize→eval pipeline
+**server-side on the worker** (no client driving), then poll
+`/api/admin/persona-experiments?kol_id=X` (trigger=`distill_auto`) for the `DONE` row. It regenerated clean
+`merged` facts for qinbafrank (the old `voice_refine` v3 had tainted `expression_dna`+`signature_examples`)
+and is the primary backfill path now; the §1 manual modes are the fallback / building blocks.
+
+**Two-driver design (this is the subtle part — read before touching).** Each step does its LLM work
+**in-request** (deferring it to `waitUntil` and returning early does NOT keep the worker alive — the work
+just never runs), then chains the next step via `waitUntil(SELF.fetch(...))`.
+- **Self-chain** handles the fast + single-heavy steps: map → group* → final → finalize → *first* eval
+  batch. It can't drive a long *sequence* of slow steps, though: the parent must `waitUntil` the child's
+  response, and a ~55s parent has too little of its ~100s budget left to await a ~55s child, so the chain
+  dies after one slow hop.
+- **Cron driver** (`* * * * *` → `driveDistillJobs`) finishes the rest. Each in-progress job is recorded in
+  KV (`distill_job:<kol>`); every minute the cron advances each job by ONE step in a fresh invocation (its
+  own ~100s budget), so the long eval sequence (~13 batches) completes hands-off in ~13 min. Steps are
+  idempotent, so self-chain/cron overlap is safe. KV `distill_steps:<kol>` (TTL 2h) hard-caps runaway.
+
+Phase machine: `map`(batch 6, skips cached chunks) → `group&i=N`(skips existing `reduce_l1[N]`) →
+`final`(`reduceFinalDraft`: pro merge ONLY → `merged_draft`, LLM-only so it fits the limit) →
+`finalize`(LLM-free verify+exemplars+gate, publish as `v2-mapreduce-<date>`) →
+`eval`(`runEval(limit=2)` batches, auto-rollback if regressed) → done (clears `distill_job`+`distill_steps`).
+Every transition logs to `persona_experiments` (trigger=`distill_auto`).
+
+**Four CF/model gotchas that had to be solved (all live in `persona-distill.ts`/`index.ts`):**
+1. **Reasoning eats the token budget.** deepseek-v4 (flash+pro) are reasoning models; at low map/reduce
+   caps the CoT consumes the whole `max_tokens` and the response is `finish_reason=length` with **empty
+   content**. Fix: send `reasoning:{enabled:false}` on every distill LLM call (in `llmJson`).
+2. **The final merge is unbounded.** With reasoning off it still fills any cap (tested: `finish=length` at
+   both 6k AND 16k tokens). Fix: `FINAL_REDUCE_LIMITS` hard caps (≤6 models, ≤2 quotes, …) so it finishes
+   naturally (`finish=stop`) at ~3k tokens / ~60s and parses.
+3. **`reduceFinal` was too heavy for one invocation** (corpus load + pro call + verify ≈ 100s, killed at the
+   edge). Fix: split into `reduceFinalDraft` (pro only, no corpus load) + `finalizeMerged` (LLM-free).
+4. **Eval batch size.** `limit=4` (~110s) is killed mid-step; `limit=2` (~55s) fits — that sizing is what
+   lets the cron advance one batch per tick.
+
+```bash
+curl -XPOST "https://robindex.ai/api/admin/distill-auto?kol_id=qinbafrank&reset=1" -H "x-admin-key:$K"
+curl     ".../api/admin/persona-experiments?kol_id=qinbafrank" -H "x-admin-key:$K"   # poll for DONE
+```
 
 ## 1. Persona distillation pipeline (the tricky part — read this before touching it)
 
@@ -62,19 +105,21 @@ experiment dropped voice/citation and was rolled back — the eval/rollback loop
 Weekly incremental ≈ **3–4 calls / ~$cents / cron-automated**. (The multi-hour first run on 2026-06-18 was
 one-time *engineering* to discover and stage around the ~100s limit — not recurring compute.)
 
-**Known cleanup.** The `voice_refine` v3 experiment overwrote `persona_facts:merged` (the `expression_dna`
-+ `signature_examples` fields) for qinbafrank; the live pack was restored to true v2 from backup, but the
-stored merged JSON is v3-tainted on those two fields. Re-run `reduce_final` (the `reduce_l1` intermediates
-are intact) to fully reconcile before relying on the weekly incremental.
-
-**Next step to productionize.** The backfill is currently driven by hand (repeated `curl`). To onboard many
-KOLs, move the driver into a CF **Queue or cron** that walks map → reduce_group* → reduce_final →
-publish_merged → eval automatically.
+**Reconciled (2026-06-18):** the `voice_refine` v3 taint of qinbafrank's `merged` facts is fixed — the
+`distill-auto` orchestrator (top section) regenerated clean `merged` and republished a date-stamped
+`v2-mapreduce` pack. Onboarding/backfill is now one call to `distill-auto` (no hand-driven `curl`); the
+manual modes below remain the fallback / building blocks.
 
 ---
 
 ## 2. Changelog (condensed, newest first)
 
+- **Automated backfill orchestrator (`distill-auto`) + CF/model fixes (2026-06-18):** whole
+  map→reduce→finalize→eval pipeline runs server-side (self-chain for fast/single-heavy steps + a
+  `* * * * *` cron `driveDistillJobs` for the slow eval sequence). Solved four blockers: reasoning models
+  emitting empty content (`reasoning:{enabled:false}`), unbounded final merge (`FINAL_REDUCE_LIMITS`),
+  `reduceFinal` over the ~100s limit (split into `reduceFinalDraft`+`finalizeMerged`), eval batch sizing
+  (`limit=2`). qinbafrank reconciled to a clean date-stamped `v2-mapreduce-2026-06-18`. See top section.
 - **Full-corpus map-reduce persona + eval/auto-rollback (2026-06-18):** new `persona-distill.ts` (100% of
   corpus, verbatim-quote verified, staged around the ~100s limit) + `eval.ts` (golden eval, citation/voice/
   stance, regression rollback) + `persona_facts` (migration 0007) + `persona_experiments`/`eval_*`
@@ -99,8 +144,6 @@ publish_merged → eval automatically.
 
 ## 3. Roadmap / open items
 
-- **Productionize the backfill driver** (§1 "Next step") — CF Queue/cron, so onboarding a KOL is one call.
-- **Reconcile qinbafrank merged facts** (§1 "Known cleanup") — re-run `reduce_final`.
 - **Self-serve KOL marketplace (revenue-share):** submit handle → instant cost quote → pay (Stripe/CF
   Payments) → clone live in minutes (`reindex?mode=raw` + persona distill) → 50/50 end-user revenue split;
   `usage_events` + weekly billing rollup + KOL dashboard.

@@ -38,13 +38,22 @@ async function llmJson(
         "HTTP-Referer": "https://robindex.ai",
         "X-Title": "Robindex",
       },
-      body: JSON.stringify({ model, messages, temperature: opts.temperature ?? 0.2, max_tokens: opts.maxTokens }),
+      // Disable the model's chain-of-thought. deepseek-v4 (flash+pro) are reasoning models whose CoT
+      // tokens SHARE the max_tokens budget: at our low map/reduce caps the reasoning consumes the whole
+      // budget and the response comes back finish_reason=length with EMPTY content (then we'd fall back to
+      // a single partial). Map/reduce are structured JSON-extraction/merge tasks — the verbatim-quote gate
+      // and triple gate provide the rigor, not CoT — so disabling reasoning makes them emit content
+      // directly: non-empty AND fast (well under the ~100s worker limit).
+      body: JSON.stringify({ model, messages, temperature: opts.temperature ?? 0.2, max_tokens: opts.maxTokens, reasoning: { enabled: false } }),
       signal: controller.signal,
     });
-    if (!res.ok) return "";
+    if (!res.ok) { console.warn(`llmJson HTTP ${res.status} model=${model}: ${(await res.text().catch(() => "")).slice(0, 300)}`); return ""; }
     const j: any = await res.json().catch(() => null);
-    return j?.choices?.[0]?.message?.content || "";
-  } catch {
+    const content = j?.choices?.[0]?.message?.content || "";
+    if (!content) console.warn(`llmJson empty content model=${model} finish=${j?.choices?.[0]?.finish_reason} keys=${j ? Object.keys(j).join(",") : "null"}`);
+    return content;
+  } catch (e) {
+    console.warn(`llmJson threw model=${model}: ${String(e).slice(0, 200)}`);
     return "";
   } finally {
     clearTimeout(timer);
@@ -124,6 +133,10 @@ function chunkTweets(tweets: Tw[], maxChunks = 32, minChunkChars = 60000): Chunk
 // corpus changes so a re-run re-maps rather than reusing stale partials.
 function corpusHash(tweets: Tw[]): string {
   const sig = `${tweets.length}:${tweets[0]?.id || ""}:${tweets[tweets.length - 1]?.id || ""}`;
+  return fnv1a(sig);
+}
+
+function fnv1a(sig: string): string {
   let h = 0x811c9dc5;
   for (let i = 0; i < sig.length; i++) { h ^= sig.charCodeAt(i); h = Math.imul(h, 0x01000193); }
   return (h >>> 0).toString(16);
@@ -228,8 +241,14 @@ async function mapChunk(env: Env, chunk: Chunk): Promise<PersonaJson | null> {
 
 const REDUCE_INPUT_BUDGET = 90000; // chars of combined partial JSON we'll send to one reduce call
 
+// HARD output limits for the FINAL merge. Without them the model fills ANY max_tokens budget (it emits all
+// evidence from every partial and never finishes — tested: finish=length at both 6k AND 16k tokens, the
+// latter taking 247s) so the JSON comes back truncated/unparseable. With these caps it finishes naturally
+// (finish=stop) at ~2.9k tokens / ~57s — complete, parseable, AND well under the ~100s worker limit.
+const FINAL_REDUCE_LIMITS = `\n\nHARD OUTPUT LIMITS (the JSON MUST be COMPLETE and valid — do not exceed): ≤6 mental_models, each with ≤2 short evidence quotes and a description ≤200 chars; ≤8 decision_heuristics; ≤6 track_record; ≤6 items in every other list. Prefer the most enduring/recurring items. Be concise.`;
+
 async function reducePartials(
-  env: Env, partials: PersonaJson[], maxTokens = 16384, compact = false,
+  env: Env, partials: PersonaJson[], maxTokens = 16384, compact = false, finalLimits = false,
 ): Promise<PersonaJson | null> {
   if (!partials.length) return null;
   if (partials.length === 1) return partials[0];
@@ -241,15 +260,15 @@ async function reducePartials(
   if (combined > REDUCE_INPUT_BUDGET && partials.length > 2) {
     const mid = Math.ceil(partials.length / 2);
     const [a, b] = await Promise.all([
-      reducePartials(env, partials.slice(0, mid), maxTokens, compact),
-      reducePartials(env, partials.slice(mid), maxTokens, compact),
+      reducePartials(env, partials.slice(0, mid), maxTokens, compact, finalLimits),
+      reducePartials(env, partials.slice(mid), maxTokens, compact, finalLimits),
     ]);
-    return reducePartials(env, [a, b].filter(Boolean) as PersonaJson[], maxTokens, compact);
+    return reducePartials(env, [a, b].filter(Boolean) as PersonaJson[], maxTokens, compact, finalLimits);
   }
 
-  const sys = compact
+  const sys = (compact
     ? REDUCE_SYSTEM + `\n\nThis is an INTERMEDIATE merge — be concise: keep evidence to ≤3 short quotes per model and prefer brevity so the JSON stays compact and COMPLETE.`
-    : REDUCE_SYSTEM;
+    : REDUCE_SYSTEM) + (finalLimits ? FINAL_REDUCE_LIMITS : "");
   const raw = await llmJson(env, env.MODEL_PRO, [
     { role: "system", content: sys },
     { role: "user", content: `PARTIAL persona JSONs to merge (${partials.length}):\n${serialized.map((s, i) => `--- partial ${i + 1} ---\n${s}`).join("\n")}` },
@@ -458,6 +477,9 @@ export async function reduceGroup(env: Env, kolId: string, groupIdx: number): Pr
   if (!partials.length) throw new Error(`No mapped chunks for ${kolId} — run mapStage first`);
   const groups = Math.ceil(partials.length / REDUCE_GROUP_SIZE);
   if (groupIdx < 0 || groupIdx >= groups) return { group: groupIdx, groups, ok: false };
+  // Idempotent: if this group's intermediate already exists for the current corpus, skip the pro call.
+  const have = await env.DB.prepare(`SELECT 1 FROM persona_facts WHERE id=?`).bind(`${kolId}:reduce_l1:${groupIdx}:${hash}`).first();
+  if (have) return { group: groupIdx, groups, ok: true };
   const slice = partials.slice(groupIdx * REDUCE_GROUP_SIZE, (groupIdx + 1) * REDUCE_GROUP_SIZE);
   // Low output cap is critical: a pro reduce emitting N tokens takes ~N/65 s, and the Worker has a hard
   // ~100s execution limit. 4000 tokens (~60s) leaves margin; a 4-partial merge fits easily.
@@ -495,12 +517,86 @@ export async function reduceFinal(env: Env, kolId: string): Promise<DistillResul
   applyTripleGate(merged);
   await saveMerged(env, kolId, merged, tweets);
 
+  // Cheap, no-LLM validation: keeps reduceFinal comfortably under the ~100s worker limit (the LLM
+  // style-test in validatePersona would push it over). Deep validation happens in the eval phase.
   const pack = buildMarkdown(kol, merged);
-  const validation = await validatePersona(env, kol, merged, tweets);
-  validation.unshift(`INFO: map-reduce over ${tweets.length} tweets, ${l1.length} group-merges → final`);
+  const mm = merged.mental_models?.length || 0;
+  const validation = [
+    `INFO: map-reduce over ${tweets.length} tweets, ${l1.length} group-merges → final`,
+    mm >= 3 ? `PASS: ${mm} mental models` : `WARN: only ${mm} mental models`,
+    `INFO: ${merged.analytical_exemplars?.length || 0} verbatim exemplars, ${merged.track_record?.length || 0} track-record items`,
+  ];
   return {
     persona_pack: pack, persona_json: merged, validation,
-    stats: { tweets: tweets.length, chunks: l1.length, mapped_ok: l1.length, models: merged.mental_models?.length || 0, exemplars: merged.analytical_exemplars?.length || 0 },
+    stats: { tweets: tweets.length, chunks: l1.length, mapped_ok: l1.length, models: mm, exemplars: merged.analytical_exemplars?.length || 0 },
+  };
+}
+
+// REDUCE — FINAL, SPLIT INTO TWO BUDGET-SAFE STEPS (for the automated orchestrator). reduceFinal above
+// does the pro merge AND the full-corpus load + verification in one invocation — together ~90s+, which
+// flirts with the ~100s worker limit and gets killed when chained (no client to retry). These two split
+// it so neither step is close to the edge:
+//
+//   reduceFinalDraft — the ONLY LLM call: merge the l1 intermediates with pro, persist the raw result as
+//   a 'merged_draft' fact. No full-corpus load (uses the cheap signature hash), so it's just the pro call.
+export async function reduceFinalDraft(env: Env, kolId: string): Promise<{ ok: boolean; groups: number; len: number }> {
+  // Derive the corpus_hash from the stored reduce_l1 rows (newest set) rather than recomputing it — that
+  // matches the groups by construction (no dependency on hashing large tweet ids identically across read
+  // paths) and stays LLM-only (no full-corpus load), keeping this step well under the ~100s limit.
+  const latest = await env.DB.prepare(
+    `SELECT corpus_hash FROM persona_facts WHERE kol_id=? AND kind='reduce_l1' ORDER BY updated_at DESC, chunk_idx DESC LIMIT 1`
+  ).bind(kolId).first<any>();
+  const hash = latest?.corpus_hash;
+  if (!hash) throw new Error(`No reduce_l1 groups for ${kolId} — run reduceGroup first`);
+  const rows = await env.DB.prepare(
+    `SELECT json FROM persona_facts WHERE kol_id=? AND kind='reduce_l1' AND corpus_hash=? ORDER BY chunk_idx ASC`
+  ).bind(kolId, hash).all();
+  const l1: PersonaJson[] = [];
+  for (const r of (rows.results || []) as any[]) { try { l1.push(JSON.parse(r.json)); } catch {} }
+  if (!l1.length) throw new Error(`No reduce_l1 groups for ${kolId} — run reduceGroup first`);
+  // finalLimits=true bounds the output so it finishes naturally and parses; cap 8000 is generous headroom
+  // (a bounded merge lands ~3k tokens). A truncated merge would silently fall back to a single partial.
+  const merged = await reducePartials(env, l1, 8000, false, true);
+  if (!merged) throw new Error(`Final reduce failed for ${kolId}`);
+  // Guard: reducePartials returns partials[0] on parse failure. If the merge didn't actually consolidate
+  // (result === first partial), treat it as a failure rather than persisting a degraded single-group pack.
+  if (l1.length > 1 && JSON.stringify(stripInternal(merged)) === JSON.stringify(stripInternal(l1[0]))) {
+    throw new Error(`Final reduce produced no merge (fell back to a single partial) for ${kolId}`);
+  }
+  await env.DB.prepare(
+    `INSERT OR REPLACE INTO persona_facts (id,kol_id,kind,chunk_idx,corpus_hash,json,tweets_covered,date_min,date_max,updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))`
+  ).bind(`${kolId}:merged_draft`, kolId, "merged_draft", null, hash, JSON.stringify(stripInternal(merged)), null, null, null).run();
+  return { ok: true, groups: l1.length, len: JSON.stringify(merged).length };
+}
+
+//   finalizeMerged — LLM-FREE: load the draft + full corpus, verify every quote verbatim (anti-
+//   hallucination gate), attach verbatim exemplars, apply the triple gate, persist the 'merged' fact,
+//   render the pack. Just D1 + CPU, so it finishes well under the limit.
+export async function finalizeMerged(env: Env, kolId: string): Promise<DistillResult> {
+  const kol = await env.DB.prepare(`SELECT id,display_name,handle,tagline FROM kols WHERE id=?`).bind(kolId).first<any>();
+  if (!kol) throw new Error(`KOL not found: ${kolId}`);
+  const draft = await env.DB.prepare(`SELECT json FROM persona_facts WHERE id=?`).bind(`${kolId}:merged_draft`).first<any>();
+  if (!draft?.json) throw new Error(`No merged_draft for ${kolId} — run reduceFinalDraft first`);
+  let merged: PersonaJson = JSON.parse(draft.json);
+
+  const tweets = await loadAllTweets(env, kolId);
+  const normFull = normWs(tweets.map((t) => t.text).join("\n"));
+  merged = verifyPartial(merged, normFull);
+  merged.analytical_exemplars = selectExemplars(tweets, 5);
+  applyTripleGate(merged);
+  await saveMerged(env, kolId, merged, tweets);
+
+  const pack = buildMarkdown(kol, merged);
+  const mm = merged.mental_models?.length || 0;
+  const validation = [
+    `INFO: map-reduce final over ${tweets.length} tweets → merged (verified, exemplars attached)`,
+    mm >= 3 ? `PASS: ${mm} mental models` : `WARN: only ${mm} mental models`,
+    `INFO: ${merged.analytical_exemplars?.length || 0} verbatim exemplars, ${merged.track_record?.length || 0} track-record items`,
+  ];
+  return {
+    persona_pack: pack, persona_json: merged, validation,
+    stats: { tweets: tweets.length, chunks: 0, mapped_ok: 0, models: mm, exemplars: merged.analytical_exemplars?.length || 0 },
   };
 }
 
