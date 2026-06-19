@@ -52,10 +52,78 @@ function parseScore(raw: string): number | null {
   return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : null;
 }
 
+function parseScoreObject(raw: string): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const o of safeJsonArray(raw)) {
+    const id = String(o?.id || "").trim();
+    const score = typeof o?.score === "number" ? o.score : parseScore(String(o?.score ?? ""));
+    if (id && score !== null) out[id] = score;
+  }
+  return out;
+}
+
 // Extract the "## Expression DNA" block from a persona pack (the voice fingerprint the judge scores against).
 function extractExpressionDna(pack: string): string {
   const m = pack.match(/##\s*Expression DNA[\s\S]*?(?=\n##\s|\n*$)/i);
   return (m ? m[0] : pack.slice(0, 1200)).trim();
+}
+
+interface EvalDraft {
+  ec: any;
+  response: string;
+  scoreCitation: number;
+}
+
+async function judgeVoiceBatch(env: Env, dna: string, drafts: EvalDraft[]): Promise<Record<string, number>> {
+  const out: Record<string, number> = {};
+  const BATCH = 6;
+  for (let i = 0; i < drafts.length; i += BATCH) {
+    const batch = drafts.slice(i, i + BATCH);
+    const raw = await completeChat(env, env.MODEL_FLASH, [
+      {
+        role: "system",
+        content:
+          `You judge whether replies match a finance KOL's documented voice. Given the Expression DNA and ` +
+          `several replies, output ONLY a JSON array: [{"id":"...","score":0.0}]. Score 0..1 = average ` +
+          `agreement across sentence style, vocabulary, humor, certainty, opening pattern. No commentary.`,
+      },
+      {
+        role: "user",
+        content:
+          `Expression DNA:\n${dna}\n\nReplies:\n` +
+          batch.map((d) => `ID: ${d.ec.id}\n${d.response.slice(0, 1500)}`).join("\n\n---\n\n"),
+      },
+    ], { maxTokens: Math.max(120, batch.length * 32), temperature: 0 });
+    const parsed = parseScoreObject(raw);
+    for (const d of batch) out[d.ec.id] = parsed[d.ec.id] ?? 0;
+  }
+  return out;
+}
+
+async function judgeStanceBatch(env: Env, drafts: EvalDraft[]): Promise<Record<string, number>> {
+  const out: Record<string, number> = {};
+  const withStance = drafts.filter((d) => d.ec.expected_stance);
+  const BATCH = 6;
+  for (let i = 0; i < withStance.length; i += BATCH) {
+    const batch = withStance.slice(i, i + BATCH);
+    const raw = await completeChat(env, env.MODEL_FLASH, [
+      {
+        role: "system",
+        content:
+          `Output ONLY a JSON array: [{"id":"...","score":0.0}]. For each item, score 0..1: how well ` +
+          `does the reply's directional stance agree with EXPECTED? 1=same direction & subject, 0=opposite. No commentary.`,
+      },
+      {
+        role: "user",
+        content: batch.map((d) =>
+          `ID: ${d.ec.id}\nEXPECTED: ${d.ec.expected_stance}\nREPLY:\n${d.response.slice(0, 1200)}`
+        ).join("\n\n---\n\n"),
+      },
+    ], { maxTokens: Math.max(120, batch.length * 32), temperature: 0 });
+    const parsed = parseScoreObject(raw);
+    for (const d of batch) out[d.ec.id] = parsed[d.ec.id] ?? 0;
+  }
+  return out;
 }
 
 // ---------- buildEvalSet: mine a golden set from the KOL's own corpus ----------
@@ -195,14 +263,33 @@ export async function runEval(
     `SELECT id, question, expected_stance FROM eval_cases WHERE kol_id=? ORDER BY id`
   ).bind(kolId).all()).results || []) as any[];
   if (!allCases.length) throw new Error(`No eval_cases for ${kolId} — run buildEvalSet first`);
-  const doneRows = ((await env.DB.prepare(
+
+  // Concurrent drivers can overlap (self-chain + cron). Reserve cases before spending model calls so
+  // only one invocation scores a given case. If a Worker dies mid-case, the null-score reservation is
+  // released after 30 minutes.
+  await env.DB.prepare(
+    `DELETE FROM eval_results
+     WHERE kol_id=? AND persona_version=? AND score_citation IS NULL
+       AND datetime(created_at) < datetime('now','-30 minutes')`
+  ).bind(kolId, personaVersion).run();
+  const occupiedRows = ((await env.DB.prepare(
     `SELECT DISTINCT case_id FROM eval_results WHERE kol_id=? AND persona_version=?`
   ).bind(kolId, personaVersion).all()).results || []) as any[];
-  const done = new Set(doneRows.map((r) => r.case_id));
-  const cases = allCases.filter((c) => !done.has(c.id)).slice(0, limit);
-  const remaining = allCases.length - done.size - cases.length;
+  const occupied = new Set(occupiedRows.map((r) => r.case_id));
+  const candidates = allCases.filter((c) => !occupied.has(c.id)).slice(0, limit);
+  const cases: any[] = [];
+  for (const ec of candidates) {
+    const resultId = `${kolId}:${personaVersion}:${modelVersion}:${ec.id}`;
+    const claimed = await env.DB.prepare(
+      `INSERT OR IGNORE INTO eval_results
+       (id,kol_id,case_id,persona_version,model_version,regressed)
+       VALUES (?,?,?,?,?,0)`
+    ).bind(resultId, kolId, ec.id, personaVersion, modelVersion).run();
+    if (claimed.meta.changes) cases.push(ec);
+  }
 
   let sumCite = 0, sumVoice = 0, sumStance = 0, stanceN = 0, passedN = 0;
+  const drafts: EvalDraft[] = [];
 
   for (const ec of cases) {
     const question = String(ec.question);
@@ -224,31 +311,17 @@ export async function runEval(
       ? (validRefs.size === 0 ? 1 : 0)               // nothing to cite → fine; sources existed but none cited → 0
       : Array.from(cited).filter((r) => validRefs.has(r)).length / cited.size;
 
-    // 2) Voice fidelity — flash judge vs the Expression DNA. RELATIVE signal only.
-    const scoreVoice = parseScore(await completeChat(env, env.MODEL_FLASH, [
-      {
-        role: "system",
-        content:
-          `You judge whether a reply matches a finance KOL's documented voice. Given the Expression DNA and a ` +
-          `reply, output ONLY a number 0..1 = average agreement across the DNA dimensions (sentence style, ` +
-          `vocabulary, humor, certainty, opening pattern). No words.`,
-      },
-      { role: "user", content: `Expression DNA:\n${dna}\n\nReply:\n${response.slice(0, 1500)}` },
-    ], { maxTokens: 8, temperature: 0 })) ?? 0;
+    drafts.push({ ec, response, scoreCitation });
+  }
 
-    // 3) Stance consistency — only when the case carries an expected stance.
-    let scoreStance: number | null = null;
-    if (ec.expected_stance) {
-      scoreStance = parseScore(await completeChat(env, env.MODEL_FLASH, [
-        {
-          role: "system",
-          content:
-            `Output ONLY a number 0..1: how well does the reply's directional stance agree with the EXPECTED ` +
-            `stance? 1=same direction & subject, 0=opposite. No words.`,
-        },
-        { role: "user", content: `EXPECTED: ${ec.expected_stance}\n\nREPLY:\n${response.slice(0, 1200)}` },
-      ], { maxTokens: 8, temperature: 0 }));
-    }
+  const voiceScores = await judgeVoiceBatch(env, dna, drafts);
+  const stanceScores = await judgeStanceBatch(env, drafts);
+
+  for (const d of drafts) {
+    const ec = d.ec;
+    const scoreCitation = d.scoreCitation;
+    const scoreVoice = voiceScores[ec.id] ?? 0;
+    const scoreStance = ec.expected_stance ? (stanceScores[ec.id] ?? 0) : null;
 
     sumCite += scoreCitation;
     sumVoice += scoreVoice;
@@ -259,19 +332,19 @@ export async function runEval(
     if (passed) passedN++;
 
     await env.DB.prepare(
-      `INSERT OR REPLACE INTO eval_results
-       (id,kol_id,case_id,persona_version,model_version,score_citation,score_voice,score_stance,passed,regressed)
-       VALUES (?,?,?,?,?,?,?,?,?,0)`
+      `UPDATE eval_results
+       SET score_citation=?, score_voice=?, score_stance=?, passed=?, regressed=0
+       WHERE id=?`
     ).bind(
-      `${kolId}:${ec.id}:${Date.now()}`, kolId, ec.id, personaVersion, modelVersion,
       scoreCitation, scoreVoice, scoreStance, passed ? 1 : 0,
+      `${kolId}:${personaVersion}:${modelVersion}:${ec.id}`,
     ).run();
   }
 
   // Aggregate over ALL results for this version so far (the run may be spread across several batches).
   const agg = await env.DB.prepare(
     `SELECT AVG(score_citation) c, AVG(score_voice) v, AVG(score_stance) s, SUM(passed) p, COUNT(*) n
-     FROM eval_results WHERE kol_id=? AND persona_version=?`
+     FROM eval_results WHERE kol_id=? AND persona_version=? AND score_citation IS NOT NULL`
   ).bind(kolId, personaVersion).first<any>();
   const n = agg?.n || cases.length;
   const avgCite = agg?.c ?? 0;
@@ -288,9 +361,11 @@ export async function runEval(
     `SELECT AVG(score_citation) c, AVG(score_voice) v, AVG(score_stance) s
      FROM eval_results
      WHERE kol_id=? AND persona_version <> ?
+       AND score_citation IS NOT NULL
        AND persona_version = (
          SELECT persona_version FROM eval_results
-         WHERE kol_id=? AND persona_version <> ? ORDER BY created_at DESC LIMIT 1
+         WHERE kol_id=? AND persona_version <> ? AND score_citation IS NOT NULL
+         ORDER BY created_at DESC LIMIT 1
        )`
   ).bind(kolId, personaVersion, kolId, personaVersion).first<any>();
   let baselineComposite: number | null = null;
@@ -299,6 +374,7 @@ export async function runEval(
     baselineComposite = bp.length ? bp.reduce((a: number, b: number) => a + b, 0) / bp.length : null;
   }
   // Only judge regression once the full set is scored (remaining===0); a partial run isn't comparable.
+  const remaining = Math.max(0, allCases.length - n);
   const regressed = remaining === 0 && baselineComposite !== null && composite < baselineComposite - REGRESSION_MARGIN;
 
   if (regressed) {
@@ -372,13 +448,26 @@ export async function autoRollback(
 export async function evalAndMaybeRollback(
   env: Env,
   kolId: string,
-  opts: { limit?: number } = {},
-): Promise<{ skipped: boolean; reason?: string; summary?: EvalSummary; rolled_back?: boolean }> {
+  opts: { limit?: number; smoke?: boolean; smokeRegressionMargin?: number; smokeMinCitation?: number } = {},
+): Promise<{ skipped: boolean; reason?: string; summary?: EvalSummary; rolled_back?: boolean; smoke_suspicious?: boolean }> {
   const cnt = await env.DB.prepare(`SELECT COUNT(*) AS c FROM eval_cases WHERE kol_id=?`)
     .bind(kolId).first<{ c: number }>();
   if (!cnt || cnt.c === 0) return { skipped: true, reason: "no eval set (run buildEvalSet first)" };
 
   const summary = await runEval(env, kolId, opts);
+  if (opts.smoke && summary.remaining > 0) {
+    const margin = opts.smokeRegressionMargin ?? 0.06;
+    const minCitation = opts.smokeMinCitation ?? 0.55;
+    const suspicious =
+      (summary.baseline_composite !== null && summary.composite < summary.baseline_composite - margin) ||
+      summary.avg_citation < minCitation;
+    await logPersonaExperiment(env, kolId, {
+      content: "", finish_reason: "smoke", content_len: 0, duration_ms: 0,
+      parse_ok: true, error_type: null,
+      note: `smoke eval: composite=${summary.composite.toFixed(3)} baseline=${summary.baseline_composite?.toFixed(3) ?? "none"} citation=${summary.avg_citation.toFixed(3)} rem=${summary.remaining} suspicious=${suspicious}`,
+    }, 0, "eval_smoke");
+    return { skipped: false, summary, rolled_back: false, smoke_suspicious: suspicious };
+  }
   if (!summary.regressed) return { skipped: false, summary, rolled_back: false };
 
   const rb = await autoRollback(

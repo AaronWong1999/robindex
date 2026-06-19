@@ -103,11 +103,32 @@ const fmtTweet = (t: Tw) => `[${(t.created_at_iso || "").slice(0, 10)}] ❤${t.l
 
 interface Chunk { idx: number; tweets: Tw[]; corpus: string; dateMin: string; dateMax: string; }
 
-// Split tweets into ~chunkChars windows (chronological), capped at maxChunks (older overflow is sampled
-// out only for extreme cases; qinbafrank's 2.1M chars → ~30 chunks well under the cap).
-function chunkTweets(tweets: Tw[], maxChunks = 32, minChunkChars = 60000): Chunk[] {
+function chunkConfig(tweets: Tw[], totalChars: number, explicitMaxChunks?: number): { maxChunks: number; minChunkChars: number } {
+  if (explicitMaxChunks) return { maxChunks: explicitMaxChunks, minChunkChars: 60000 };
+  if (tweets.length <= 150 || totalChars < 80000) return { maxChunks: 1, minChunkChars: 80000 };
+  if (tweets.length <= 1000 || totalChars < 350000) {
+    return { maxChunks: Math.min(8, Math.max(2, Math.ceil(totalChars / 70000))), minChunkChars: 60000 };
+  }
+  if (tweets.length <= 6000) {
+    return { maxChunks: Math.min(24, Math.max(8, Math.ceil(totalChars / 90000))), minChunkChars: 75000 };
+  }
+  return { maxChunks: 32, minChunkChars: 60000 };
+}
+
+// Split tweets into chronological windows. Default sizing is dynamic: tiny corpora stay in one map call,
+// medium corpora use fewer larger chunks, and prolific KOLs keep the old fine-grained ~32 chunk cap.
+function chunkTweets(tweets: Tw[], maxChunks?: number): Chunk[] {
   const totalChars = tweets.reduce((a, t) => a + (t.text?.length || 0) + 24, 0);
-  const chunkChars = Math.max(minChunkChars, Math.ceil(totalChars / maxChunks));
+  const cfg = chunkConfig(tweets, totalChars, maxChunks);
+  if (cfg.maxChunks <= 1) {
+    return [{
+      idx: 0, tweets, corpus: tweets.map(fmtTweet).join("\n"),
+      dateMin: (tweets[0]?.created_at_iso || "").slice(0, 10),
+      dateMax: (tweets[tweets.length - 1]?.created_at_iso || "").slice(0, 10),
+    }];
+  }
+  const maxTarget = Math.max(1, cfg.maxChunks);
+  const chunkChars = Math.max(cfg.minChunkChars, Math.ceil(totalChars / maxTarget));
   const chunks: Chunk[] = [];
   let cur: Tw[] = [];
   let curLen = 0;
@@ -429,7 +450,7 @@ export async function mapStage(
 ): Promise<{ total: number; cached: number; mapped: number; remaining: number; hash: string }> {
   const tweets = await loadAllTweets(env, kolId);
   if (tweets.length < 20) throw new Error(`Not enough tweets (${tweets.length}) for ${kolId}`);
-  const chunks = chunkTweets(tweets, opts.maxChunks ?? 32);
+  const chunks = chunkTweets(tweets, opts.maxChunks);
   const hash = corpusHash(tweets);
 
   const existing = await env.DB.prepare(

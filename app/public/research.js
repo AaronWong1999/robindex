@@ -16,15 +16,8 @@ const PERSONA_META = {
     avatar_url: "https://unavatar.io/x/qinbafrank",
     desc: "Qinbafrank 的框架偏向 AI 大趋势、宏观传导与行情规律。适合把公司放回宏观与产业主线里复盘，按权重排序判断链。",
   },
-  "qinbafrank-tag": {
-    id: "qinbafrank-tag",
-    display_name: "Qinbafrank（打标签对照）",
-    handle: "qinbafrank",
-    avatar_url: "https://unavatar.io/x/qinbafrank",
-    desc: "A/B 对照组：与 Qinbafrank 同一语料，但检索走「打标签」模式，用于对比纯 query-side 的召回差异。",
-  },
 };
-const ORDER = ["aleabitoreddit", "qinbafrank", "qinbafrank-tag"];
+const ORDER = ["aleabitoreddit", "qinbafrank"];
 
 const state = { persona: "aleabitoreddit", model: "flash", convId: null, busy: false, kols: {}, lastCitations: [], allCitations: [], toolCalls: [], lastQuestion: "", promptMode: null };
 

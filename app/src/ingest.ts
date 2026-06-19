@@ -213,7 +213,11 @@ export async function runDailyIngest(env: Env): Promise<void> {
   if (!env.GETXAPI_KEY && !env.APIFY_TOKEN) {
     console.log("ingest: no X/Twitter token set, skipping pull");
   }
-  const kols = await env.DB.prepare(`SELECT id,handle,twitter_uid FROM kols`).all();
+  // Only fetch canonical corpora. Control/persona variants with corpus_id reuse another KOL's tweets,
+  // so pulling their timelines would spend GetXAPI quota and then insert zero duplicate tweet IDs.
+  const kols = await env.DB.prepare(
+    `SELECT id,handle,twitter_uid FROM kols WHERE corpus_id IS NULL OR corpus_id=''`
+  ).all();
   for (const k of (kols.results || []) as any[]) {
     try {
       const st = await env.DB.prepare(`SELECT last_tweet_id FROM sync_state WHERE kol_id=?`)
@@ -342,7 +346,12 @@ export async function runWeeklyPersonaRefresh(env: Env): Promise<number> {
               await env.DB.prepare(`UPDATE kols SET persona_pack=?, persona_version=?, updated_at=datetime('now') WHERE id=?`)
                 .bind(inc.result.persona_pack, `v2-mapreduce-inc-${week}`, k.id).run();
               console.log(`persona distill-inc ${k.id}: +${inc.result.stats.tweets} tweets, models=${inc.result.stats.models}`);
-              const er = await evalAndMaybeRollback(env, k.id);
+              const er = await evalAndMaybeRollback(env, k.id, { limit: 12, smoke: true });
+              if (er.smoke_suspicious) {
+                await env.CACHE.put(`distill_job:${k.id}`, JSON.stringify({ phase: "eval", i: 0 }), { expirationTtl: 7200 });
+                await env.CACHE.put(`distill_steps:${k.id}`, "0", { expirationTtl: 7200 });
+                console.log(`eval ${k.id}: smoke suspicious; scheduled full eval via distill_job`);
+              }
               if (!er.skipped) console.log(`eval ${k.id}: composite=${er.summary?.composite?.toFixed(3)} regressed=${er.summary?.regressed} rolled_back=${er.rolled_back}`);
             } else {
               console.log(`persona distill-inc ${k.id}: ${inc.note}`);
@@ -351,7 +360,12 @@ export async function runWeeklyPersonaRefresh(env: Env): Promise<number> {
             const evo = await evolvePersona(env, k.id);
             console.log(`persona evolve ${k.id}: evolved=${evo.evolved} v=${evo.version} notes=${evo.notes.join("; ")} review=${evo.needs_review}`);
             if (evo.evolved) {
-              const er = await evalAndMaybeRollback(env, k.id);
+              const er = await evalAndMaybeRollback(env, k.id, { limit: 12, smoke: true });
+              if (er.smoke_suspicious) {
+                await env.CACHE.put(`distill_job:${k.id}`, JSON.stringify({ phase: "eval", i: 0 }), { expirationTtl: 7200 });
+                await env.CACHE.put(`distill_steps:${k.id}`, "0", { expirationTtl: 7200 });
+                console.log(`eval ${k.id}: smoke suspicious; scheduled full eval via distill_job`);
+              }
               if (!er.skipped) console.log(`eval ${k.id}: composite=${er.summary?.composite?.toFixed(3)} regressed=${er.summary?.regressed} rolled_back=${er.rolled_back}`);
             }
           }
