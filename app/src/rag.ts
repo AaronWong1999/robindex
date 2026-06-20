@@ -135,6 +135,16 @@ async function attachQuoted(env: Env, scope: string, handle: string, citations: 
       const arr = needLookup.get(qid) || [];
       arr.push(c);
       needLookup.set(qid, arr);
+      continue;
+    }
+    const shortLinks = Array.from(String(c.snippet || "").matchAll(/https?:\/\/t\.co\/[A-Za-z0-9_%-]+/gi)).map((x) => x[0]);
+    for (const short of shortLinks.slice(0, 3)) {
+      const qid = await resolveTcoStatusId(short, handle).catch(() => null);
+      if (!qid) continue;
+      const arr = needLookup.get(qid) || [];
+      arr.push(c);
+      needLookup.set(qid, arr);
+      break;
     }
   }
   const ids = Array.from(needLookup.keys()).slice(0, 60);
@@ -155,6 +165,15 @@ async function attachQuoted(env: Env, scope: string, handle: string, citations: 
     };
     for (const c of cs) c.quoted = q;
   }
+}
+
+async function resolveTcoStatusId(shortUrl: string, expectedHandle: string): Promise<string | null> {
+  const res = await fetch(shortUrl, { redirect: "manual" });
+  const dest = res.headers.get("location") || res.url || "";
+  const m = dest.match(/(?:x|twitter)\.com\/([A-Za-z0-9_]+)\/status\/(\d+)/i);
+  if (!m) return null;
+  if (expectedHandle && m[1].toLowerCase() !== expectedHandle.toLowerCase()) return null;
+  return m[2];
 }
 
 function safeParse(s: string): QuotedTweet | null {
