@@ -62,9 +62,15 @@ try{var _t=localStorage.getItem("rx.theme");if(_t)document.documentElement.setAt
     <a href="#pricing" data-i18n="navPricing">定价</a>
   </div>
   <div class="lnav-right">
-    <div class="lang-switch" role="group" aria-label="语言">
-      <button class="lang-btn on" data-lang="zh" type="button">中</button>
-      <button class="lang-btn" data-lang="en" type="button">EN</button>
+    <div class="mp lang-mp" id="langMp">
+      <button class="lang-toggle" type="button" id="langToggle" aria-label="语言" aria-expanded="false" aria-haspopup="listbox">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18z"/></svg>
+        <span class="lt-cur" id="langCur">中文</span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="1.8" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+      <div class="mp-menu lang-menu" id="langMenu" hidden role="listbox" aria-label="语言">
+        <div class="mp-head" id="langMenuHead">语言</div>
+      </div>
     </div>
     <div class="theme-wrap">
       <button class="theme-btn icon-btn" type="button" aria-label="主题" title="主题">
@@ -351,9 +357,8 @@ try{var _t=localStorage.getItem("rx.theme");if(_t)document.documentElement.setAt
 </div>
 
 <style>
-.lang-switch{display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;}
-.lang-btn{padding:6px 10px;font-size:12px;font-weight:600;color:var(--dim);transition:.13s;}
-.lang-btn.on{background:var(--panel-2);color:var(--text);}
+.lang-mp{position:relative;}
+.lang-menu[hidden]{display:none!important;}
 .theme-wrap{position:relative;}
 .theme-menu{position:absolute;top:calc(100% + 6px);right:0;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:6px;min-width:120px;box-shadow:var(--sh-lg);z-index:60;flex-direction:column;gap:2px;}
 .theme-menu[hidden]{display:none!important;}
@@ -364,6 +369,7 @@ try{var _t=localStorage.getItem("rx.theme");if(_t)document.documentElement.setAt
 .icon-btn:hover{background:var(--panel);}
 .soon-tag-sm{font-family:var(--mono);font-size:9px;font-weight:600;color:var(--accent);background:var(--accent-ghost);border:1px solid var(--accent-dim);border-radius:5px;padding:2px 6px;vertical-align:middle;}
 </style>
+<script src="/app/i18n.js"></script>
 <script src="/landing-static.js" defer></script>
 </body>
 </html>
