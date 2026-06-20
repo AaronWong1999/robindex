@@ -1,7 +1,8 @@
 /* Robindex — mobile app shell: compact top bar + bottom tab bar (PWA-style) */
 
-function MobileTopBar({ kol, lang, setLang, theme, setTheme }) {
+function MobileTopBar({ kol, lang, setLang, theme, setTheme, loggedIn, onLogin }) {
   const { Icon, ThemeMenu } = window.RXC;
+  const T = (k) => window.RXI.t(k);
   return React.createElement("div", { className: "m-topbar" },
     kol
       ? React.createElement("div", { className: "m-kol" },
@@ -13,6 +14,7 @@ function MobileTopBar({ kol, lang, setLang, theme, setTheme }) {
           React.createElement("div", { className: "brand-mark", style: { width: 26, height: 26, borderRadius: 7 } }, React.createElement(Icon, { name: "candlestick", size: 15, color: "var(--on-accent)" })),
           React.createElement("div", { className: "brand-name", style: { fontSize: 14 } }, "Robindex ", React.createElement("span", null, "Desk"))),
     React.createElement("div", { className: "m-top-actions" },
+      !loggedIn && React.createElement("button", { className: "hdr-login", style: { height: "28px", fontSize: "12px", padding: "0 10px" }, onClick: onLogin }, T("hdrLogin")),
       React.createElement(window.LangToggle, { lang, setLang }),
       React.createElement(ThemeMenu, { value: theme, onChange: setTheme })));
 }

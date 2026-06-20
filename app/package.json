@@ -13,14 +13,17 @@
     "seed:local": "wrangler d1 execute robindex-db --local --file=./schema.sql",
     "seed:remote": "wrangler d1 execute robindex-db --remote --file=./schema.sql",
     "test:dsl": "node scripts/test_dsl_cleaners.mjs",
-    "test:prompt": "node scripts/test_prompt_format.mjs"
+    "test:prompt": "node scripts/test_prompt_format.mjs",
+    "build:privy": "esbuild src/privy-entry.js --bundle --minify --format=iife --target=es2020 --outfile=public/app/privy-bundle.js --alias:react=./src/react-shim.js --alias:react-dom=./src/react-dom-shim.js --alias:react/jsx-runtime=./src/react-jsx-runtime-shim.js --define:global=window --define:process.env.NODE_ENV='\"production\"' --define:process.env.NEXT_PUBLIC_SECURE_SITE_ORIGIN='\"\"' --define:process.env.NEXT_PUBLIC_SECURE_SITE_SDK_URL='\"\"' --define:process.env.NEXT_PUBLIC_SECURE_SITE_SDK_VERSION='\"\"' --define:process.env.NEXT_PUBLIC_DEFAULT_LOG_LEVEL='\"\"' --define:process.env.DISABLE_GLOBAL_CORE='\"\"' --define:process.env.IS_VITEST='\"\"' --define:process.env.REACT_APP_SC_ATTR='\"\"' --define:process.env.SC_ATTR='\"\"'"
   },
   "dependencies": {
+    "@privy-io/react-auth": "^3.32.1",
     "hono": "^4.6.14"
   },
   "devDependencies": {
-    "wrangler": "^4.88.0",
     "@cloudflare/workers-types": "^4.20250109.0",
-    "typescript": "^5.7.2"
+    "esbuild": "^0.28.1",
+    "typescript": "^5.7.2",
+    "wrangler": "^4.88.0"
   }
 }

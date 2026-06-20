@@ -12,6 +12,7 @@ export interface Env {
   GETXAPI_KEY?: string;        // Worker secret (preferred X/Twitter ingest source)
   APIFY_TOKEN?: string;        // Worker secret (for cron ingest)
   ADMIN_KEY?: string;          // Worker secret (for bulk import)
+  PRIVY_APP_ID?: string;       // Worker secret / env variable for Privy
   SELF?: Fetcher;              // service binding to this same Worker (reliable self-invocation; a Worker
                               // cannot fetch its own custom domain — CF blocks it — so distill-auto chains via this)
 }

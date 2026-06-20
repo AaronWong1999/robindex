@@ -79,13 +79,22 @@
 
   let _kols = [];
   let _backendReady = false;
+  let _config = { privyAppId: "client-clxxyzdummyappidforlocaldev" };
 
   function kols(lang) { return _kols.map((k) => localizeKol(k, lang)); }
   function phases(lang) { return PHASES.map((p) => ({ key: p.key, label: pick(p.label, lang), verb: pick(p.verb, lang) })); }
 
   async function init() {
+    if (_backendReady) return;
     try {
-      const r = await fetch("/api/kols");
+      const [r, rConfig] = await Promise.all([
+        fetch("/api/kols"),
+        fetch("/api/config").catch(() => null)
+      ]);
+      if (rConfig && rConfig.ok) {
+        const configJson = await rConfig.json();
+        _config = { ..._config, ...configJson };
+      }
       if (!r.ok) throw new Error("kols fetch failed");
       const j = await r.json();
       const backendKols = j.kols || [];
@@ -257,5 +266,5 @@
     } catch {}
   }
 
-  window.RX = { MODELS, kols, phases, init, isBackendReady, streamChat, fetchSuggestions, strategyFor, loadHistory, saveChat, deleteChat };
+  window.RX = { MODELS, kols, phases, init, isBackendReady, streamChat, fetchSuggestions, strategyFor, loadHistory, saveChat, deleteChat, get config() { return _config; } };
 })();

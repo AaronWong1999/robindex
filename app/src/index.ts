@@ -77,9 +77,10 @@ function stripToolCallDSL(text: string): string {
 
 function normalizeCitationBrackets(text: string): string {
   return text
-    .replace(/【\s*(T\d+)\s*】/g, "[$1]")
-    .replace(/[（(]\s*(T\d+)\s*[）)]/g, "[$1]")
-    .replace(/(^|[^\[\w])\b(T\d+)\b(?!\s*[\]\w])/g, "$1[$2]");
+    .replace(/【\s*T?(\d+)\s*】/gi, "[$1]")
+    .replace(/\[\s*T(\d+)\s*\]/gi, "[$1]")
+    .replace(/[（(]\s*T(\d+)\s*[）)]/gi, "[$1]")
+    .replace(/(^|[^\[\w])\bT(\d+)\b(?!\s*[\]\w])/gi, "$1[$2]");
 }
 
 function createDSLStreamCleaner() {
@@ -147,6 +148,12 @@ app.get("/api/kols", async (c) => {
     `SELECT id,display_name,handle,avatar_url,tagline FROM kols ORDER BY display_name`
   ).all();
   return c.json({ kols: r.results || [] });
+});
+
+app.get("/api/config", async (c) => {
+  return c.json({
+    privyAppId: c.env.PRIVY_APP_ID || "client-clxxyzdummyappidforlocaldev"
+  });
 });
 
 app.get("/api/quote", async (c) => {
@@ -469,7 +476,7 @@ app.post("/api/chat", async (c) => {
             content:
               "现在直接输出给用户看的最终分析。严禁输出任何工具调用或 DSL 标签；不要说你要调用工具。\n" +
               "请用中文回答。保持你（博主）一贯的语气、分析框架和表达风格，像在回复读者的提问一样自然地写。\n" +
-              "引用写成 [T1] 格式。自然地融入原文引用，不要刻意分段或加小标题。\n" +
+              "引用写成 [1]、[2] 这种纯数字格式。自然地融入原文引用，不要刻意分段或加小标题。\n" +
               "缺数据明说，不要编。",
           },
         ];
@@ -537,7 +544,7 @@ app.post("/api/chat", async (c) => {
         controller.close();
 
         // Persist (runs after stream is closed)
-        const usedRefs = new Set(Array.from(full.matchAll(/(?:\[|【)\s*(T\d+)\s*(?:\]|】)/g)).map((m) => m[1]));
+        const usedRefs = new Set(Array.from(full.matchAll(/(?:\[|【)\s*T?(\d+)\s*(?:\]|】)/gi)).map((m) => `T${m[1]}`));
         const usedCitations = usedRefs.size ? citations.filter((cc) => usedRefs.has(cc.ref)) : [];
         await c.env.DB.prepare(
           `INSERT INTO messages (id,conversation_id,role,content,citations,tool_calls) VALUES (?,?,?,?,?,?)`

@@ -178,16 +178,33 @@ function ToolGroup({ phases, toolCalls, activePhase, done }) {
    Answer renderer — markdown-lite with **bold** + clickable [T#] citations
 ---------------------------------------------------------------------------- */
 const LABEL_RE = /^(结论|定位|底线|核心|一句话)\s*[:：]/;
+const URL_RE = /(https?:\/\/\S+)/;
+function citeKey(ref) {
+  const s = String(ref || "").trim();
+  const m = s.match(/^T?(\d+)$/i);
+  return m ? "T" + m[1] : s;
+}
+function citeLabel(ref) {
+  return citeKey(ref).replace(/^T/i, "");
+}
 function inline(text, onCite, key) {
-  const parts = text.split(/(\*\*.+?\*\*|\[T\d+(?:\s*,\s*T\d+)*\])/g).filter(Boolean);
+  const parts = text.split(/(\*\*.+?\*\*|\[T?\d+(?:\s*,\s*T?\d+)*\])/g).filter(Boolean);
   return parts.map((seg, i) => {
     if (/^\*\*.+\*\*$/.test(seg)) return React.createElement("b", { key: i }, seg.slice(2, -2));
-    const m = seg.match(/^\[(T\d+(?:\s*,\s*T\d+)*)\]$/);
+    const m = seg.match(/^\[(T?\d+(?:\s*,\s*T?\d+)*)\]$/i);
     if (m) {
       const refs = m[1].split(/\s*,\s*/);
       return React.createElement("span", { key: i, className: "cite-grp" },
         refs.map((r, j) => React.createElement("button", {
-          key: j, className: "cite", onClick: () => onCite(r), title: `来源推文 ${r}` }, r)));
+          key: j, className: "cite", onClick: () => onCite(citeKey(r)), title: `来源 ${citeLabel(r)}` },
+          citeLabel(r))));
+    }
+    if (URL_RE.test(seg)) {
+      const urlParts = seg.split(URL_RE).filter(Boolean);
+      return React.createElement(React.Fragment, { key: i },
+        urlParts.map((u, k) => URL_RE.test(u)
+          ? React.createElement("a", { key: k, className: "inline-url", href: u, target: "_blank", rel: "noreferrer" }, u)
+          : u));
     }
     return seg;
   });
@@ -223,21 +240,26 @@ function Conviction({ value }) {
    Source-tweet card (the hero: every [T#] resolves to a real cited tweet)
 ---------------------------------------------------------------------------- */
 function SourceCard({ kol, tw, active }) {
-  return React.createElement("a", {
-    className: "src" + (active ? " on" : ""), id: "cite-" + tw.ref,
-    href: tw.url, target: "_blank", rel: "noreferrer" },
+  const [expanded, setExpanded] = React.useState(false);
+  const isLong = tw.snippet && tw.snippet.length > 160;
+  React.useEffect(() => { if (active) setExpanded(true); }, [active]);
+  return React.createElement("div", {
+    className: "src" + (active ? " on" : ""), id: "cite-" + citeKey(tw.ref) },
     React.createElement("div", { className: "src-top" },
       React.createElement(Avatar, { kol, size: 34, radius: 17 }),
       React.createElement("div", { className: "src-id" },
         React.createElement("div", { className: "src-nm" }, kol.display_name,
           React.createElement(Icon, { name: "xLogo", size: 11, color: "var(--faint)" })),
         React.createElement("div", { className: "src-h" }, "@" + kol.handle, " · ", tw.date)),
-      React.createElement("span", { className: "src-ref" }, tw.ref)),
-    React.createElement("div", { className: "src-text" }, tw.snippet),
+      React.createElement("span", { className: "src-ref" }, citeLabel(tw.ref))),
+    React.createElement("div", { className: "src-text" + (!expanded && isLong ? " clamp" : "") }, tw.snippet),
+    isLong && React.createElement("button", {
+      className: "src-toggle",
+      onClick: () => setExpanded((v) => !v) },
+      expanded ? (EN() ? "Collapse" : "收起") : (EN() ? "Expand" : "展开原文")),
     React.createElement("div", { className: "src-foot" },
-      React.createElement("span", null, React.createElement(Icon, { name: "heart", size: 12 }), tw.likes),
-      React.createElement("span", null, React.createElement(Icon, { name: "eye", size: 12 }), tw.views),
-      React.createElement("span", { className: "src-open" }, EN() ? "Source" : "原文", React.createElement(Icon, { name: "link", size: 12 }))));
+      React.createElement("a", { className: "src-open", href: tw.url, target: "_blank", rel: "noreferrer" },
+        EN() ? "View on X →" : "在 X 查看原文 →")));
 }
 
-window.RXC = { Icon, Avatar, ModelPicker, ThemeMenu, THEMES, ToolGroup, AnswerBlocks, Conviction, SourceCard };
+window.RXC = { Icon, Avatar, ModelPicker, ThemeMenu, THEMES, ToolGroup, AnswerBlocks, Conviction, SourceCard, citeKey, citeLabel };

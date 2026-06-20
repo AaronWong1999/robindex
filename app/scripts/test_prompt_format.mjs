@@ -42,8 +42,9 @@ assert.doesNotMatch(chatPrompt, /do not claim to be the KOL/);
 
 const finalPrompt = await readFile(join(process.cwd(), "src/index.ts"), "utf8");
 assert.match(finalPrompt, /博主.*语气/);
-assert.ok(finalPrompt.includes(".replace(/[（(]\\s*(T\\d+)\\s*[）)]/g"));
-assert.ok(finalPrompt.includes(".replace(/(^|[^\\[\\w])\\b(T\\d+)\\b"));
-assert.match(finalPrompt, /什么信号会打脸/);
+assert.ok(finalPrompt.includes(".replace(/\\[\\s*T(\\d+)\\s*\\]/gi"));
+assert.ok(finalPrompt.includes(".replace(/(^|[^\\[\\w])\\bT(\\d+)\\b(?!\\s*[\\]\\w])/gi"));
+assert.match(finalPrompt, /纯数字格式/);
+assert.match(finalPrompt, /缺数据明说/);
 
 console.log("Prompt format tests passed");

@@ -18,7 +18,7 @@ function SettingsPage({ user, model, setModel, theme, setTheme, lang, setLang, o
           React.createElement("div", { className: "set-account" },
             React.createElement("div", { className: "set-av" }, "TD"),
             React.createElement("div", { style: { flex: 1, minWidth: 0 } },
-              React.createElement("div", { className: "set-acc-nm" }, "Trader Desk"),
+              React.createElement("div", { className: "set-acc-nm" }, user && user.email ? user.email.split("@")[0] : "Trader Desk"),
               React.createElement("div", { className: "set-acc-sub" }, user && user.email ? user.email : "trader@robindex.ai")),
             React.createElement("span", { className: "set-plan-pill" }, T("setPlanV"))))),
       // preferences

@@ -1,0 +1,12 @@
+const ReactDOM = window.ReactDOM;
+export default ReactDOM;
+export const render = ReactDOM.render;
+export const hydrate = ReactDOM.hydrate;
+export const createPortal = ReactDOM.createPortal;
+export const findDOMNode = ReactDOM.findDOMNode;
+export const unmountComponentAtNode = ReactDOM.unmountComponentAtNode;
+export const flushSync = ReactDOM.flushSync;
+export const unstable_batchedUpdates = ReactDOM.unstable_batchedUpdates;
+export const createRoot = ReactDOM.createRoot;
+export const hydrateRoot = ReactDOM.hydrateRoot;
+export const version = ReactDOM.version;

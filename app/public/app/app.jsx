@@ -1,6 +1,6 @@
 /* Robindex Desk — app shell: auth gate, i18n, responsive desktop/mobile, real SSE chat flow */
 const { useState: uS, useRef: uR, useEffect: uE, useCallback: uC } = React;
-const { Icon, Avatar, ModelPicker, ThemeMenu, THEMES, ToolGroup, AnswerBlocks, Conviction, SourceCard } = window.RXC;
+const { Icon, Avatar, ModelPicker, ThemeMenu, THEMES, ToolGroup, AnswerBlocks, Conviction, SourceCard, citeKey } = window.RXC;
 const RX = window.RX;
 const T = (k) => window.RXI.t(k);
 
@@ -23,7 +23,7 @@ function defaultChatTitle(kol, lang) {
 }
 function isEmptyChat(c) { return !c.messages || c.messages.length === 0; }
 
-function Sidebar({ kols, chats, activeChat, onPick, onOpenChat, onHome, onSettings, user }) {
+function Sidebar({ kols, chats, activeChat, onPick, onOpenChat, onHome, onSettings, user, loggedIn, onLogin }) {
   const recent = chats.filter((c) => !isEmptyChat(c));
   return React.createElement("aside", { className: "side" },
     React.createElement("button", { className: "brand", onClick: onHome },
@@ -48,16 +48,22 @@ function Sidebar({ kols, chats, activeChat, onPick, onOpenChat, onHome, onSettin
             key: c.id, className: "hist" + (activeChat && activeChat.id === c.id ? " on" : ""), onClick: () => onOpenChat(c) },
             React.createElement(Avatar, { kol: c.kol, size: 18, radius: 5, className: "hist-av" }),
             React.createElement("span", { className: "hist-t" }, c.title)))),
-    React.createElement("button", { className: "side-foot", onClick: onSettings },
-      React.createElement("div", { className: "av" }, "TD"),
-      React.createElement("div", { style: { minWidth: 0, textAlign: "left" } },
-        React.createElement("div", { className: "nm" }, "Trader Desk"),
-        React.createElement("div", { className: "sub" }, T("proSeat"))),
-      React.createElement("div", { className: "credits", title: T("credits") }, React.createElement(Icon, { name: "zap", size: 11 }), "8.2K")));
+    loggedIn
+      ? React.createElement("button", { className: "side-foot", onClick: onSettings },
+          React.createElement("div", { className: "av" }, (user && user.email ? user.email[0] : "U").toUpperCase()),
+          React.createElement("div", { style: { minWidth: 0, textAlign: "left" } },
+            React.createElement("div", { className: "nm" }, user && user.email ? user.email.split("@")[0] : "Trader"),
+            React.createElement("div", { className: "sub" }, T("proSeat"))),
+          React.createElement("div", { className: "credits", title: T("credits") }, React.createElement(Icon, { name: "zap", size: 11 }), "8.2K"))
+      : React.createElement("button", { className: "side-foot", onClick: onLogin },
+          React.createElement("div", { className: "av av-anon" }, React.createElement(Icon, { name: "user", size: 14, color: "var(--dim)" })),
+          React.createElement("div", { style: { minWidth: 0, textAlign: "left" } },
+            React.createElement("div", { className: "nm" }, T("authSignIn") + " Robindex"),
+            React.createElement("div", { className: "sub" }, T("authSub")))));
 }
 
 /* ============================ Home ============================ */
-function Home({ kols, target, setTarget, onAsk, models, model, setModel, effort, setEffort }) {
+function Home({ kols, target, setTarget, onAsk, models, model, setModel, effort, setEffort, loggedIn, onLogin }) {
   const [text, setText] = uS("");
   const tk = kols.find((k) => k.id === target) || kols[0];
   if (!tk) return React.createElement("div", { className: "home" },
@@ -65,7 +71,7 @@ function Home({ kols, target, setTarget, onAsk, models, model, setModel, effort,
       React.createElement("div", { className: "thinking" },
         React.createElement("span", null, "Loading personas"),
         React.createElement("span", { className: "tdots" }, React.createElement("i"), React.createElement("i"), React.createElement("i")))));
-  const submit = () => { if (text.trim()) { onAsk(tk, text.trim()); setText(""); } };
+  const submit = () => { if (!loggedIn) { onLogin(); return; } if (text.trim()) { onAsk(tk, text.trim()); setText(""); } };
   return React.createElement("div", { className: "home" },
     React.createElement("div", { className: "home-inner" },
       React.createElement("div", { className: "home-badge" }, React.createElement("span", { className: "dot" }), T("homeBadge")),
@@ -82,7 +88,7 @@ function Home({ kols, target, setTarget, onAsk, models, model, setModel, effort,
           React.createElement("textarea", {
             value: text, rows: 1, placeholder: T("askPlaceholder")(tk.display_name, tk.role),
             onChange: (e) => setText(e.target.value),
-            onKeyDown: (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } } }),
+            onKeyDown: (e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit(); } } }),
           React.createElement("div", { className: "box-bar" },
             React.createElement("span", { className: "tool-toggle on" }, React.createElement(Icon, { name: "search", size: 13 }), T("toolSearch")),
             React.createElement("span", { className: "tool-toggle" }, React.createElement(Icon, { name: "barChart", size: 13 }), T("toolMarket")),
@@ -91,7 +97,7 @@ function Home({ kols, target, setTarget, onAsk, models, model, setModel, effort,
             React.createElement("button", { className: "send", disabled: !text.trim(), onClick: submit }, React.createElement(Icon, { name: "send", size: 17 }))))),
       React.createElement("div", { className: "home-grid-lab" }, T("chooseP")),
       React.createElement("div", { className: "kgrid" }, kols.map((k) =>
-        React.createElement("button", { key: k.id, className: "kcard", style: { "--glow": k.accent + "22" }, onClick: () => onAsk(k, null) },
+        React.createElement("button", { key: k.id, className: "kcard", style: { "--glow": k.accent + "22" }, onClick: () => { if (!loggedIn) { onLogin(); return; } onAsk(k, null); } },
           React.createElement("div", { className: "kcard-top" },
             React.createElement(Avatar, { kol: k, size: 38, radius: 10 }),
             React.createElement("div", { style: { minWidth: 0 } },
@@ -142,14 +148,28 @@ function KMessage({ msg, model, onCite, onWriteCode }) {
 }
 
 /* ============================ Right rail ============================ */
-function Rail({ kol, sources, railTab, setRailTab, highlight, mobile }) {
+function Rail({ kol, sources, railTab, setRailTab, highlight, citeTick, mobile }) {
   const scrollRef = uR(null);
   uE(() => {
     if (highlight && railTab === "sources" && scrollRef.current) {
-      const el = scrollRef.current.querySelector("#cite-" + highlight);
-      if (el) scrollRef.current.scrollTo({ top: el.offsetTop - 14, behavior: "smooth" });
+      const scrollToCitation = (behavior) => {
+        const scroller = scrollRef.current;
+        if (!scroller) return;
+        const el = scroller.querySelector("#cite-" + citeKey(highlight));
+        if (!el) return;
+        const pad = 14;
+        const maxTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+        const fits = el.offsetHeight + pad * 2 <= scroller.clientHeight;
+        const top = fits
+          ? el.offsetTop - Math.max(pad, Math.floor((scroller.clientHeight - el.offsetHeight) / 2))
+          : el.offsetTop - pad;
+        scroller.scrollTo({ top: Math.max(0, Math.min(maxTop, top)), behavior });
+      };
+      requestAnimationFrame(() => scrollToCitation("smooth"));
+      const t = setTimeout(() => scrollToCitation("smooth"), 160);
+      return () => clearTimeout(t);
     }
-  }, [highlight, railTab]);
+  }, [highlight, citeTick, railTab]);
   return React.createElement("div", { className: "rail" + (mobile ? " rail-mobile" : "") },
     React.createElement("div", { className: "rail-tabs" },
       React.createElement("button", { className: "rt" + (railTab === "persona" ? " on" : ""), onClick: () => setRailTab("persona") },
@@ -164,7 +184,7 @@ function Rail({ kol, sources, railTab, setRailTab, highlight, mobile }) {
           ? React.createElement("div", { className: "empty-rail" }, React.createElement(Icon, { name: "quote", size: 22, color: "var(--ghost)", style: { margin: "0 auto 10px" } }), T("emptyRailA"), React.createElement("b", { style: { color: "var(--dim)" } }, T("emptyRailMark")), T("emptyRailB"))
           : React.createElement(React.Fragment, null,
               React.createElement("div", { className: "src-note" }, T("srcNoteA"), React.createElement("b", null, sources.length), T("srcNoteB")(kol.handle)),
-              sources.map((tw) => React.createElement(SourceCard, { key: tw.ref, kol, tw, active: highlight === tw.ref })))));
+              sources.map((tw) => React.createElement(SourceCard, { key: tw.ref, kol, tw, active: citeKey(highlight) === citeKey(tw.ref) })))));
 }
 function PersonaCard({ kol }) {
   return React.createElement(React.Fragment, null,
@@ -255,7 +275,7 @@ function Composer({ kol, onAsk, models, model, setModel, effort, setEffort, dyna
         React.createElement("textarea", {
           ref: ta, value: text, rows: 1, placeholder: T("composerPlaceholder")(kol.display_name),
           onChange: (e) => { setText(e.target.value); e.target.style.height = "auto"; e.target.style.height = Math.min(e.target.scrollHeight, 160) + "px"; },
-          onKeyDown: (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } } }),
+          onKeyDown: (e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit(); } } }),
         React.createElement("div", { className: "box-bar" },
           React.createElement("button", { className: "tool-toggle" + (tools ? " on" : ""), onClick: () => setTools((t) => !t) }, React.createElement(Icon, { name: "search", size: 13 }), T("toolSearch")),
           React.createElement("span", { className: "tool-toggle" }, React.createElement(Icon, { name: "barChart", size: 13 }), T("toolMarket")),
@@ -266,7 +286,7 @@ function Composer({ kol, onAsk, models, model, setModel, effort, setEffort, dyna
 }
 
 /* ============================ Thread + tabs (shared) ============================ */
-function ChatArea({ kol, messages, model, tab, setTab, onCite, onWriteCode, onAsk, threadRef, models, modelId, setModel, effort, setEffort }) {
+function ChatArea({ kol, messages, model, tab, setTab, onCite, onWriteCode, onAsk, threadRef, models, modelId, setModel, effort, setEffort, loggedIn, onLogin }) {
   const lastK = messages.filter((m) => m.role === "k" && m.done && m.resp && m.resp.suggestions);
   const dynSuggs = lastK.length ? lastK[lastK.length - 1].resp.suggestions : null;
   return React.createElement(React.Fragment, null,
@@ -279,7 +299,12 @@ function ChatArea({ kol, messages, model, tab, setTab, onCite, onWriteCode, onAs
                 : messages.map((m) => m.role === "u"
                     ? React.createElement("div", { className: "msg msg-u", key: m.id }, React.createElement("div", { className: "bub" }, m.text))
                     : React.createElement(KMessage, { key: m.id, msg: m, model, onCite, onWriteCode })))),
-          React.createElement(Composer, { kol, onAsk, models, model: modelId, setModel, effort, setEffort, dynamicSuggestions: dynSuggs }))
+          loggedIn
+            ? React.createElement(Composer, { kol, onAsk, models, model: modelId, setModel, effort, setEffort, dynamicSuggestions: dynSuggs })
+            : React.createElement("div", { className: "composer-wrap" },
+                React.createElement("div", { className: "composer" },
+                  React.createElement("button", { className: "auth-primary", style: { margin: "12px 0" }, onClick: onLogin },
+                    T("authSignInToAsk"), React.createElement(Icon, { name: "arrowRight", size: 16 })))))
       : React.createElement(CodePanel, { kol }));
 }
 
@@ -289,7 +314,25 @@ function App() {
   const [model, setModel] = uS(() => LS.get("model", "pro"));
   const [effort, setEffort] = uS(() => LS.get("effort", "high"));
   const [lang, setLangState] = uS(() => window.RXI.lang);
-  const [user, setUser] = uS(() => LS.get("user", null));
+  const privy = window.PrivySDK.usePrivy();
+  const loggedIn = privy.authenticated;
+  const user = privy.authenticated && privy.user ? {
+    email: privy.user.email?.address || privy.user.google?.email || "trader@robindex.ai",
+    method: privy.user.google?.email ? "google" : "email"
+  } : null;
+  const promptLogin = () => {
+    if (!privy || typeof privy.login !== "function") {
+      console.error("[Desk] privy.login not available — is PrivyProvider mounted?");
+      return;
+    }
+    try {
+      console.log("[Desk] Calling privy.login with methods: email, google");
+      privy.login({ loginMethods: ['email', 'google'] });
+    } catch(e) {
+      console.error("[Desk] privy.login error:", e);
+    }
+  };
+  const requireAuth = () => { if (!loggedIn) { promptLogin(); return false; } return true; };
   const [target, setTarget] = uS("qinbafrank");
   const [view, setView] = uS("home");
   const [tab, setTab] = uS("ask");
@@ -327,19 +370,21 @@ function App() {
       });
     } catch { return []; }
   });
-  const [userId] = uS(() => {
+  const [localUserId] = uS(() => {
     let id = LS.get("userId", null);
     if (!id) { id = "u_" + crypto.randomUUID(); LS.set("userId", id); }
     return id;
   });
+  const userId = (privy.user && privy.user.id) || localUserId;
   const [active, setActive] = uS(null);
   const [messages, setMessages] = uS([]);
   const [railTab, setRailTab] = uS("persona");
   const [sources, setSources] = uS([]);
   const [highlight, setHighlight] = uS(null);
+  const [citeTick, setCiteTick] = uS(0);
   const [mtab, setMtab] = uS("home");
   const [initDone, setInitDone] = uS(false);
-  const [railWidth, setRailWidth] = uS(312);
+  const [railWidth, setRailWidth] = uS(380);
   const railDragRef = uR(null);
   const threadRef = uR(null);
   const mobile = useMedia("(max-width: 760px)");
@@ -412,27 +457,46 @@ function App() {
       setChats((prev) => {
         const filtered = prev.filter((c) => validIds.has(c.kol.id) && !isEmptyChat(c));
         filtered.forEach((chat) => RX.saveChat(chat, userId));
-        RX.loadHistory(userId).then((cloudChats) => {
-          if (!cloudChats.length) return;
-          setChats((cur) => {
-            const localIds = new Set(cur.map((c) => c.id));
-            const localKeys = new Set(cur.map((c) => c.kol.id + "::" + c.title));
-            const newCloud = cloudChats.filter((c) => !isEmptyChat(c) && !localIds.has(c.id) && !localKeys.has(c.kol.id + "::" + c.title) && validIds.has(c.kol.id));
-            if (newCloud.length) {
-              const merged = [...newCloud, ...cur];
-              const chatParam = new URL(window.location).searchParams.get("chat");
-              if (chatParam) { const match = merged.find((c) => c.id === chatParam); if (match) { setActive(match); setView("chat"); setMtab("chat"); setMessages(match.messages || []); } }
-              return merged;
-            }
-            return cur;
-          });
-        });
         const chatParam = new URL(window.location).searchParams.get("chat");
         if (chatParam) { const match = filtered.find((c) => c.id === chatParam); if (match) { setActive(match); setView("chat"); setMtab("chat"); setMessages(match.messages || []); } }
         return filtered;
       });
     });
   }, []);
+
+  uE(() => {
+    if (!initDone) return;
+    const validIds = new Set(RX.kols(window.RXI.lang).map((k) => k.id));
+    RX.loadHistory(userId).then((cloudChats) => {
+      if (!cloudChats.length) return;
+      setChats((cur) => {
+        const localIds = new Set(cur.map((c) => c.id));
+        const localKeys = new Set(cur.map((c) => c.kol.id + "::" + c.title));
+        const newCloud = cloudChats.filter((c) => !isEmptyChat(c) && !localIds.has(c.id) && !localKeys.has(c.kol.id + "::" + c.title) && validIds.has(c.kol.id));
+        if (newCloud.length) {
+          const merged = [...newCloud, ...cur];
+          const chatParam = new URL(window.location).searchParams.get("chat");
+          if (chatParam) { const match = merged.find((c) => c.id === chatParam); if (match) { setActive(match); setView("chat"); setMtab("chat"); setMessages(match.messages || []); } }
+          return merged;
+        }
+        return cur;
+      });
+    });
+  }, [initDone, userId]);
+
+  // Login transition: when Privy auth flips to true, ensure in-memory chats are persisted under the real user id
+  uE(() => {
+    const pid = privy.user && privy.user.id;
+    if (loggedIn && pid) {
+      const timer = setTimeout(() => {
+        setChats((prev) => {
+          prev.forEach((c) => { if (!isEmptyChat(c)) RX.saveChat(c, pid); });
+          return prev;
+        });
+      }, 120);
+      return () => clearTimeout(timer);
+    }
+  }, [loggedIn]); // pid derived inside, re-run on login flip is sufficient
 
   const setLang = (l) => { window.RXI.set(l); setLangState(l); document.documentElement.setAttribute("lang", l === "en" ? "en" : "zh"); };
 
@@ -441,12 +505,14 @@ function App() {
     setMessages(chat.messages || []); setSources([]); setHighlight(null); setRailTab("persona");
   };
   const switchKol = (kol) => {
+    if (!loggedIn) { promptLogin(); return; }
     const existingEmpty = chats.find((c) => c.kol.id === kol.id && isEmptyChat(c));
     if (existingEmpty) { openChatView(existingEmpty); return; }
     if (active && active.kol.id === kol.id && isEmptyChat(active)) { openChatView(active); return; }
     openChatView({ id: uid(), kol, title: defaultChatTitle(kol, lang), messages: [], ts: Date.now() });
   };
   const openKol = (kol, firstQuestion) => {
+    if (!loggedIn) { promptLogin(); return; }
     if (!firstQuestion) { switchKol(kol); return; }
     const chat = { id: uid(), kol, title: firstQuestion.slice(0, 22), messages: [], ts: Date.now() };
     setChats((c) => [chat, ...c]);
@@ -533,13 +599,17 @@ function App() {
   };
 
   const composerAsk = (question) => { if (curKol) ask(curKol, question); };
-  const onCite = (ref) => { setRailTab("sources"); setHighlight(ref); if (mobile) setMtab("sources"); };
+  const onCite = (ref) => {
+    setRailTab("sources");
+    setHighlight(citeKey(ref));
+    setCiteTick((n) => n + 1);
+    if (mobile) setMtab("sources");
+  };
   const onWriteCode = () => setTab("code");
   const goHome = () => { setView("home"); setActive(null); setMtab("home"); };
-  const signOut = () => { setUser(null); LS.set("user", null); setShowSettings(false); goHome(); };
-  const doAuth = (u) => { setUser(u); LS.set("user", u); };
+  const signOut = () => { privy.logout(); setShowSettings(false); goHome(); };
 
-  if (!initDone) return React.createElement("div", { className: "auth" },
+  if (!privy.ready || !initDone) return React.createElement("div", { className: "auth" },
     React.createElement("div", { className: "auth-bg" }),
     React.createElement("div", { className: "auth-card", style: { textAlign: "center" } },
       React.createElement("div", { className: "auth-logo" }, React.createElement(Icon, { name: "candlestick", size: 22, color: "var(--on-accent)" })),
@@ -547,35 +617,41 @@ function App() {
         React.createElement("span", null, "Loading"),
         React.createElement("span", { className: "tdots" }, React.createElement("i"), React.createElement("i"), React.createElement("i")))));
 
-  if (!user) return React.createElement(window.AuthScreen, { onAuthed: doAuth, theme, setTheme, lang, setLang });
+  // Unauthenticated gate — branded welcome screen with a single Sign In button
+  if (!loggedIn) return React.createElement(window.LoginGate, { privy, theme, setTheme, lang, setLang });
 
   const topRight = React.createElement(React.Fragment, null,
     React.createElement(window.LangToggle, { lang, setLang }),
     React.createElement(ThemeMenu, { value: theme, onChange: setTheme }),
-    React.createElement("button", { className: "icon-btn", onClick: () => setShowSettings(true), title: T("setTitle") }, React.createElement(Icon, { name: "settings", size: 17 })));
+    loggedIn
+      ? React.createElement("button", { className: "icon-btn", onClick: () => setShowSettings(true), title: T("setTitle") }, React.createElement(Icon, { name: "settings", size: 17 }))
+      : React.createElement("button", { className: "hdr-login", onClick: promptLogin }, T("hdrLogin") || T("authSignIn")));
 
   if (mobile) {
     let body;
-    if (mtab === "home") body = React.createElement("div", { className: "m-body scrollable" }, React.createElement(Home, { kols, target, setTarget, onAsk: openKol, models, model, setModel, effort, setEffort }));
+    if (mtab === "home") body = React.createElement("div", { className: "m-body scrollable" }, React.createElement(Home, { kols, target, setTarget, onAsk: openKol, models, model, setModel, effort, setEffort, loggedIn, onLogin: promptLogin }));
     else if (mtab === "chat") body = curKol
       ? React.createElement("div", { className: "m-body chat-body" },
           React.createElement("div", { className: "m-subtabs" },
             React.createElement("button", { className: "tab" + (tab === "ask" ? " on" : ""), onClick: () => setTab("ask") }, React.createElement(Icon, { name: "sparkles", size: 13 }), T("tabAsk")),
             React.createElement("button", { className: "tab" + (tab === "code" ? " on" : ""), onClick: () => setTab("code") }, React.createElement(Icon, { name: "code", size: 13 }), T("tabCode"), React.createElement("span", { className: "soon-tag-sm" }, "SOON"))),
-          React.createElement(ChatArea, { kol: curKol, messages, model: curModel, tab, setTab, onCite, onWriteCode, onAsk: composerAsk, threadRef, models, modelId: model, setModel, effort, setEffort }))
+          React.createElement(ChatArea, { kol: curKol, messages, model: curModel, tab, setTab, onCite, onWriteCode, onAsk: composerAsk, threadRef, models, modelId: model, setModel, effort, setEffort, loggedIn, onLogin: promptLogin }))
       : React.createElement("div", { className: "m-body scrollable" }, React.createElement(MobileNoChat, { onHome: () => setMtab("home") }));
     else if (mtab === "sources") body = React.createElement("div", { className: "m-body" }, curKol
-      ? React.createElement(Rail, { kol: curKol, sources, railTab, setRailTab, highlight, mobile: true })
+      ? React.createElement(Rail, { kol: curKol, sources, railTab, setRailTab, highlight, citeTick, mobile: true })
       : React.createElement(MobileNoChat, { onHome: () => setMtab("home") }));
-    else body = React.createElement("div", { className: "m-body scrollable" }, React.createElement(window.SettingsPage, { user, model, setModel, theme, setTheme, lang, setLang, onSignOut: signOut }));
+    else body = React.createElement("div", { className: "m-body scrollable" }, loggedIn
+      ? React.createElement(window.SettingsPage, { user, model, setModel, theme, setTheme, lang, setLang, onSignOut: signOut })
+      : React.createElement("div", { className: "m-body scrollable", style: { padding: 20 } },
+          React.createElement("button", { className: "auth-primary", onClick: promptLogin }, T("authSignIn"))));
     return React.createElement("div", { className: "app mobile" },
-      React.createElement(window.MobileTopBar, { kol: mtab === "chat" ? curKol : null, lang, setLang, theme, setTheme }),
+      React.createElement(window.MobileTopBar, { kol: mtab === "chat" ? curKol : null, lang, setLang, theme, setTheme, loggedIn, onLogin: promptLogin }),
       body,
       React.createElement(window.BottomNav, { tab: mtab, setTab: setMtab, srcCount: sources.length }));
   }
 
   return React.createElement("div", { className: "app" },
-    React.createElement(Sidebar, { kols, chats, activeChat: active, user, onPick: switchKol, onOpenChat: openExisting, onHome: goHome, onSettings: () => setShowSettings(true) }),
+    React.createElement(Sidebar, { kols, chats, activeChat: active, user, onPick: switchKol, onOpenChat: openExisting, onHome: goHome, onSettings: () => setShowSettings(true), loggedIn, onLogin: promptLogin }),
     React.createElement("div", { className: "main" },
       React.createElement("div", { className: "topbar" },
         view === "chat" && curKol
@@ -595,12 +671,12 @@ function App() {
         React.createElement("div", { className: "spacer" }),
         topRight),
       view === "home"
-        ? React.createElement(Home, { kols, target, setTarget, onAsk: openKol, models, model, setModel, effort, setEffort })
+        ? React.createElement(Home, { kols, target, setTarget, onAsk: openKol, models, model, setModel, effort, setEffort, loggedIn, onLogin: promptLogin })
         : React.createElement("div", { className: "center" },
-            React.createElement(ChatArea, { kol: curKol, messages, model: curModel, tab, setTab, onCite, onWriteCode, onAsk: composerAsk, threadRef, models, modelId: model, setModel, effort, setEffort }),
+            React.createElement(ChatArea, { kol: curKol, messages, model: curModel, tab, setTab, onCite, onWriteCode, onAsk: composerAsk, threadRef, models, modelId: model, setModel, effort, setEffort, loggedIn, onLogin: promptLogin }),
             React.createElement("div", { className: "rail-wrap", style: { width: railWidth, minWidth: railWidth } },
               React.createElement("div", { className: "rail-resize", onMouseDown: onResizeDown }),
-              React.createElement(Rail, { kol: curKol, sources, railTab, setRailTab, highlight })))),
+              React.createElement(Rail, { kol: curKol, sources, railTab, setRailTab, highlight, citeTick })))),
     showSettings && React.createElement("div", { className: "set-overlay", onClick: (e) => { if (e.target.classList.contains("set-overlay")) setShowSettings(false); } },
       React.createElement(window.SettingsPage, { user, model, setModel, theme, setTheme, lang, setLang, onSignOut: signOut, onClose: () => setShowSettings(false) })));
 }
@@ -612,4 +688,50 @@ function MobileNoChat({ onHome }) {
     React.createElement("button", { className: "auth-primary", style: { maxWidth: 220 }, onClick: onHome }, T("chooseP")));
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
+function AppWrapper() {
+  const [privyAppId, setPrivyAppId] = React.useState(null);
+
+  React.useEffect(() => {
+    RX.init().then(() => {
+      setPrivyAppId(RX.config.privyAppId);
+    });
+  }, []);
+
+  if (!privyAppId) {
+    return React.createElement("div", { className: "auth" },
+      React.createElement("div", { className: "auth-bg" }),
+      React.createElement("div", { className: "auth-card", style: { textAlign: "center" } },
+        React.createElement("div", { className: "auth-logo" }, React.createElement(window.RXC.Icon, { name: "candlestick", size: 22, color: "var(--on-accent)" })),
+        React.createElement("div", { className: "thinking", style: { justifyContent: "center", marginTop: 16 } },
+          React.createElement("span", null, "Loading Config"),
+          React.createElement("span", { className: "tdots" }, React.createElement("i"), React.createElement("i"), React.createElement("i")))));
+  }
+
+  const { PrivyProvider } = window.PrivySDK;
+  return React.createElement(
+    PrivyProvider,
+    {
+      appId: privyAppId,
+      config: {
+        loginMethods: ['email', 'google'],
+        appearance: {
+          theme: 'dark',
+          accentColor: '#3DDC97',
+          logo: '/app/icon.svg',
+          landingHeader: 'Welcome to Robindex',
+          loginMessage: 'Log in with email or Google to continue',
+          emailDomain: 'robindex.ai',
+        }
+      },
+      onSuccess: (user, isNewUser, wasAlreadyAuthenticated, loginMethod) => {
+        console.log('[Privy] Login success:', { email: user?.email?.address, method: loginMethod, isNewUser, wasAlreadyAuthenticated });
+      },
+      onError: (error) => {
+        console.error('[Privy] Login error:', error);
+      },
+    },
+    React.createElement(App)
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(AppWrapper));

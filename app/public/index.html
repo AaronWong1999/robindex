@@ -83,7 +83,6 @@ try{var _t=localStorage.getItem("rx.theme");if(_t)document.documentElement.setAt
         <button type="button" data-theme-opt="codex">Codex</button>
       </div>
     </div>
-    <a class="lnav-ghost" href="https://app.robindex.ai/" data-i18n="login">登录</a>
     <a class="lnav-cta" href="https://app.robindex.ai/" data-i18n="open">进入终端
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
     </a>
@@ -124,7 +123,7 @@ try{var _t=localStorage.getItem("rx.theme");if(_t)document.documentElement.setAt
     </div>
     <div class="lfloat f2">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.8"><path d="M10 11V7a2 2 0 0 0-2-2H5M20 11V7a2 2 0 0 0-2-2h-3M3 11h7v3a3 3 0 0 1-3 3M13 11h7v3a3 3 0 0 1-3 3"/></svg>
-      <div><b>[T1] [T2] [T3]</b><div class="s" data-i18n="floatCite">原文出处 · 可追溯</div></div>
+      <div><b>[1] [2] [3]</b><div class="s" data-i18n="floatCite">原文出处 · 可追溯</div></div>
     </div>
     <div class="lvisual-frame">
       <div class="lvf-bar">
@@ -137,7 +136,7 @@ try{var _t=localStorage.getItem("rx.theme");if(_t)document.documentElement.setAt
           <div class="lvf-a">
             <img class="lvf-src-av" src="https://unavatar.io/x/qinbafrank" alt="Qinbafrank" width="26" height="26" loading="lazy" />
             <div class="lvf-ans">
-              <span data-i18n="visA1">先给结论：</span><b data-i18n="visABold">CPO 是方向，但 2026 不是它的兑现年</b><span class="lvf-cite">T1</span><span data-i18n="visA2">。真正兑现业绩的主力，是 1.6T 可插拔 + NPO 近封装</span><span class="lvf-cite">T2</span>。
+              <span data-i18n="visA1">先给结论：</span><b data-i18n="visABold">CPO 是方向，但 2026 不是它的兑现年</b><span class="lvf-cite">1</span><span data-i18n="visA2">。真正兑现业绩的主力，是 1.6T 可插拔 + NPO 近封装</span><span class="lvf-cite">2</span>。
             </div>
           </div>
         </div>
@@ -147,7 +146,7 @@ try{var _t=localStorage.getItem("rx.theme");if(_t)document.documentElement.setAt
             <div class="lvf-src-top">
               <img class="lvf-src-av" src="https://unavatar.io/x/qinbafrank" alt="" width="26" height="26" loading="lazy" />
               <div><div class="lvf-src-nm">Qinbafrank</div><div class="lvf-src-h">@qinbafrank</div></div>
-              <span class="lvf-src-ref">T1</span>
+              <span class="lvf-src-ref">1</span>
             </div>
             <div class="lvf-src-tx" data-i18n="src1">一张图看清 26 年光互连哪些环节真正受益…</div>
           </div>
@@ -155,7 +154,7 @@ try{var _t=localStorage.getItem("rx.theme");if(_t)document.documentElement.setAt
             <div class="lvf-src-top">
               <img class="lvf-src-av" src="https://unavatar.io/x/qinbafrank" alt="" width="26" height="26" loading="lazy" />
               <div><div class="lvf-src-nm">Qinbafrank</div><div class="lvf-src-h">@qinbafrank</div></div>
-              <span class="lvf-src-ref">T2</span>
+              <span class="lvf-src-ref">2</span>
             </div>
             <div class="lvf-src-tx" data-i18n="src2">CPO 大规模落地推迟到 27-28；26 年主力是 1.6T + NPO…</div>
           </div>
@@ -187,7 +186,7 @@ try{var _t=localStorage.getItem("rx.theme");if(_t)document.documentElement.setAt
     <div class="lfeat-text">
       <div class="lfeat-num">01 · <span data-i18n="f1eye">对话即研究</span></div>
       <h3 data-i18n="f1h">向分身提问，得到带出处的判断</h3>
-      <p data-i18n="f1p">不是泛泛的 AI 回答。每个结论都来自 KOL 本人的历史推文，逐句标注 [T#]，点开就是原文。</p>
+      <p data-i18n="f1p">不是泛泛的 AI 回答。每个结论都来自 KOL 本人的历史推文，逐句标注 [#]，点开就是原文。</p>
       <div class="lfeat-list">
         <div class="lfeat-li"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f1l1">第一人称分身：用 KOL 的框架与语气作答</span></div>
         <div class="lfeat-li"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f1l2">稀疏检索 + LLM 重排，只引用真实发言</span></div>
@@ -203,7 +202,7 @@ try{var _t=localStorage.getItem("rx.theme");if(_t)document.documentElement.setAt
           <div class="mock-step"><span class="ok">✓</span><span class="fn">corpus.search</span><span class="ar">(FTS5)</span></div>
           <div class="mock-step"><span class="ok">✓</span><span class="fn">rerank.select</span><span class="ar">(top_k:3)</span></div>
         </div>
-        <div class="lvf-ans" style="margin-top:14px;font-size:13px"><b data-i18n="visABold">CPO 是方向，但 2026 不是它的兑现年</b><span class="lvf-cite">T1</span> · <span class="lvf-cite">T2</span> · <span class="lvf-cite">T3</span></div>
+        <div class="lvf-ans" style="margin-top:14px;font-size:13px"><b data-i18n="visABold">CPO 是方向，但 2026 不是它的兑现年</b><span class="lvf-cite">1</span> · <span class="lvf-cite">2</span> · <span class="lvf-cite">3</span></div>
       </div>
     </div>
   </div>
