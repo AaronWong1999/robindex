@@ -193,9 +193,11 @@ a.lnav-cta,.lnav-cta{display:flex;align-items:center;gap:7px;padding:8px 16px;bo
 .lfoot-base{max-width:1140px;margin:28px auto 0;padding-top:22px;border-top:1px solid var(--border-soft);display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--faint);}
 .lfoot-base .risk{font-family:var(--mono);font-size:11px;}
 
-/* mobile menu */
+/* mobile menu — must respect [hidden]; display:flex overrides the UA hidden rule */
 .lnav-burger{display:none;width:38px;height:38px;border-radius:9px;border:1px solid var(--border);align-items:center;justify-content:center;color:var(--text);}
-.lmobile-menu{position:fixed;inset:0;z-index:49;background:var(--bg);padding:80px 24px 24px;display:flex;flex-direction:column;gap:6px;animation:fade .2s ease;}
+.lmobile-menu{position:fixed;inset:0;z-index:49;background:var(--bg);padding:80px 24px 24px;flex-direction:column;gap:6px;animation:fade .2s ease;}
+.lmobile-menu[hidden]{display:none!important;}
+.lmobile-menu:not([hidden]){display:flex;}
 .lmobile-menu a{padding:15px 14px;border-radius:11px;font-size:17px;font-weight:500;border-bottom:1px solid var(--border-soft);}
 
 /* ---------------- responsive ---------------- */
