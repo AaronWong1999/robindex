@@ -258,10 +258,17 @@ function SourceCard({ kol, tw, active }) {
       className: "src-toggle",
       onClick: () => setExpanded((v) => !v) },
       expanded ? (EN() ? "Collapse" : "收起") : (EN() ? "Expand" : "展开原文")),
-    quoted && React.createElement("a", {
-      className: "src-quote", href: quoted.url || tw.url, target: "_blank", rel: "noreferrer" },
+    quoted && React.createElement("div", { className: "src-quote" },
       React.createElement("div", { className: "src-quote-top" },
-        React.createElement("div", { className: "src-quote-avatar" }, (quoted.name || quoted.handle || "?").slice(0, 1).toUpperCase()),
+        quoted.handle
+          ? React.createElement("img", {
+              className: "src-quote-avatar", src: "https://unavatar.io/x/" + quoted.handle,
+              alt: quoted.name || quoted.handle, loading: "lazy",
+              onError: (e) => { e.currentTarget.style.display = "none"; const f = e.currentTarget.nextSibling; if (f) f.style.display = "flex"; },
+            })
+          : null,
+        React.createElement("div", { className: "src-quote-avatar src-quote-fallback", style: { display: quoted.handle ? "none" : "flex" } },
+          (quoted.name || quoted.handle || "?").slice(0, 1).toUpperCase()),
         React.createElement("div", { className: "src-quote-id" },
           React.createElement("div", { className: "src-quote-nm" }, quoted.name || quoted.handle || "Quoted tweet"),
           React.createElement("div", { className: "src-quote-h" }, quoted.handle ? "@" + quoted.handle : "", quoted.date ? " · " + quoted.date : ""))),
