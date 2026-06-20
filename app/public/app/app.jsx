@@ -18,7 +18,13 @@ function useMedia(q) {
 function localizeModels(lang) { return RX.MODELS.map((m) => ({ ...m, note: (m.note && typeof m.note === "object") ? (m.note[lang] || m.note.zh) : m.note })); }
 
 /* ============================ Sidebar (desktop) ============================ */
+function defaultChatTitle(kol, lang) {
+  return kol.display_name + (lang === "en" ? " \u00b7 new chat" : " \u00b7 \u65b0\u4f1a\u8bdd");
+}
+function isEmptyChat(c) { return !c.messages || c.messages.length === 0; }
+
 function Sidebar({ kols, chats, activeChat, onPick, onOpenChat, onHome, onSettings, user }) {
+  const recent = chats.filter((c) => !isEmptyChat(c));
   return React.createElement("aside", { className: "side" },
     React.createElement("button", { className: "brand", onClick: onHome },
       React.createElement("div", { className: "brand-mark" }, React.createElement(Icon, { name: "candlestick", size: 17, color: "var(--on-accent)" })),
@@ -36,9 +42,9 @@ function Sidebar({ kols, chats, activeChat, onPick, onOpenChat, onHome, onSettin
         React.createElement("span", { className: "live-dot" })))),
     React.createElement("div", { className: "side-sec", style: { marginTop: 8 } }, T("recent")),
     React.createElement("div", { className: "side-scroll" },
-      chats.length === 0
+      recent.length === 0
         ? React.createElement("div", { className: "side-empty" }, T("noChats"))
-        : chats.map((c) => React.createElement("button", {
+        : recent.map((c) => React.createElement("button", {
             key: c.id, className: "hist" + (activeChat && activeChat.id === c.id ? " on" : ""), onClick: () => onOpenChat(c) },
             React.createElement(Avatar, { kol: c.kol, size: 18, radius: 5, className: "hist-av" }),
             React.createElement("span", { className: "hist-t" }, c.title)))),
@@ -301,7 +307,9 @@ function App() {
     };
     const saved = LS.get("chats", null);
     if (saved && Array.isArray(saved)) {
-      return saved.map((c) => ({ ...c, messages: (c.messages || []).map((m) => normalizeMsg(m, c.kol && c.kol.id)) }));
+      return saved
+        .map((c) => ({ ...c, messages: (c.messages || []).map((m) => normalizeMsg(m, c.kol && c.kol.id)) }))
+        .filter((c) => c.messages && c.messages.length > 0);
     }
     try {
       const old = JSON.parse(localStorage.getItem("robindex_convs") || "[]");
@@ -364,7 +372,7 @@ function App() {
   uE(() => { document.documentElement.setAttribute("data-theme", theme); LS.set("theme", theme); }, [theme]);
   uE(() => { LS.set("model", model); }, [model]);
   uE(() => { LS.set("effort", effort); }, [effort]);
-  uE(() => { if (chats.length) LS.set("chats", chats); }, [chats]);
+  uE(() => { const saved = chats.filter((c) => !isEmptyChat(c)); if (saved.length) LS.set("chats", saved); }, [chats]);
   uE(() => {
     if (active) {
       const url = new URL(window.location);
@@ -380,9 +388,11 @@ function App() {
     if (active && messages.length) {
       setChats((prev) => {
         const idx = prev.findIndex((c) => c.id === active.id);
-        if (idx < 0) return prev;
-        const updated = { ...prev[idx], messages, ts: Date.now() };
+        const firstUser = messages.find((m) => m.role === "u");
+        const title = firstUser ? firstUser.text.slice(0, 22) : active.title;
+        const updated = { ...active, messages, title, ts: Date.now() };
         setActive(updated);
+        if (idx < 0) return [updated, ...prev];
         const next = [...prev];
         next[idx] = updated;
         return next;
@@ -400,14 +410,14 @@ function App() {
       setInitDone(true);
       const validIds = new Set(RX.kols(window.RXI.lang).map((k) => k.id));
       setChats((prev) => {
-        const filtered = prev.filter((c) => validIds.has(c.kol.id));
+        const filtered = prev.filter((c) => validIds.has(c.kol.id) && !isEmptyChat(c));
         filtered.forEach((chat) => RX.saveChat(chat, userId));
         RX.loadHistory(userId).then((cloudChats) => {
           if (!cloudChats.length) return;
           setChats((cur) => {
             const localIds = new Set(cur.map((c) => c.id));
             const localKeys = new Set(cur.map((c) => c.kol.id + "::" + c.title));
-            const newCloud = cloudChats.filter((c) => !localIds.has(c.id) && !localKeys.has(c.kol.id + "::" + c.title) && validIds.has(c.kol.id));
+            const newCloud = cloudChats.filter((c) => !isEmptyChat(c) && !localIds.has(c.id) && !localKeys.has(c.kol.id + "::" + c.title) && validIds.has(c.kol.id));
             if (newCloud.length) {
               const merged = [...newCloud, ...cur];
               const chatParam = new URL(window.location).searchParams.get("chat");
@@ -426,12 +436,23 @@ function App() {
 
   const setLang = (l) => { window.RXI.set(l); setLangState(l); document.documentElement.setAttribute("lang", l === "en" ? "en" : "zh"); };
 
+  const openChatView = (chat) => {
+    setActive(chat); setView("chat"); setTab("ask"); setMtab("chat");
+    setMessages(chat.messages || []); setSources([]); setHighlight(null); setRailTab("persona");
+  };
+  const switchKol = (kol) => {
+    const existingEmpty = chats.find((c) => c.kol.id === kol.id && isEmptyChat(c));
+    if (existingEmpty) { openChatView(existingEmpty); return; }
+    if (active && active.kol.id === kol.id && isEmptyChat(active)) { openChatView(active); return; }
+    openChatView({ id: uid(), kol, title: defaultChatTitle(kol, lang), messages: [], ts: Date.now() });
+  };
   const openKol = (kol, firstQuestion) => {
-    const chat = { id: uid(), kol, title: firstQuestion ? firstQuestion.slice(0, 22) : kol.display_name + (lang === "en" ? " \u00b7 new chat" : " \u00b7 \u65b0\u4f1a\u8bdd"), messages: [], ts: Date.now() };
+    if (!firstQuestion) { switchKol(kol); return; }
+    const chat = { id: uid(), kol, title: firstQuestion.slice(0, 22), messages: [], ts: Date.now() };
     setChats((c) => [chat, ...c]);
     setActive(chat); setView("chat"); setTab("ask"); setMtab("chat");
     setMessages([]); setSources([]); setHighlight(null); setRailTab("persona");
-    if (firstQuestion) setTimeout(() => ask(kol, firstQuestion), 60);
+    setTimeout(() => ask(kol, firstQuestion), 60);
   };
   const openExisting = (chat) => {
     setActive(chat); setView("chat"); setTab("ask"); setMtab("chat");
@@ -554,7 +575,7 @@ function App() {
   }
 
   return React.createElement("div", { className: "app" },
-    React.createElement(Sidebar, { kols, chats, activeChat: active, user, onPick: (k) => openKol(k, null), onOpenChat: openExisting, onHome: goHome, onSettings: () => setShowSettings(true) }),
+    React.createElement(Sidebar, { kols, chats, activeChat: active, user, onPick: switchKol, onOpenChat: openExisting, onHome: goHome, onSettings: () => setShowSettings(true) }),
     React.createElement("div", { className: "main" },
       React.createElement("div", { className: "topbar" },
         view === "chat" && curKol
