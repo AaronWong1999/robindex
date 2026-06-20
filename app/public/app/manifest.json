@@ -1,0 +1,14 @@
+{
+  "name": "Robindex Desk",
+  "short_name": "Robindex",
+  "description": "AI 金融分身交易研究终端 — 选 KOL 提问，回答带原文出处",
+  "start_url": "../Robindex Desk.html",
+  "display": "standalone",
+  "background_color": "#0A0B0D",
+  "theme_color": "#0A0B0D",
+  "orientation": "portrait",
+  "categories": ["finance", "productivity"],
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

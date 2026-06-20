@@ -15,7 +15,8 @@
   "observability": { "enabled": true },
   "routes": [
     { "pattern": "robindex.ai", "custom_domain": true },
-    { "pattern": "www.robindex.ai", "custom_domain": true }
+    { "pattern": "www.robindex.ai", "custom_domain": true },
+    { "pattern": "app.robindex.ai", "custom_domain": true }
   ],
   "d1_databases": [
     {

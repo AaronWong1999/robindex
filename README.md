@@ -1,163 +1,186 @@
 # Robindex
 
-Robindex is a Cloudflare-native AI trader desk. A user chats with a finance KOL as if the model **is**
-that KOL: the answer is grounded in the KOL's real historical tweets, a distilled persona pack, and live
-market data, with clickable source-tweet citations.
+Robindex is a Cloudflare-native AI trader desk. A user picks a finance KOL persona and asks questions — the model answers **as** that KOL, grounded in the KOL's real historical tweets, a distilled persona pack, and live market data, with clickable source-tweet citations.
 
-Production: https://robindex.ai
+There is no fine-tuning. The system is retrieval + persona distillation + tools, so model upgrades improve the product without retraining.
 
-Research room: `https://robindex.ai/research?agent=kol&persona=<kol_id>`
+## Production
 
-There is no fine-tuning. The system is retrieval + persona distillation + tools, so model upgrades improve
-the product without retraining.
+| URL | Purpose |
+| --- | --- |
+| https://robindex.ai | Marketing site (static landing page, SEO) |
+| https://www.robindex.ai | Same as above |
+| https://app.robindex.ai | **Robindex Desk** — the product (React SPA) |
+
+API routes (`/api/*`) work on all three hosts. Visiting `/research`, `/desk`, or `/kol/*` on the marketing domain redirects to `app.robindex.ai`.
 
 ## Current State
 
 - Live KOLs:
-  - `qinbafrank` — `v2-mapreduce-2026-06-18`, 13.7k tweets.
-  - `aleabitoreddit` — `v2-mapreduce-2026-06-19`, 5.9k tweets.
-- Both live KOLs have full-corpus `persona_facts:merged`, so weekly updates use incremental map-reduce.
-- Tweet corpora and search indexes are live in Cloudflare D1; raw paid tweet pulls are archived in R2.
-- Local raw JSON snapshots and old hand-written persona files were removed from the repo. D1/R2 are the
-  source of truth.
+  - `qinbafrank` — persona `v2-mapreduce-2026-06-18`, ~13.7k tweets
+  - `aleabitoreddit` — persona `v2-mapreduce-2026-06-19`, ~5.9k tweets
+- Both KOLs have full-corpus `persona_facts:merged`; weekly updates use incremental map-reduce.
+- Tweet corpora and FTS5 search indexes live in D1; raw paid tweet pulls archived in R2.
 
 ## Architecture
 
-Single Cloudflare Worker (`app/src/index.ts`) serves static assets and JSON/SSE APIs.
+One Cloudflare Worker (`app/src/index.ts`) serves static assets and JSON/SSE APIs.
 
 | Concern | Implementation |
 | --- | --- |
-| Frontend | Workers Static Assets in `app/public`, vanilla HTML/CSS/JS |
+| Marketing site | Static HTML at `app/public/index.html` + `landing-static.js` + `app/public/app/landing.css` |
+| Desk SPA | `app/public/desk.html` → React 18 (CDN + Babel) in `app/public/app/` |
 | API / SSE chat | Hono Worker in `app/src/index.ts` |
+| Chat history | D1 `chat_history` + localStorage sync |
 | Database | D1 `robindex-db` |
 | Raw archive | R2 `robindex-raw` |
 | Cache | KV `CACHE` |
-| LLM | Cloudflare AI Gateway to `deepseek/deepseek-v4-flash` and `deepseek/deepseek-v4-pro` |
-| Market data | Tencent quote/kline/minute endpoints, Yahoo fundamentals, Eastmoney A-share data |
-| Cron | daily ingest, weekly persona refresh, per-minute distill/eval job driver |
+| LLM | Cloudflare AI Gateway → `deepseek/deepseek-v4-flash` / `deepseek/deepseek-v4-pro` |
+| Market data | Tencent quote/kline, Eastmoney A-share/global |
+| Cron | daily ingest, weekly persona refresh, per-minute distill job driver |
 
-The retrieval stack deliberately uses FTS5, not vectors. Finance tweets are short, bilingual, and
-jargon-dense; sparse retrieval plus LLM query expansion has been more controllable than embeddings.
+Retrieval uses **FTS5**, not vectors. Finance tweets are short, bilingual, and jargon-dense; sparse retrieval plus LLM query expansion has been more controllable than embeddings.
+
+### Domain routing (Worker)
+
+Host-based routing in `app/src/index.ts`:
+
+- `robindex.ai` / `www.robindex.ai` → `/` serves static landing; app paths redirect to `app.robindex.ai`
+- `app.robindex.ai` → `/` and unmatched non-API paths serve `desk.html` (SPA shell)
+
+Custom domains are declared in `app/wrangler.jsonc`.
+
+## Frontend
+
+### Marketing site (static)
+
+`app/public/index.html` is a single static page for SEO:
+
+- Full Chinese body content in HTML (crawlable without JS)
+- Open Graph, Twitter Card, canonical, hreflang, JSON-LD
+- `landing-static.js` — theme toggle, 中/EN copy swap, nav scroll, reveal animations
+- Styles: `app/public/app/themes.css` (design tokens) + `app/public/app/landing.css`
+
+All CTAs point to `https://app.robindex.ai/`.
+
+### Robindex Desk (SPA)
+
+Entry: `app/public/desk.html` (served at `https://app.robindex.ai/`).
+
+| File | Purpose |
+| --- | --- |
+| `themes.css` | 4-theme design system (Terminal / Aurora / Matrix / Codex) + layout |
+| `landing.css` | Marketing page only |
+| `i18n.js` | Bilingual UI strings (中/EN) |
+| `data.js` | KOL enrichment, `/api/kols` init, SSE `/api/chat`, `/api/suggest`, cloud history |
+| `components.jsx` | Icons, Avatar, ModelPicker (incl. reasoning effort), citations, rail |
+| `auth.jsx` | Login screen (mock — email/social/wallet → localStorage) |
+| `settings.jsx` | Settings overlay |
+| `mobile.jsx` | Mobile top bar + bottom nav |
+| `app.jsx` | App shell: auth gate, chat state, SSE, resizable sources rail, cloud sync |
+
+Desk features: three-column desktop (sidebar · thread · rail), mobile bottom nav, 4 themes, model + reasoning-effort picker, bilingual UI, PWA manifest.
+
+### Chat history sync
+
+1. **Init**: localStorage → merge cloud (`GET /api/chat/history`) → dedupe by id and `kol_id::title`
+2. **On change**: localStorage (instant) → debounced 2s cloud save (`PUT /api/chat/history/:id`)
+3. **URL**: active chat tracked via `?chat=<id>`, auto-opens on load
+4. **User id**: random UUID in localStorage (`rx.userId`)
+
+| Endpoint | Method | Description |
+| --- | --- | --- |
+| `/api/chat/history?user_id=` | GET | List conversations |
+| `/api/chat/history/:id?user_id=` | GET | Single conversation |
+| `/api/chat/history/:id` | PUT | Upsert conversation |
+| `/api/chat/history/:id?user_id=` | DELETE | Delete conversation |
 
 ## How A Reply Is Built
 
-1. The chat endpoint loads the selected KOL row and `persona_pack`.
-2. `planQuery()` expands the user's question into instruments and bilingual search terms.
-3. `retrieve()` searches only that KOL's corpus in `tweet_search`, then `llmRerank()` selects final source
-   tweets.
-4. `gatherMarketData()` injects current quotes, K-lines, news, fundamentals, and benchmark context.
-5. `buildMessages()` creates the system prompt:
-   - `You ARE ${display_name} (@${handle}), a finance KOL. Stay 100% in character.`
-   - do not mention being AI;
-   - use the KOL's own voice, logic, worldview;
-   - cite source tweets as `[T#]`;
-   - use live data for current numbers.
-6. A bounded tool phase can fetch missing data, then the answer streams over SSE.
+1. Chat endpoint loads KOL row and `persona_pack`.
+2. `planQuery()` expands the question into instruments and bilingual search terms.
+3. `retrieve()` searches that KOL's corpus in `tweet_search`, then `llmRerank()` picks source tweets.
+4. `gatherMarketData()` injects quotes, K-lines, news, fundamentals, benchmark context.
+5. `buildMessages()` assembles system prompt with persona pack, citations, live data.
+6. Bounded tool phase fetches missing data; answer streams over SSE.
 
 ## Persona Pipeline
 
-Full-corpus persona generation is automated by:
+Full-corpus generation: `POST /api/admin/distill-auto?kol_id=<id>&reset=1`
 
-```bash
-POST /api/admin/distill-auto?kol_id=<id>&reset=1
-```
-
-The pipeline:
-
-1. `mapStage` chunks the full non-retweet corpus chronologically and uses `deepseek-v4-flash` to extract
-   partial persona JSON.
-2. `reduceGroup` merges chunk partials in groups with `deepseek-v4-pro`.
-3. `reduceFinalDraft` performs the final pro merge into `merged_draft`.
-4. `finalizeMerged` is LLM-free: verifies quotes against the corpus, attaches verbatim exemplars, writes
-   `persona_facts:merged`, and publishes `kols.persona_pack`.
-5. Eval builds or reuses a golden set, scores the new persona, and rolls back only if it regresses vs the
-   prior version.
-
-Cost controls currently live in production:
-
-- dynamic chunk sizing: tiny KOLs stay in one chunk; large KOLs keep up to 32 chunks;
-- eval case reservation: overlapping cron/self-chain jobs do not score the same case twice;
-- batch voice/stance judges: several eval answers are judged in one flash call;
-- weekly smoke eval: weekly incremental updates score 12 cases first, escalating to full eval only when
-  suspicious;
-- canonical-corpus ingest only: shared/diagnostic KOL rows do not spend GetXAPI quota.
+1. `mapStage` — flash partial persona over corpus chunks
+2. `reduceGroup` — pro group merge
+3. `reduceFinalDraft` — pro final draft
+4. `finalizeMerged` — quote verification, exemplars, publish `persona_pack`
+5. Eval scores new persona; rollback only on regression
 
 ## Scheduled Jobs
 
-Configured in `app/wrangler.jsonc`:
-
-- `0 9 * * *` — daily GetXAPI ingest for canonical KOL rows only.
-- `30 9 * * 1` — weekly stance chunk + persona incremental update.
-- `* * * * *` — drives in-progress `distill-auto` eval jobs from KV.
-
-Weekly persona refresh behavior:
-
-- If `persona_facts:merged` exists, run `distillPersonaIncremental()` on the new week's tweets.
-- If there are too few new tweets, skip persona mutation and keep the weekly stance note.
-- Run 12-case smoke eval after weekly persona changes. If suspicious, enqueue full eval via
-  `distill_job:<kol>`.
+| Cron | Job |
+| --- | --- |
+| `0 9 * * *` | Daily GetXAPI ingest |
+| `30 9 * * 1` | Weekly stance chunk + incremental persona refresh |
+| `* * * * *` | Drive in-progress distill-auto / eval jobs from KV |
 
 ## Data Model
 
-See `app/schema.sql` and migrations in `app/migrations/`.
+See `app/schema.sql` and `app/migrations/`.
 
-Important tables:
-
-- `kols` — KOL metadata and live `persona_pack`.
-- `tweets` — canonical tweet corpus.
-- `tweet_search` — FTS5 index over original tweet text plus optional tag columns.
-- `knowledge_chunks` — weekly stance notes and persona backups.
-- `persona_facts` — durable map/reduce partials and merged persona JSON.
-- `persona_experiments` — distill/eval/rollback audit log.
-- `eval_cases`, `eval_results` — golden eval set and per-version scores.
-- `sync_state` — per-KOL incremental ingest cursor.
+| Table | Role |
+| --- | --- |
+| `kols` | KOL metadata, `persona_pack` |
+| `tweets` | Canonical tweet corpus |
+| `tweet_search` | FTS5 index (trigram) |
+| `chat_history` | User-scoped conversations (full message JSON) |
+| `persona_facts` | Map/reduce partials and merged persona JSON |
+| `eval_cases`, `eval_results` | Golden eval set and version scores |
 
 ## Operations
 
-Cloudflare auth uses Global API Key + email, not a bearer token. Local secrets are in
-`account.guard.json`, which must remain untracked.
+Secrets live in `account.guard.json` at repo root (gitignored). Never commit it.
 
 ```bash
 cd app
 export CLOUDFLARE_API_KEY=$(node -p "require('../account.guard.json').CLOUDFLARE_API_KEY")
 export CLOUDFLARE_EMAIL=$(node -p "require('../account.guard.json').expectedEmail")
+unset CLOUDFLARE_API_TOKEN   # use Global API Key + email, not a token
 export NODE_OPTIONS='--require ./scripts/cloudflare-dns-patch.cjs'
-unset CLOUDFLARE_API_TOKEN
 
 npx tsc --noEmit
-npm run test:dsl
 npm run deploy
 ```
 
-Useful admin endpoints require `x-admin-key: $ADMIN_KEY`:
+Admin endpoints require header `x-admin-key: $ADMIN_KEY`:
 
 - `GET /api/admin/stats`
-- `GET /api/admin/search-stats`
 - `POST /api/admin/ingest`
-- `POST /api/admin/persona-refresh`
 - `POST /api/admin/distill-auto?kol_id=<id>&reset=1`
-- `GET /api/admin/persona-experiments?kol_id=<id>`
-- `POST /api/admin/eval-build?kol_id=<id>`
 - `POST /api/admin/eval-run?kol_id=<id>&limit=2`
 
 Smoke checks:
 
 ```bash
-curl https://robindex.ai/api/kols
-curl "https://robindex.ai/api/tweets?kol_id=qinbafrank&limit=1"
+curl -s https://robindex.ai/ | head -5                    # static landing
+curl -s https://app.robindex.ai/ | head -5                # desk SPA
+curl -s https://robindex.ai/api/kols
+curl -s "https://robindex.ai/api/tweets?kol_id=qinbafrank&limit=1"
 ```
 
 ## Repository Layout
 
-- `app/src/index.ts` — routes, SSE chat, admin APIs, cron entrypoint.
-- `app/src/chat.ts` — prompt assembly, market context, tools, streaming.
-- `app/src/rag.ts` — FTS retrieval, rerank, quote attachment.
-- `app/src/query-plan.ts` — flash query planner.
-- `app/src/ingest.ts` — daily tweet ingest and weekly persona refresh.
-- `app/src/persona-distill.ts` — full and incremental map-reduce persona generation.
-- `app/src/eval.ts` — eval set generation, scoring, smoke/full eval, rollback.
-- `app/src/tools.ts` and market data modules — live data tools.
-- `app/public` — static frontend.
-- `app/migrations` and `app/schema.sql` — D1 schema.
-
-See `Plan.md` for the current roadmap and operational notes.
+```
+app/
+  src/index.ts          Worker: routes, host routing, SSE chat, admin, cron
+  src/chat.ts           Prompt assembly, market context, tools, streaming
+  src/rag.ts            FTS retrieval, rerank, quote attachment
+  src/persona-distill.ts  Map-reduce persona generation
+  src/eval.ts           Eval set, scoring, rollback
+  public/
+    index.html          Marketing site (static, SEO)
+    desk.html           Desk SPA shell
+    landing-static.js   Landing page JS (theme, i18n, nav)
+    app/                Desk + shared design system (React JSX, CSS, data)
+  migrations/           D1 migrations
+  wrangler.jsonc        Worker config + custom domains
+  schema.sql            D1 baseline schema
+```

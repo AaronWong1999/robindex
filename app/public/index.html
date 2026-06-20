@@ -1,150 +1,364 @@
-<!doctype html>
-<html lang="zh-CN">
+<!DOCTYPE html>
+<html lang="zh" data-theme="aurora">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#100f09" />
-  <title>Robindex — AI 驱动的市场洞察</title>
-  <meta name="description" content="选择一个研究视角：把博主的公开内容整理成可浏览、可追问、可持续跟踪的投研工作台。" />
-  <link rel="stylesheet" href="/styles.css" />
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Robindex — 金融 KOL 的 AI 分身交易研究终端</title>
+<meta name="description" content="Robindex — 把交易判断交给懂行的 AI 分身。选一位金融 KOL 的 AI 分身，答案逐句标注原文出处，自选模型与推理算力，四种界面风格。" />
+<meta name="keywords" content="Robindex,AI交易,金融KOL,投研助手,AI分身,交易研究,原文出处,DeepSeek" />
+<meta name="theme-color" content="#FBFBFD" />
+<link rel="canonical" href="https://robindex.ai/" />
+<link rel="alternate" hreflang="zh" href="https://robindex.ai/" />
+<link rel="alternate" hreflang="en" href="https://robindex.ai/?lang=en" />
+<link rel="alternate" hreflang="x-default" href="https://robindex.ai/" />
+<meta property="og:type" content="website" />
+<meta property="og:url" content="https://robindex.ai/" />
+<meta property="og:title" content="Robindex — 金融 KOL 的 AI 分身交易研究终端" />
+<meta property="og:description" content="把交易判断交给懂行的 AI 分身。答案逐句标注原文出处，自选模型与推理算力。" />
+<meta property="og:site_name" content="Robindex" />
+<meta property="og:locale" content="zh_CN" />
+<meta property="og:locale:alternate" content="en_US" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Robindex — 金融 KOL 的 AI 分身交易研究终端" />
+<meta name="twitter:description" content="把交易判断交给懂行的 AI 分身。答案逐句标注原文出处。" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/app/themes.css" />
+<link rel="stylesheet" href="/app/landing.css" />
+<link rel="icon" href="/app/icon.svg" type="image/svg+xml" />
+<style>html{scroll-behavior:smooth;}</style>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Robindex Desk",
+  "applicationCategory": "FinanceApplication",
+  "operatingSystem": "Web",
+  "url": "https://app.robindex.ai/",
+  "description": "金融 KOL 的 AI 分身交易研究终端。答案带原文出处，仅供研究，非投资建议。",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "inLanguage": ["zh", "en"]
+}
+</script>
 </head>
 <body>
-  <a class="skip" href="#main">跳到主内容</a>
+<div class="lp">
 
-  <header class="nav">
-    <a class="brand" href="/" aria-label="Robindex 首页">
-      <span class="mark">R</span>
-      <span class="bt"><b>Robindex</b><span>MARKET INTELLIGENCE</span></span>
-    </a>
-    <nav class="nav-links"></nav>
-    <div class="nav-right"></div>
-  </header>
-
-  <main id="main">
-    <!-- Hero + KOL Cards -->
-    <section class="section hero-gradient">
-      <div class="wrap">
-        <p class="eyebrow">博主研究室</p>
-        <h1 class="h1">选择一个研究视角</h1>
-        <p class="lead">每个研究室都把公开内容整理成可浏览、可追问、可持续跟踪的投研工作台。</p>
-
-        <div class="rooms">
-          <!-- Qinbafrank -->
-          <article class="room green-accent">
-            <div class="room-head">
-              <img src="https://unavatar.io/x/qinbafrank" alt="Qinbafrank 头像" onerror="this.style.visibility='hidden'" />
-              <div>
-                <div class="room-title"><h3 class="font-editorial">Qinbafrank 研究室</h3><span class="badge green">Ultra 资料包</span></div>
-                <div class="room-handle">@qinbafrank</div>
-              </div>
-            </div>
-            <p class="room-tagline">AI 大趋势 / 宏观传导 / 公司推荐档案</p>
-            <p class="room-desc">偏宏观权重排序、AI 基础设施重定价和行情规律。适合从大主线、公司案例和历史原文里复盘判断链。</p>
-            <div class="tiles">
-              <a class="tile" href="/kol/qinbafrank/highlights"><div class="ic">◧</div><span>精华</span></a>
-              <a class="tile" href="/kol/qinbafrank/sectors"><div class="ic">▤</div><span>板块</span></a>
-              <a class="tile" href="/kol/qinbafrank/stocks"><div class="ic">▦</div><span>个股</span></a>
-              <a class="tile" href="/kol/qinbafrank/latest"><div class="ic">▣</div><span>全量库</span></a>
-              <a class="tile" href="/research?agent=kol&persona=qinbafrank"><div class="ic">？</div><span>追问</span></a>
-            </div>
-            <div class="checks">
-              <div class="check"><span class="ic">✓</span>想学习完整框架和历史判断的人</div>
-              <div class="check"><span class="ic">✓</span>想把公司放回宏观与产业主线复盘的人</div>
-              <div class="check"><span class="ic">✓</span>需要用资料库追踪旧观点验证的人</div>
-            </div>
-            <p class="room-foot">包含精华库、板块观点、个股档案、全量原文和专属研究助手。</p>
-            <a class="btn" href="/kol/qinbafrank">进入研究室 →</a>
-          </article>
-
-          <!-- Serenity -->
-          <article class="room blue-accent">
-            <div class="room-head">
-              <img src="https://pbs.twimg.com/profile_images/1996176688414367744/LXfA_lIx_400x400.jpg" alt="Serenity 头像" onerror="this.style.visibility='hidden'" />
-              <div>
-                <div class="room-title"><h3 class="font-editorial">Serenity 研究室</h3><span class="badge blue">供应链工作台</span></div>
-                <div class="room-handle">@aleabitoreddit</div>
-              </div>
-            </div>
-            <p class="room-tagline">AI 半导体供应链 / 光通信 CPO / small-cap 高确信清单</p>
-            <p class="room-desc">偏 AI capex 漏斗、底层瓶颈迁移和小盘供应链标的。适合沿客户需求往上游拆，找少数公司绕不过去的位置。</p>
-            <div class="tiles">
-              <a class="tile" href="/kol/aleabitoreddit/sectors"><div class="ic">⛓</div><span>供应链</span></a>
-              <a class="tile" href="/kol/aleabitoreddit/stocks"><div class="ic">▦</div><span>个股</span></a>
-              <a class="tile" href="/kol/aleabitoreddit/latest"><div class="ic">▤</div><span>内容库</span></a>
-              <a class="tile" href="/research?agent=kol&persona=aleabitoreddit"><div class="ic">？</div><span>追问</span></a>
-            </div>
-            <div class="checks">
-              <div class="check"><span class="ic">✓</span>想看 AI 硬件瓶颈如何轮动的人</div>
-              <div class="check"><span class="ic">✓</span>想理解冷门供应链和小盘标的的人</div>
-              <div class="check"><span class="ic">✓</span>需要用原文证据校准 thesis 的人</div>
-            </div>
-            <p class="room-foot">不设精华库，入口集中在供应链地图、个股档案、内容库和研究助手。</p>
-            <a class="btn blue" href="/kol/aleabitoreddit">进入研究室 →</a>
-          </article>
-        </div>
-      </div>
-    </section>
-
-    <!-- How to choose -->
-    <section class="section">
-      <div class="wrap split">
-        <div>
-          <p class="eyebrow">怎么选</p>
-          <h2 class="h2">先按问题选博主，<br />再进入对应工具</h2>
-          <p class="lead">两个研究室共用同一套导航和研究助手入口，但内容组织围绕各自方法论展开。</p>
-        </div>
-        <div class="cardgrid">
-          <a class="minicard" href="/kol/qinbafrank">
-            <h4>想复盘大主线和公司案例</h4>
-            <p>进入 Qinbafrank，看 AI、宏观、美股调整规律和公司推荐如何串成一条判断链。</p>
-            <span class="more">查看 →</span>
-          </a>
-          <a class="minicard" href="/kol/aleabitoreddit">
-            <h4>想拆 AI 供应链瓶颈</h4>
-            <p>进入 Serenity，看 capex 如何传到光通信、CPO、衬底材料和小盘供应链公司。</p>
-            <span class="more">查看 →</span>
-          </a>
-          <a class="minicard" href="/research?agent=kol&persona=aleabitoreddit">
-            <h4>想直接问一只股票</h4>
-            <p>先选研究室，再用对应助手追问新闻、财报、估值位置和原文依据。</p>
-            <span class="more">查看 →</span>
-          </a>
-          <a class="minicard" href="/research?agent=kol&persona=aleabitoreddit">
-            <h4>想看公开原文证据</h4>
-            <p>两个研究室都保留内容库入口，回答只在命中原文时才标记为原文支持。</p>
-            <span class="more">查看 →</span>
-          </a>
-        </div>
-      </div>
-    </section>
-
-    <!-- Boundaries -->
-    <section class="section boundary-section">
-      <div class="wrap split">
-        <div>
-          <p class="eyebrow">使用边界</p>
-          <h2 class="h2">研究室不是<br />本人发言</h2>
-        </div>
-        <div class="boundary">
-          <div class="b"><span class="ic" style="color:var(--green)">✓</span>基于公开内容整理</div>
-          <div class="b"><span class="ic" style="color:var(--green)">✓</span>研究助手不代表博主本人观点</div>
-          <div class="b"><span class="ic" style="color:var(--green)">✓</span>所有内容均不构成投资建议</div>
-        </div>
-      </div>
-    </section>
-  </main>
-
-  <footer class="foot">
-    <div class="wrap">
-      <div class="row">
-        <a class="brand" href="/"><span class="mark">R</span><span class="bt"><b>Robindex</b></span></a>
-        <a href="/morning">早报</a><a href="/today">晚报</a><a href="/for-you">专属</a><a href="/stock">个股</a><a href="/macro">宏观</a><a href="/pricing">联系</a>
-        <span class="sp">AI 驱动的市场洞察</span>
-      </div>
-      <p class="disc">本平台所有内容（包括 AI 生成的分析与报告）仅供参考，不构成任何投资建议。投资有风险，入市需谨慎，过往表现不代表未来收益。AI 生成内容可能存在不准确之处，请在做出任何投资决策前自行核实相关信息。</p>
+<nav class="lnav" aria-label="主导航">
+  <a class="lnav-brand" href="#top">
+    <div class="lnav-mark" aria-hidden="true">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--on-accent)" stroke-width="1.8" stroke-linecap="round"><path d="M9 3v3M9 14v3M15 7v3M15 18v3M3 21h18"/><rect x="6.5" y="6" width="5" height="8" rx="1"/><rect x="12.5" y="10" width="5" height="8" rx="1"/></svg>
     </div>
-  </footer>
-  <script src="/nav.js"></script>
-  <script src="/kol.js"></script>
+    <div class="lnav-name">Robindex <span>Desk</span></div>
+  </a>
+  <div class="lnav-links">
+    <a href="#product" data-i18n="navProduct">产品</a>
+    <a href="#personas" data-i18n="navPersonas">分身</a>
+    <a href="#how" data-i18n="navHow">原理</a>
+    <a href="#pricing" data-i18n="navPricing">定价</a>
+  </div>
+  <div class="lnav-right">
+    <div class="lang-switch" role="group" aria-label="语言">
+      <button class="lang-btn on" data-lang="zh" type="button">中</button>
+      <button class="lang-btn" data-lang="en" type="button">EN</button>
+    </div>
+    <div class="theme-wrap">
+      <button class="theme-btn icon-btn" type="button" aria-label="主题" title="主题">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="9.5" cy="9" r="1.3" fill="currentColor" stroke="none"/><circle cx="15" cy="10" r="1.3" fill="currentColor" stroke="none"/><circle cx="15.5" cy="14.5" r="1.3" fill="currentColor" stroke="none"/></svg>
+      </button>
+      <div class="theme-menu" hidden>
+        <button type="button" data-theme-opt="terminal">Terminal</button>
+        <button type="button" data-theme-opt="aurora" class="on">Aurora</button>
+        <button type="button" data-theme-opt="matrix">Matrix</button>
+        <button type="button" data-theme-opt="codex">Codex</button>
+      </div>
+    </div>
+    <a class="lnav-ghost" href="https://app.robindex.ai/" data-i18n="login">登录</a>
+    <a class="lnav-cta" href="https://app.robindex.ai/" data-i18n="open">进入终端
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+    </a>
+    <button class="lnav-burger" type="button" aria-label="菜单" aria-expanded="false">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m12 2 9 5-9 5-9-5 9-5zM3 12l9 5 9-5M3 17l9 5 9-5"/></svg>
+    </button>
+  </div>
+</nav>
+
+<div class="lmobile-menu" hidden>
+  <a href="#product" data-i18n="navProduct">产品</a>
+  <a href="#personas" data-i18n="navPersonas">分身</a>
+  <a href="#how" data-i18n="navHow">原理</a>
+  <a href="#pricing" data-i18n="navPricing">定价</a>
+  <a class="lnav-cta" href="https://app.robindex.ai/" data-i18n="open">进入终端</a>
+</div>
+
+<header class="lhero" id="top">
+  <div class="lhero-mesh" aria-hidden="true"></div>
+  <div class="lhero-grid" aria-hidden="true"></div>
+  <div class="lhero-inner">
+    <p class="lpill rv"><span class="dot"></span><span data-i18n="heroPill">金融版 AI 工作台 · 已接入 2 位 KOL 分身</span></p>
+    <h1 class="rv"><span data-i18n="h1a">把交易判断，</span><em data-i18n="h1b">交给懂行的 AI 分身</em></h1>
+    <p class="sub rv" data-i18n="heroSub">选一位金融 KOL 的 AI 分身，用 ta 的判断框架回答你的每一个问题。答案逐句标注原文出处，可一键展开来源推文。模型、推理算力、界面风格，全都你说了算。</p>
+    <div class="lhero-cta rv">
+      <a class="lbtn lbtn-primary" href="https://app.robindex.ai/" data-i18n="ctaPrimary">免费进入终端
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </a>
+      <a class="lbtn lbtn-ghost" href="#how" data-i18n="ctaGhost">看它怎么工作</a>
+    </div>
+    <p class="lhero-note rv" data-i18n="heroNote">无需信用卡 · DeepSeek V4 全程可调 · 中英多语言</p>
+  </div>
+
+  <div class="lvisual rv">
+    <div class="lfloat f1">
+      <span class="mp-badge" style="background:#4D6BFE">P4</span>
+      <div><b>DeepSeek V4 Pro</b><div class="s" data-i18n="floatModel">自选模型 · 算力</div></div>
+    </div>
+    <div class="lfloat f2">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.8"><path d="M10 11V7a2 2 0 0 0-2-2H5M20 11V7a2 2 0 0 0-2-2h-3M3 11h7v3a3 3 0 0 1-3 3M13 11h7v3a3 3 0 0 1-3 3"/></svg>
+      <div><b>[T1] [T2] [T3]</b><div class="s" data-i18n="floatCite">原文出处 · 可追溯</div></div>
+    </div>
+    <div class="lvisual-frame">
+      <div class="lvf-bar">
+        <div class="lvf-dots" aria-hidden="true"><i style="background:#FF5F57"></i><i style="background:#FEBC2E"></i><i style="background:#28C840"></i></div>
+        <div class="lvf-title" data-i18n="visTitle">robindex.ai — AI Trader Desk</div>
+      </div>
+      <div class="lvf-body">
+        <div class="lvf-chat">
+          <div class="lvf-q" data-i18n="visQ">你怎么看 CPO 延期，光互连 2026 真正受益的是谁？</div>
+          <div class="lvf-a">
+            <img class="lvf-src-av" src="https://unavatar.io/x/qinbafrank" alt="Qinbafrank" width="26" height="26" loading="lazy" />
+            <div class="lvf-ans">
+              <span data-i18n="visA1">先给结论：</span><b data-i18n="visABold">CPO 是方向，但 2026 不是它的兑现年</b><span class="lvf-cite">T1</span><span data-i18n="visA2">。真正兑现业绩的主力，是 1.6T 可插拔 + NPO 近封装</span><span class="lvf-cite">T2</span>。
+            </div>
+          </div>
+        </div>
+        <div class="lvf-side">
+          <div class="lvf-side-h" data-i18n="visSrcNote">本回答引用 3 条原文</div>
+          <div class="lvf-src">
+            <div class="lvf-src-top">
+              <img class="lvf-src-av" src="https://unavatar.io/x/qinbafrank" alt="" width="26" height="26" loading="lazy" />
+              <div><div class="lvf-src-nm">Qinbafrank</div><div class="lvf-src-h">@qinbafrank</div></div>
+              <span class="lvf-src-ref">T1</span>
+            </div>
+            <div class="lvf-src-tx" data-i18n="src1">一张图看清 26 年光互连哪些环节真正受益…</div>
+          </div>
+          <div class="lvf-src">
+            <div class="lvf-src-top">
+              <img class="lvf-src-av" src="https://unavatar.io/x/qinbafrank" alt="" width="26" height="26" loading="lazy" />
+              <div><div class="lvf-src-nm">Qinbafrank</div><div class="lvf-src-h">@qinbafrank</div></div>
+              <span class="lvf-src-ref">T2</span>
+            </div>
+            <div class="lvf-src-tx" data-i18n="src2">CPO 大规模落地推迟到 27-28；26 年主力是 1.6T + NPO…</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section class="lstrip rv" aria-label="数据来源">
+  <div class="lstrip-lab" data-i18n="stripLab">数据来自交易者真正在读的人</div>
+  <div class="lstrip-row">
+    <span><img src="https://unavatar.io/x/qinbafrank" alt="" width="24" height="24" loading="lazy" style="border-radius:50%;object-fit:cover" />@qinbafrank</span>
+    <span><img src="https://pbs.twimg.com/profile_images/1996176688414367744/LXfA_lIx_400x400.jpg" alt="" width="24" height="24" loading="lazy" style="border-radius:50%;object-fit:cover" />@aleabitoreddit</span>
+    <span>X / Twitter</span>
+    <span><span class="mp-badge" style="background:#4D6BFE;width:20px;height:20px;font-size:8px;border-radius:5px">V4</span>DeepSeek V4</span>
+  </div>
+</section>
+
+<main>
+<section class="lsec" id="product">
+  <div class="lsec-head rv">
+    <span class="lsec-eyebrow" data-i18n="secProductEyebrow">它能做什么</span>
+    <h2 data-i18n="secProductH">一个会用你信任的声音回答的交易台</h2>
+    <p data-i18n="secProductP">三件事，让 Robindex 不只是又一个聊天机器人。</p>
+  </div>
+
+  <div class="lfeat rv">
+    <div class="lfeat-text">
+      <div class="lfeat-num">01 · <span data-i18n="f1eye">对话即研究</span></div>
+      <h3 data-i18n="f1h">向分身提问，得到带出处的判断</h3>
+      <p data-i18n="f1p">不是泛泛的 AI 回答。每个结论都来自 KOL 本人的历史推文，逐句标注 [T#]，点开就是原文。</p>
+      <div class="lfeat-list">
+        <div class="lfeat-li"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f1l1">第一人称分身：用 KOL 的框架与语气作答</span></div>
+        <div class="lfeat-li"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f1l2">稀疏检索 + LLM 重排，只引用真实发言</span></div>
+        <div class="lfeat-li"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f1l3">判断信心可视化，不确定就说不确定</span></div>
+      </div>
+    </div>
+    <div class="lfeat-vis">
+      <div class="mock-bar"><i style="background:#FF5F57"></i><i style="background:#FEBC2E"></i><i style="background:#28C840"></i>ask · Qinbafrank</div>
+      <div class="mock-pad">
+        <div class="mock-bar" style="border:1px solid var(--border);border-radius:10px;margin-bottom:12px" data-i18n="mockRetrieval">检索完成 · 4/4 阶段</div>
+        <div class="mock-pipe">
+          <div class="mock-step"><span class="ok">✓</span><span class="fn">plan.expand</span><span class="ar">(检索词)</span></div>
+          <div class="mock-step"><span class="ok">✓</span><span class="fn">corpus.search</span><span class="ar">(FTS5)</span></div>
+          <div class="mock-step"><span class="ok">✓</span><span class="fn">rerank.select</span><span class="ar">(top_k:3)</span></div>
+        </div>
+        <div class="lvf-ans" style="margin-top:14px;font-size:13px"><b data-i18n="visABold">CPO 是方向，但 2026 不是它的兑现年</b><span class="lvf-cite">T1</span> · <span class="lvf-cite">T2</span> · <span class="lvf-cite">T3</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="lfeat rv rev">
+    <div class="lfeat-text">
+      <div class="lfeat-num">02 · <span data-i18n="f2eye">你掌控算力</span></div>
+      <h3 data-i18n="f2h">自选模型与推理强度</h3>
+      <p data-i18n="f2p">日常追问用 Flash，深度复盘切 Pro，再按需调高推理算力。账单透明，按消耗计费。</p>
+      <div class="lfeat-list">
+        <div class="lfeat-li"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f2l1">DeepSeek V4 Pro / Flash 实时切换</span></div>
+        <div class="lfeat-li"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f2l2">推理强度：低 / 中 / 高 / 超高</span></div>
+        <div class="lfeat-li"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f2l3">用量与额度一目了然</span></div>
+      </div>
+    </div>
+    <div class="lfeat-vis">
+      <div class="mock-models">
+        <div class="mock-model on">
+          <span class="mp-badge" style="background:#4D6BFE">P4</span>
+          <div><div class="mock-mn">DeepSeek V4 Pro</div><div class="mock-ms" data-i18n="mockPro">深度分析 · 多工具</div></div>
+        </div>
+        <div class="mock-model">
+          <span class="mp-badge" style="background:#6E8BFF">F4</span>
+          <div><div class="mock-mn">DeepSeek V4 Flash</div><div class="mock-ms" data-i18n="mockFlash">快速 · 低成本</div></div>
+        </div>
+        <div style="margin-top:4px">
+          <div class="lvf-side-h" style="margin-bottom:8px" data-i18n="mockReasoning">推理强度</div>
+          <div class="mock-eff"><i>低</i><i>中</i><i class="on">高</i><i>超高</i></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="lfeat rv">
+    <div class="lfeat-text">
+      <div class="lfeat-num">03 · <span data-i18n="f3eye">为你而生的界面</span></div>
+      <h3 data-i18n="f3h">四种风格，一个终端</h3>
+      <p data-i18n="f3p">信号绿交易终端、苹果留白、磷光黑客风、极简 Codex——一键切换，PC 与手机自适应，可直接添加到主屏当 App 用。</p>
+      <div class="lfeat-list">
+        <div class="lfeat-li"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f3l1">Terminal / Aurora / Matrix / Codex 四主题</span></div>
+        <div class="lfeat-li"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f3l2">桌面、平板、手机全自适应</span></div>
+        <div class="lfeat-li"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f3l3">PWA：添加到主屏，秒变原生 App</span></div>
+      </div>
+    </div>
+    <div class="lfeat-vis">
+      <div class="mock-themes">
+        <div class="mock-theme"><div class="mock-theme-sw"><i style="background:#0A0B0D"></i><i style="background:#3DDC97"></i><i style="background:#5B9DFF"></i></div><div class="mock-theme-lab">Terminal <span data-i18n="themeTerminal">信号绿</span></div></div>
+        <div class="mock-theme"><div class="mock-theme-sw"><i style="background:#FBFBFD"></i><i style="background:#0071E3"></i><i style="background:#1D1D1F"></i></div><div class="mock-theme-lab">Aurora <span data-i18n="themeAurora">苹果留白</span></div></div>
+        <div class="mock-theme"><div class="mock-theme-sw"><i style="background:#000000"></i><i style="background:#00FF85"></i><i style="background:#0C1A0E"></i></div><div class="mock-theme-lab">Matrix <span data-i18n="themeMatrix">磷光黑客</span></div></div>
+        <div class="mock-theme"><div class="mock-theme-sw"><i style="background:#0D0D0D"></i><i style="background:#ECECEC"></i><i style="background:#19C37D"></i></div><div class="mock-theme-lab">Codex <span data-i18n="themeCodex">极简</span></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="lsec" id="how">
+  <div class="lsec-head rv">
+    <span class="lsec-eyebrow" data-i18n="howEye">两步上手</span>
+    <h2 data-i18n="howH">从提问到可执行策略</h2>
+    <p data-i18n="howSub">今天先让分身解答你的问题；很快，让分身把判断写成可回测的策略代码。</p>
+  </div>
+  <div class="lsteps">
+    <div class="lstep rv"><div class="lstep-n">1</div><h4 data-i18n="s1h">选择分身</h4><p data-i18n="s1p">从金融 KOL 的 AI 分身中挑一位，ta 的全量推文已被索引为云端知识库。</p></div>
+    <div class="lstep rv"><div class="lstep-n">2</div><h4 data-i18n="s2h">提问并追问</h4><p data-i18n="s2p">用自然语言提问，分身以第一人称作答，逐句给出原文出处，可继续深挖。</p></div>
+    <div class="lstep rv"><div class="lstep-n">3</div><h4><span data-i18n="s3h">生成策略代码</span> <span class="soon-tag-sm" data-i18n="soon">即将上线</span></h4><p data-i18n="s3p">一键把判断变成可回测的策略代码，绑定券商沙盒验证。即将上线。</p></div>
+  </div>
+</section>
+
+<section class="lsec" id="personas">
+  <div class="lsec-head rv">
+    <span class="lsec-eyebrow" data-i18n="personasEye">已上线分身</span>
+    <h2 data-i18n="personasH">都是交易者真正在追的人</h2>
+  </div>
+  <div class="lpersonas">
+    <a class="lpcard rv" href="https://app.robindex.ai/?agent=kol&amp;persona=qinbafrank">
+      <img src="https://unavatar.io/x/qinbafrank" alt="Qinbafrank" width="54" height="54" loading="lazy" />
+      <div style="flex:1;min-width:0">
+        <div class="lpcard-nm">Qinbafrank</div>
+        <div class="lpcard-h">@qinbafrank</div>
+        <div class="lpcard-bio" data-i18n="p1bio">宏观×产业×行情的判断链。AI 基础设施重定价、美股调整规律、加密与 TradFi 融合。</div>
+        <div class="lpcard-tags"><span>宏观传导</span><span>AI 主线</span><span>美股节奏</span></div>
+      </div>
+      <div class="lpcard-stat"><div class="v">284K</div><div class="k" data-i18n="followers">关注</div></div>
+    </a>
+    <a class="lpcard rv" href="https://app.robindex.ai/?agent=kol&amp;persona=aleabitoreddit">
+      <img src="https://pbs.twimg.com/profile_images/1996176688414367744/LXfA_lIx_400x400.jpg" alt="Serenity" width="54" height="54" loading="lazy" />
+      <div style="flex:1;min-width:0">
+        <div class="lpcard-nm">Serenity</div>
+        <div class="lpcard-h">@aleabitoreddit</div>
+        <div class="lpcard-bio" data-i18n="p2bio">从 hyperscaler capex 往下拆，寻找少数公司绕不过去的 chokepoint。光子/CPO、small-cap 高确信清单。</div>
+        <div class="lpcard-tags"><span>供应链</span><span>光子/CPO</span><span>chokepoint</span></div>
+      </div>
+      <div class="lpcard-stat"><div class="v">96K</div><div class="k" data-i18n="followers">关注</div></div>
+    </a>
+  </div>
+</section>
+
+<section class="lcta" id="pricing">
+  <div class="lcta-inner rv">
+    <div class="lcta-mesh" aria-hidden="true"></div>
+    <h2 data-i18n="ctaH">现在就让懂行的人回答你</h2>
+    <p data-i18n="ctaP">免费进入，选一位分身开始提问。</p>
+    <div class="lhero-cta">
+      <a class="lbtn lbtn-primary" href="https://app.robindex.ai/" data-i18n="ctaPrimary">免费进入终端
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer class="lfoot">
+  <div class="lfoot-inner">
+    <div class="lfoot-brand">
+      <a class="lnav-brand" href="#top">
+        <div class="lnav-mark" aria-hidden="true">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--on-accent)" stroke-width="1.8" stroke-linecap="round"><path d="M9 3v3M9 14v3M15 7v3M15 18v3M3 21h18"/><rect x="6.5" y="6" width="5" height="8" rx="1"/><rect x="12.5" y="10" width="5" height="8" rx="1"/></svg>
+        </div>
+        <div class="lnav-name">Robindex <span>Desk</span></div>
+      </a>
+      <p data-i18n="footTag">金融 KOL 的 AI 分身交易研究终端。答案带原文出处，仅供研究，非投资建议。</p>
+    </div>
+    <div class="lfoot-cols">
+      <div class="lfoot-col">
+        <h5 data-i18n="fcProduct">产品</h5>
+        <a href="#personas" data-i18n="fcPersonas">分身</a>
+        <a href="#how" data-i18n="fcHow">原理</a>
+        <a href="#pricing" data-i18n="fcPricing">定价</a>
+        <a href="https://app.robindex.ai/" data-i18n="fcApp">进入终端</a>
+      </div>
+      <div class="lfoot-col">
+        <h5 data-i18n="fcCompany">公司</h5>
+        <a href="#" data-i18n="fcAbout">关于</a>
+        <a href="#" data-i18n="fcBlog">博客</a>
+        <a href="#" data-i18n="fcCareers">招聘</a>
+      </div>
+      <div class="lfoot-col">
+        <h5 data-i18n="fcLegal">条款</h5>
+        <a href="#" data-i18n="fcTerms">服务条款</a>
+        <a href="#" data-i18n="fcPrivacy">隐私政策</a>
+        <a href="#" data-i18n="fcRisk">风险提示</a>
+      </div>
+    </div>
+  </div>
+  <div class="lfoot-base">
+    <span class="risk" data-i18n="risk">投资有风险，本平台内容仅供研究，不构成投资建议。</span>
+    <span>© 2026 Robindex · <span data-i18n="rights">保留所有权利。</span></span>
+  </div>
+</footer>
+
+</div>
+
+<style>
+.lang-switch{display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;}
+.lang-btn{padding:6px 10px;font-size:12px;font-weight:600;color:var(--dim);transition:.13s;}
+.lang-btn.on{background:var(--panel-2);color:var(--text);}
+.theme-wrap{position:relative;}
+.theme-menu{position:absolute;top:calc(100% + 6px);right:0;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:6px;min-width:120px;box-shadow:var(--sh-lg);z-index:60;display:flex;flex-direction:column;gap:2px;}
+.theme-menu button{padding:8px 12px;border-radius:7px;font-size:13px;text-align:left;color:var(--dim);transition:.12s;}
+.theme-menu button:hover,.theme-menu button.on{background:var(--panel-2);color:var(--text);}
+.icon-btn{width:36px;height:36px;border-radius:9px;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--text);transition:.13s;}
+.icon-btn:hover{background:var(--panel);}
+.soon-tag-sm{font-family:var(--mono);font-size:9px;font-weight:600;color:var(--accent);background:var(--accent-ghost);border:1px solid var(--accent-dim);border-radius:5px;padding:2px 6px;vertical-align:middle;}
+</style>
+<script src="/landing-static.js" defer></script>
 </body>
 </html>

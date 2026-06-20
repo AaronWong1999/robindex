@@ -21,6 +21,34 @@ import {
 
 const app = new Hono<{ Bindings: Env }>();
 
+const APP_HOST = "app.robindex.ai";
+
+function requestHost(req: Request): string {
+  return new URL(req.url).hostname.toLowerCase();
+}
+
+function isAppHost(host: string): boolean {
+  return host === APP_HOST;
+}
+
+function isMarketingHost(host: string): boolean {
+  return host === "robindex.ai" || host === "www.robindex.ai";
+}
+
+function serveDesk(c: { req: { url: string; raw: Request }; env: Env }): Response | Promise<Response> {
+  const url = new URL(c.req.url);
+  url.pathname = "/desk.html";
+  return c.env.ASSETS.fetch(new Request(url, c.req.raw));
+}
+
+function redirectToApp(req: Request): Response {
+  const src = new URL(req.url);
+  const dest = new URL(req.url);
+  dest.hostname = APP_HOST;
+  if (src.pathname === "/desk") dest.pathname = "/";
+  return Response.redirect(dest.toString(), 302);
+}
+
 const DEFAULT_PERSONA = (k: KolRow) =>
   `Identity: ${k.display_name} (@${k.handle}).\nTone: direct, data-driven finance commentator.\n` +
   `Methodology: reason from price action, fundamentals, and macro context.\nTaboos: no fabricated numbers; no guarantees.`;
@@ -524,6 +552,48 @@ app.post("/api/chat", async (c) => {
   });
 });
 
+// ---- Chat history (Desk frontend cloud sync) ----
+app.get("/api/chat/history", async (c) => {
+  const userId = c.req.query("user_id");
+  if (!userId) return c.json({ error: "user_id required" }, 400);
+  const rows = await c.env.DB.prepare(
+    `SELECT id, kol_id, title, messages_json, created_at, updated_at FROM chat_history WHERE user_id=? ORDER BY updated_at DESC LIMIT 100`
+  ).bind(userId).all();
+  return c.json({ chats: rows.results || [] });
+});
+
+app.get("/api/chat/history/:id", async (c) => {
+  const userId = c.req.query("user_id");
+  const id = c.req.param("id");
+  if (!userId) return c.json({ error: "user_id required" }, 400);
+  const row = await c.env.DB.prepare(
+    `SELECT id, kol_id, title, messages_json, created_at, updated_at FROM chat_history WHERE id=? AND user_id=?`
+  ).bind(id, userId).first();
+  if (!row) return c.json({ error: "not found" }, 404);
+  return c.json(row);
+});
+
+app.put("/api/chat/history/:id", async (c) => {
+  const id = c.req.param("id");
+  const body = await c.req.json<{ user_id: string; kol_id: string; title: string; messages_json: string }>();
+  if (!body.user_id || !body.kol_id) return c.json({ error: "user_id and kol_id required" }, 400);
+  const now = new Date().toISOString();
+  await c.env.DB.prepare(
+    `INSERT INTO chat_history (id, user_id, kol_id, title, messages_json, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET title=excluded.title, messages_json=excluded.messages_json, updated_at=excluded.updated_at`
+  ).bind(id, body.user_id, body.kol_id, body.title || "", body.messages_json || "[]", now, now).run();
+  return c.json({ ok: true, id });
+});
+
+app.delete("/api/chat/history/:id", async (c) => {
+  const userId = c.req.query("user_id");
+  const id = c.req.param("id");
+  if (!userId) return c.json({ error: "user_id required" }, 400);
+  await c.env.DB.prepare(`DELETE FROM chat_history WHERE id=? AND user_id=?`).bind(id, userId).run();
+  return c.json({ ok: true });
+});
+
 // ---- Follow-up question suggestions (lightweight, fast) ----
 app.post("/api/suggest", async (c) => {
   const body = await c.req.json<{ kol_id: string; question: string; answer: string }>();
@@ -833,10 +903,13 @@ app.post("/api/admin/onboard", async (c) => {
   });
 });
 
-app.get("/research", (c) => {
-  const url = new URL(c.req.url);
-  url.pathname = "/research.html";
-  return c.env.ASSETS.fetch(new Request(url, c.req.raw));
+app.get("/research", (c) => serveDesk(c));
+
+app.get("/desk", (c) => serveDesk(c));
+
+app.get("/", (c) => {
+  if (isAppHost(requestHost(c.req.raw))) return serveDesk(c);
+  return c.env.ASSETS.fetch(c.req.raw);
 });
 
 app.post("/api/admin/ingest", async (c) => {
@@ -1273,17 +1346,9 @@ app.post("/api/persona-evolve", async (c) => {
 
 // Human-facing KOL research-room routes. Static Assets' SPA fallback would otherwise
 // return the landing page for these deep links.
-app.get("/kol/:persona", (c) => {
-  const url = new URL(c.req.url);
-  url.pathname = "/index.html";
-  return c.env.ASSETS.fetch(new Request(url, c.req.raw));
-});
+app.get("/kol/:persona", (c) => serveDesk(c));
 
-app.get("/kol/:persona/:section", (c) => {
-  const url = new URL(c.req.url);
-  url.pathname = "/index.html";
-  return c.env.ASSETS.fetch(new Request(url, c.req.raw));
-});
+app.get("/kol/:persona/:section", (c) => serveDesk(c));
 
 // Human-facing top-nav pages. Each maps to a static HTML file under public/.
 const PAGE_ROUTES: Record<string, string> = {
@@ -1336,14 +1401,32 @@ app.get("/api/admin/model-test", async (c) => {
   }
 });
 
-// Static assets fallback (SPA).
-app.get("*", (c) => c.env.ASSETS.fetch(c.req.raw));
+// Static assets fallback — app subdomain uses desk.html as SPA shell.
+app.get("*", (c) => {
+  const url = new URL(c.req.url);
+  if (isAppHost(url.hostname) && !url.pathname.startsWith("/api/")) {
+    url.pathname = "/desk.html";
+    return c.env.ASSETS.fetch(new Request(url, c.req.raw));
+  }
+  return c.env.ASSETS.fetch(c.req.raw);
+});
 
 export default {
   fetch(req: Request, env: Env, ctx: ExecutionContext) {
+    const host = requestHost(req);
     const url = new URL(req.url);
+    if (isMarketingHost(host)) {
+      if (
+        url.pathname.startsWith("/kol/") ||
+        url.pathname === "/research" ||
+        url.pathname === "/desk" ||
+        url.pathname.startsWith("/research/")
+      ) {
+        return redirectToApp(req);
+      }
+    }
     if (url.pathname.startsWith("/kol/")) {
-      url.pathname = "/index.html";
+      url.pathname = "/desk.html";
       return env.ASSETS.fetch(new Request(url, req));
     }
     return app.fetch(req, env, ctx);
