@@ -4,8 +4,8 @@
 
 /* reveal — opacity ALWAYS 1 (never blank in any capture/print/frozen-clock);
    entrance is a transform-only slide that real browsers animate, gated by JS `.armed`. */
-.rv{opacity:1;}
-.lp.armed .rv{transform:translateY(24px);transition:transform .7s cubic-bezier(.2,.7,.2,1);will-change:transform;}
+.rv{opacity:1;transform:none;}
+.lp.armed .rv:not(.in){transform:translateY(24px);transition:transform .7s cubic-bezier(.2,.7,.2,1);will-change:transform;}
 .lp.armed .rv.in{transform:none;}
 @media (prefers-reduced-motion:reduce){.lp.armed .rv{transform:none;transition:none;}}
 

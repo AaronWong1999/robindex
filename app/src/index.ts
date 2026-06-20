@@ -49,6 +49,19 @@ function redirectToApp(req: Request): Response {
   return Response.redirect(dest.toString(), 302);
 }
 
+/** True when the path should be served as a static file, not the Desk SPA shell. */
+function isStaticAssetPath(pathname: string): boolean {
+  if (pathname.startsWith("/app/")) return true;
+  if (pathname === "/landing-static.js") return true;
+  if (/\.(html|css|js|jsx|mjs|json|svg|png|jpe?g|gif|webp|ico|woff2?|ttf|txt|map)$/i.test(pathname)) return true;
+  return false;
+}
+
+function isDeskSpaPath(pathname: string): boolean {
+  if (pathname.startsWith("/api/")) return false;
+  return !isStaticAssetPath(pathname);
+}
+
 const DEFAULT_PERSONA = (k: KolRow) =>
   `Identity: ${k.display_name} (@${k.handle}).\nTone: direct, data-driven finance commentator.\n` +
   `Methodology: reason from price action, fundamentals, and macro context.\nTaboos: no fabricated numbers; no guarantees.`;
@@ -1382,10 +1395,10 @@ app.get("/api/admin/model-test", async (c) => {
   }
 });
 
-// Static assets fallback — app subdomain uses desk.html as SPA shell.
+// Static assets fallback — app subdomain uses desk.html only for client-side routes.
 app.get("*", (c) => {
   const url = new URL(c.req.url);
-  if (isAppHost(url.hostname) && !url.pathname.startsWith("/api/")) {
+  if (isAppHost(url.hostname) && isDeskSpaPath(url.pathname)) {
     url.pathname = "/desk.html";
     return c.env.ASSETS.fetch(new Request(url, c.req.raw));
   }
