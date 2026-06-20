@@ -242,6 +242,7 @@ function Conviction({ value }) {
 function SourceCard({ kol, tw, active }) {
   const [expanded, setExpanded] = React.useState(false);
   const isLong = tw.snippet && tw.snippet.length > 160;
+  const quoted = tw.quoted && tw.quoted.text ? tw.quoted : null;
   React.useEffect(() => { if (active) setExpanded(true); }, [active]);
   return React.createElement("div", {
     className: "src" + (active ? " on" : ""), id: "cite-" + citeKey(tw.ref) },
@@ -257,6 +258,14 @@ function SourceCard({ kol, tw, active }) {
       className: "src-toggle",
       onClick: () => setExpanded((v) => !v) },
       expanded ? (EN() ? "Collapse" : "收起") : (EN() ? "Expand" : "展开原文")),
+    quoted && React.createElement("a", {
+      className: "src-quote", href: quoted.url || tw.url, target: "_blank", rel: "noreferrer" },
+      React.createElement("div", { className: "src-quote-top" },
+        React.createElement("div", { className: "src-quote-avatar" }, (quoted.name || quoted.handle || "?").slice(0, 1).toUpperCase()),
+        React.createElement("div", { className: "src-quote-id" },
+          React.createElement("div", { className: "src-quote-nm" }, quoted.name || quoted.handle || "Quoted tweet"),
+          React.createElement("div", { className: "src-quote-h" }, quoted.handle ? "@" + quoted.handle : "", quoted.date ? " · " + quoted.date : ""))),
+      React.createElement("div", { className: "src-quote-text" }, quoted.text)),
     React.createElement("div", { className: "src-foot" },
       React.createElement("a", { className: "src-open", href: tw.url, target: "_blank", rel: "noreferrer" },
         EN() ? "View on X →" : "在 X 查看原文 →")));

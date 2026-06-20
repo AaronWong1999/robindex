@@ -157,12 +157,15 @@ function Rail({ kol, sources, railTab, setRailTab, highlight, citeTick, mobile }
         if (!scroller) return;
         const el = scroller.querySelector("#cite-" + citeKey(highlight));
         if (!el) return;
-        const pad = 14;
+        const pad = 22;
+        const scrollerRect = scroller.getBoundingClientRect();
+        const elRect = el.getBoundingClientRect();
         const maxTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
         const fits = el.offsetHeight + pad * 2 <= scroller.clientHeight;
+        const currentTop = scroller.scrollTop + (elRect.top - scrollerRect.top);
         const top = fits
-          ? el.offsetTop - Math.max(pad, Math.floor((scroller.clientHeight - el.offsetHeight) / 2))
-          : el.offsetTop - pad;
+          ? currentTop - Math.max(pad, Math.floor((scroller.clientHeight - el.offsetHeight) / 2))
+          : currentTop - pad;
         scroller.scrollTo({ top: Math.max(0, Math.min(maxTop, top)), behavior });
       };
       requestAnimationFrame(() => scrollToCitation("smooth"));
@@ -556,6 +559,7 @@ function App() {
             views: c.views || "",
             url: c.url || "",
             snippet: c.snippet || c.text || "",
+            quoted: c.quoted || null,
           }));
           setSources(cites);
           setRailTab("sources");
