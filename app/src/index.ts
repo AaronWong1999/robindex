@@ -593,6 +593,81 @@ app.get("/api/chat/history/:id", async (c) => {
   return c.json(row);
 });
 
+app.post("/api/citations/hydrate", async (c) => {
+  const body = await c.req.json<{ kol_id?: string; handle?: string; citations?: any[] }>().catch(() => ({}));
+  const kolId = body.kol_id || "";
+  const handle = body.handle || kolId;
+  const citations = Array.isArray(body.citations) ? body.citations : [];
+  if (!kolId || !citations.length) return c.json({ citations });
+
+  const citationTweetId = (x: any) => {
+    const direct = String(x.tweet_id || x.id || "");
+    if (direct) return direct;
+    const m = String(x.url || "").match(/\/status\/(\d+)/);
+    return m ? m[1] : "";
+  };
+  const ids = Array.from(new Set(citations.map(citationTweetId).filter(Boolean))).slice(0, 80);
+  if (!ids.length) return c.json({ citations });
+
+  const rows = await c.env.DB.prepare(
+    `SELECT id,text,created_at_iso,quoted FROM tweets WHERE kol_id=? AND id IN (${ids.map(() => "?").join(",")})`
+  ).bind(kolId, ...ids).all().then((r) => (r.results || []) as any[]);
+  const byId = new Map(rows.map((r) => [String(r.id), r]));
+
+  const needLookup = new Map<string, any[]>();
+  for (const cite of citations) {
+    const cid = citationTweetId(cite);
+    if (cid && !cite.tweet_id) cite.tweet_id = cid;
+    const row = byId.get(cid);
+    if (cite.quoted?.text) continue;
+    if (row?.quoted) {
+      try {
+        const quoted = JSON.parse(row.quoted);
+        if (quoted?.text) {
+          cite.quoted = quoted;
+          continue;
+        }
+      } catch {}
+    }
+    const text = String(cite.snippet || cite.text || row?.text || "");
+    let match = text.match(/(?:x|twitter)\.com\/([A-Za-z0-9_]+)\/status\/(\d+)/i);
+    if (!match) {
+      const short = text.match(/https?:\/\/t\.co\/[A-Za-z0-9_%-]+/i)?.[0];
+      if (short) {
+        const res = await fetch(short, { redirect: "manual" }).catch(() => null);
+        const dest = res?.headers.get("location") || "";
+        match = dest.match(/(?:x|twitter)\.com\/([A-Za-z0-9_]+)\/status\/(\d+)/i);
+      }
+    }
+    if (!match || match[1].toLowerCase() !== String(handle).toLowerCase()) continue;
+    const arr = needLookup.get(match[2]) || [];
+    arr.push(cite);
+    needLookup.set(match[2], arr);
+  }
+
+  const qids = Array.from(needLookup.keys()).slice(0, 80);
+  if (qids.length) {
+    const qrows = await c.env.DB.prepare(
+      `SELECT id,text,created_at_iso FROM tweets WHERE kol_id=? AND id IN (${qids.map(() => "?").join(",")})`
+    ).bind(kolId, ...qids).all().then((r) => (r.results || []) as any[]).catch(() => []);
+    for (const r of qrows) {
+      const arr = needLookup.get(String(r.id)) || [];
+      for (const cite of arr) {
+        cite.quoted = {
+          id: String(r.id),
+          text: r.text || "",
+          handle,
+          name: handle === "qinbafrank" ? "Qinbafrank" : "",
+          url: `https://x.com/${handle}/status/${r.id}`,
+          date: (r.created_at_iso || "").slice(0, 10),
+        };
+      }
+    }
+  }
+
+  return c.json({ citations });
+});
+
 app.put("/api/chat/history/:id", async (c) => {
   const id = c.req.param("id");
   const body = await c.req.json<{ user_id: string; kol_id: string; title: string; messages_json: string }>();

@@ -6,6 +6,7 @@ const T = (k) => window.RXI.t(k);
 
 let _id = 1;
 const uid = () => "m" + _id++;
+const chatId = () => "c_" + crypto.randomUUID();
 const LS = {
   get: (k, d) => { try { const v = localStorage.getItem("rx." + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
   set: (k, v) => { try { localStorage.setItem("rx." + k, JSON.stringify(v)); } catch (e) {} },
@@ -416,6 +417,31 @@ function App() {
   const models = localizeModels(lang);
   const curModel = models.find((m) => m.id === model) || models[0];
   const curKol = active ? (kols.find((k) => k.id === active.kol.id) || active.kol) : null;
+  const requestedChatId = () => {
+    const url = new URL(window.location);
+    const pathMatch = url.pathname.match(/^\/chat\/([^/]+)\/?$/);
+    return pathMatch ? decodeURIComponent(pathMatch[1]) : url.searchParams.get("chat");
+  };
+  const showChat = (chat) => {
+    setActive(chat); setView("chat"); setTab("ask"); setMtab("chat");
+    const saved = chat.messages || [];
+    setMessages(saved);
+    const lastK = saved.filter((m) => m.role === "k" && m.done);
+    if (!lastK.length) { setSources([]); setRailTab("persona"); return; }
+    const last = lastK[lastK.length - 1];
+    const cites = last._citations || (last.resp && last.resp.citations) || [];
+    if (!cites.length) { setSources([]); setRailTab("persona"); return; }
+    setSources(cites);
+    setRailTab("sources");
+    RX.hydrateCitations(chat.kol.id, cites, chat.kol.handle).then((hydrated) => {
+      setSources(hydrated);
+      setMessages((msgs) => msgs.map((m) => m.id === last.id ? {
+        ...m,
+        _citations: hydrated,
+        resp: { ...m.resp, citations: hydrated },
+      } : m));
+    });
+  };
 
   uE(() => { document.documentElement.setAttribute("data-theme", theme); LS.set("theme", theme); }, [theme]);
   uE(() => { LS.set("model", model); }, [model]);
@@ -424,10 +450,12 @@ function App() {
   uE(() => {
     if (active) {
       const url = new URL(window.location);
-      url.searchParams.set("chat", active.id);
+      url.pathname = "/chat/" + encodeURIComponent(active.id);
+      url.searchParams.delete("chat");
       history.replaceState(null, "", url);
     } else {
       const url = new URL(window.location);
+      if (url.pathname.startsWith("/chat/")) url.pathname = "/";
       url.searchParams.delete("chat");
       history.replaceState(null, "", url);
     }
@@ -460,8 +488,8 @@ function App() {
       setChats((prev) => {
         const filtered = prev.filter((c) => validIds.has(c.kol.id) && !isEmptyChat(c));
         filtered.forEach((chat) => RX.saveChat(chat, userId));
-        const chatParam = new URL(window.location).searchParams.get("chat");
-        if (chatParam) { const match = filtered.find((c) => c.id === chatParam); if (match) { setActive(match); setView("chat"); setMtab("chat"); setMessages(match.messages || []); } }
+        const chatParam = requestedChatId();
+        if (chatParam) { const match = filtered.find((c) => c.id === chatParam); if (match) showChat(match); }
         return filtered;
       });
     });
@@ -478,8 +506,8 @@ function App() {
         const newCloud = cloudChats.filter((c) => !isEmptyChat(c) && !localIds.has(c.id) && !localKeys.has(c.kol.id + "::" + c.title) && validIds.has(c.kol.id));
         if (newCloud.length) {
           const merged = [...newCloud, ...cur];
-          const chatParam = new URL(window.location).searchParams.get("chat");
-          if (chatParam) { const match = merged.find((c) => c.id === chatParam); if (match) { setActive(match); setView("chat"); setMtab("chat"); setMessages(match.messages || []); } }
+          const chatParam = requestedChatId();
+          if (chatParam) { const match = merged.find((c) => c.id === chatParam); if (match) showChat(match); }
           return merged;
         }
         return cur;
@@ -512,29 +540,19 @@ function App() {
     const existingEmpty = chats.find((c) => c.kol.id === kol.id && isEmptyChat(c));
     if (existingEmpty) { openChatView(existingEmpty); return; }
     if (active && active.kol.id === kol.id && isEmptyChat(active)) { openChatView(active); return; }
-    openChatView({ id: uid(), kol, title: defaultChatTitle(kol, lang), messages: [], ts: Date.now() });
+    openChatView({ id: chatId(), kol, title: defaultChatTitle(kol, lang), messages: [], ts: Date.now() });
   };
   const openKol = (kol, firstQuestion) => {
     if (!loggedIn) { promptLogin(); return; }
     if (!firstQuestion) { switchKol(kol); return; }
-    const chat = { id: uid(), kol, title: firstQuestion.slice(0, 22), messages: [], ts: Date.now() };
+    const chat = { id: chatId(), kol, title: firstQuestion.slice(0, 22), messages: [], ts: Date.now() };
     setChats((c) => [chat, ...c]);
     setActive(chat); setView("chat"); setTab("ask"); setMtab("chat");
     setMessages([]); setSources([]); setHighlight(null); setRailTab("persona");
     setTimeout(() => ask(kol, firstQuestion), 60);
   };
   const openExisting = (chat) => {
-    setActive(chat); setView("chat"); setTab("ask"); setMtab("chat");
-    const saved = chat.messages || [];
-    setMessages(saved);
-    const lastK = saved.filter((m) => m.role === "k" && m.done);
-    if (lastK.length) {
-      const last = lastK[lastK.length - 1];
-      const cites = last._citations || (last.resp && last.resp.citations) || [];
-      console.log("[Desk] openExisting: citations found =", cites.length, "_citations =", !!(last._citations), "resp.citations =", !!(last.resp && last.resp.citations));
-      if (cites.length) { setSources(cites); setRailTab("sources"); }
-      else { setSources([]); setRailTab("persona"); }
-    } else { setSources([]); setRailTab("persona"); }
+    showChat(chat);
   };
 
   const ask = (kol, question) => {
@@ -554,6 +572,7 @@ function App() {
         onMeta: (meta) => {
           const cites = (meta.citations || []).map((c, i) => ({
             ref: c.ref || ("T" + (i + 1)),
+            tweet_id: c.tweet_id || c.id || "",
             date: c.date || "",
             likes: c.likes || 0,
             views: c.views || "",

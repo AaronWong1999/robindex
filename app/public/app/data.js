@@ -266,5 +266,21 @@
     } catch {}
   }
 
-  window.RX = { MODELS, kols, phases, init, isBackendReady, streamChat, fetchSuggestions, strategyFor, loadHistory, saveChat, deleteChat, get config() { return _config; } };
+  async function hydrateCitations(kolId, citations, handle) {
+    if (!citations || !citations.length) return citations || [];
+    try {
+      const r = await fetch("/api/citations/hydrate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kol_id: kolId, handle: handle || kolId, citations }),
+      });
+      if (!r.ok) return citations;
+      const j = await r.json();
+      return j.citations || citations;
+    } catch {
+      return citations;
+    }
+  }
+
+  window.RX = { MODELS, kols, phases, init, isBackendReady, streamChat, fetchSuggestions, strategyFor, loadHistory, saveChat, deleteChat, hydrateCitations, get config() { return _config; } };
 })();
