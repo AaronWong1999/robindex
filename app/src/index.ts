@@ -1350,25 +1350,6 @@ app.get("/kol/:persona", (c) => serveDesk(c));
 
 app.get("/kol/:persona/:section", (c) => serveDesk(c));
 
-// Human-facing top-nav pages. Each maps to a static HTML file under public/.
-const PAGE_ROUTES: Record<string, string> = {
-  "/pricing": "/pricing.html",
-  "/stock": "/stock.html",
-  "/macro": "/macro.html",
-  "/briefings": "/briefings.html",
-  "/today": "/briefings.html",
-  "/morning": "/briefings.html",
-  "/for-you": "/for-you.html",
-  "/watchlist": "/for-you.html",
-};
-for (const [route, file] of Object.entries(PAGE_ROUTES)) {
-  app.get(route, (c) => {
-    const url = new URL(c.req.url);
-    url.pathname = file;
-    return c.env.ASSETS.fetch(new Request(url, c.req.raw));
-  });
-}
-
 // ---- Diagnostic: test pro model connectivity ----
 app.get("/api/admin/model-test", async (c) => {
   if (!adminOk(c)) return c.json({ error: "unauthorized" }, 401);

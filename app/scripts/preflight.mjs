@@ -102,7 +102,7 @@ if (token) {
 
 const home = await httpsGet("https://robindex.ai/");
 checks.home = {
-  ok: home.ok && home.status === 200 && (home.body || "").includes("选择一个研究视角"),
+  ok: home.ok && home.status === 200 && (home.body || "").includes("金融 KOL 的 AI 分身"),
   status: home.status,
   error: home.error || null,
   title: (home.body || "").match(/<title>(.*?)<\/title>/i)?.[1] || null,
@@ -118,17 +118,17 @@ checks.apiKols = {
   status: kols.status,
   error: kols.error || null,
   contentType: kols.headers?.["content-type"] || null,
-  returnedHtml: typeof kols.body === "string" && (kols.body || "").includes("选择一个研究视角"),
+  returnedHtml: typeof kols.body === "string" && (kols.body || "").includes("<!DOCTYPE html>"),
   kolCount: kolsJson?.kols?.length || 0,
 };
 
-const kolRoom = await httpsGet("https://robindex.ai/kol/qinbafrank/");
-checks.kolRoom = {
-  ok: kolRoom.ok && kolRoom.status === 200 && (kolRoom.body || "").includes("/kol.js"),
-  status: kolRoom.status,
-  error: kolRoom.error || null,
-  title: (kolRoom.body || "").match(/<title>(.*?)<\/title>/i)?.[1] || null,
-  hasKolRouter: (kolRoom.body || "").includes("/kol.js"),
+const appDesk = await httpsGet("https://app.robindex.ai/");
+checks.appDesk = {
+  ok: appDesk.ok && appDesk.status === 200 && (appDesk.body || "").includes("Robindex Desk"),
+  status: appDesk.status,
+  error: appDesk.error || null,
+  title: (appDesk.body || "").match(/<title>(.*?)<\/title>/i)?.[1] || null,
+  hasDeskShell: (appDesk.body || "").includes("/app/app.jsx"),
 };
 
 const quote = await httpsGet("https://robindex.ai/api/quote?q=SOXL");

@@ -1,4 +1,6 @@
 .env
+.qoder/
+.claude/
 .DS_Store
 **/.DS_Store
 # Live secrets — do NOT commit. Rotate the keys that were exposed in the initial commit.
