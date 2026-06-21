@@ -83,19 +83,26 @@
 
   function kols(lang) { return _kols.map((k) => localizeKol(k, lang)); }
   function phases(lang) { return PHASES.map((p) => ({ key: p.key, label: pick(p.label, lang), verb: pick(p.verb, lang) })); }
+  function fetchWithTimeout(url, ms = 8000) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), ms);
+    return fetch(url, { signal: ctrl.signal }).finally(() => clearTimeout(timer));
+  }
 
   async function init() {
     if (_backendReady) return;
     try {
-      const [r, rConfig] = await Promise.all([
-        fetch("/api/kols"),
-        fetch("/api/config").catch(() => null)
+      const [kolsResult, configResult] = await Promise.allSettled([
+        fetchWithTimeout("/api/kols"),
+        fetchWithTimeout("/api/config").catch(() => null)
       ]);
+      const r = kolsResult.status === "fulfilled" ? kolsResult.value : null;
+      const rConfig = configResult.status === "fulfilled" ? configResult.value : null;
       if (rConfig && rConfig.ok) {
         const configJson = await rConfig.json();
         _config = { ..._config, ...configJson };
       }
-      if (!r.ok) throw new Error("kols fetch failed");
+      if (!r || !r.ok) throw new Error("kols fetch failed");
       const j = await r.json();
       const backendKols = j.kols || [];
       _kols = backendKols.map((bk) => {
@@ -160,7 +167,7 @@
             const parsed = JSON.parse(data);
             if (type === "progress") {
               const phaseIdx = BACKEND_PHASE_MAP[parsed.phase] ?? 0;
-              onPhase(phaseIdx, parsed.text);
+              onPhase(phaseIdx, parsed.text, parsed.phase);
             } else if (type === "meta") {
               meta = parsed;
               onMeta(parsed);

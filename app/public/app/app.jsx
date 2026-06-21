@@ -112,6 +112,143 @@ function Home({ kols, target, setTarget, onAsk, models, model, setModel, effort,
             React.createElement("span", { className: "go" }, T("askBtn"), React.createElement(Icon, { name: "arrowRight", size: 14 })))))) ));
 }
 
+function processText(lang, kol, phase, fallback) {
+  const role = kol.role ? `：${kol.role}` : "";
+  const zh = {
+    plan: "正在理解问题，识别主题和可能相关的标的",
+    market: "正在并行核对行情数据和原文线索",
+    rag: "正在检索历史观点",
+    tools: "正在调用工具补齐实时数据",
+    thinking: "正在整理证据，生成回答",
+    write: "正在生成回答",
+    meta: "已经拿到原文依据和行情线索",
+  };
+  const en = {
+    plan: "I am reading the question and identifying the relevant theme",
+    market: "I am checking market data and source material in parallel",
+    rag: "I am searching my historical views",
+    tools: "I am using tools to fill in live data",
+    thinking: "I am organizing the evidence into my answer",
+    write: "I am generating my answer",
+    meta: "I have source evidence and market context ready",
+  };
+  if (phase === "style") return lang === "en" ? `I am aligning the answer with my voice${role}` : `正在对齐表达方式${role}`;
+  const fallbackText = lang === "en" ? fallback : scrubStatusText(fallback);
+  return (lang === "en" ? en : zh)[phase] || fallbackText || (lang === "en" ? "I am working through this question" : "正在处理这个问题");
+}
+
+function scrubStatusText(text) {
+  if (typeof text !== "string") return text;
+  return text
+    .replace(/我的/g, "")
+    .replace(/我正在/g, "正在")
+    .replace(/我已经/g, "已经")
+    .replace(/我已/g, "已")
+    .replace(/生成回答/g, "生成回答")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function toolProcessText(name, args, lang) {
+  const obj = args && typeof args === "object" ? args : {};
+  const symbol = obj.symbol || obj.symbols || obj.ticker || obj.code || "";
+  const suffix = Array.isArray(symbol) ? symbol.filter(Boolean).join(", ") : String(symbol || "").trim();
+  const tail = suffix ? (lang === "en" ? `: ${suffix}` : `：${suffix}`) : "";
+  const zh = {
+    get_quote: `正在确认实时价格、估值和成交状态${tail}`,
+    get_news: `正在检索最新新闻和事件${tail}`,
+    get_stock_profile: `正在补齐公司画像、估值和基本面${tail}`,
+    get_kline: `正在查看近期走势和关键位置${tail}`,
+    get_financials: `正在核对财务数据${tail}`,
+  };
+  const en = {
+    get_quote: `I am checking live price, valuation, and trading status${tail}`,
+    get_news: `I am scanning recent news and events${tail}`,
+    get_stock_profile: `I am filling in company profile, valuation, and fundamentals${tail}`,
+    get_kline: `I am checking recent price action${tail}`,
+    get_financials: `I am checking financial data${tail}`,
+  };
+  return (lang === "en" ? en : zh)[name] || (lang === "en" ? `I am using ${name || "a tool"}${tail}` : `正在使用 ${name || "工具"}${tail}`);
+}
+
+function upsertProcessStep(steps, next) {
+  const arr = Array.isArray(steps) ? [...steps] : [];
+  const idx = arr.findIndex((s) => s.id === next.id);
+  if (idx >= 0) arr[idx] = { ...arr[idx], ...next };
+  else arr.push(next);
+  return arr;
+}
+
+function historyProcessSteps(resp) {
+  if (Array.isArray(resp && resp.processSteps) && resp.processSteps.length) {
+    return resp.processSteps.map((s) => ({ ...s, text: scrubStatusText(s.text), state: "done" }));
+  }
+  const steps = [
+    { id: "history:plan", text: window.RXI.lang === "en" ? "I understood the question" : "已理解问题", kind: "plan", state: "done" },
+  ];
+  const cites = resp && Array.isArray(resp.citations) ? resp.citations : [];
+  if (cites.length) {
+    steps.push({
+      id: "history:meta",
+      text: window.RXI.lang === "en" ? `I used ${cites.length} source${cites.length === 1 ? "" : "s"} to ground the answer` : `已筛选 ${cites.length} 条可引用原文`,
+      kind: "meta",
+      state: "done",
+    });
+  } else {
+    steps.push({ id: "history:rag", text: window.RXI.lang === "en" ? "I searched my historical views" : "已检索历史观点", kind: "rag", state: "done" });
+  }
+  const toolCalls = Array.isArray(resp && resp.toolCalls) ? resp.toolCalls : [];
+  toolCalls.forEach((tc, i) => steps.push({
+    id: `history:tool:${i}:${tc.name || tc.tool || "tool"}`,
+    text: toolProcessText(tc.name || tc.tool || "tool", tc.args || {}, window.RXI.lang),
+    detail: tc.name || tc.tool || "tool",
+    kind: "tool",
+    state: "done",
+  }));
+  steps.push({ id: "history:write", text: window.RXI.lang === "en" ? "I generated my answer" : "已生成回答", kind: "write", state: "done" });
+  return steps;
+}
+
+function normalizeHistoryMsg(m, kolId) {
+  if (m.role === "u" && m.text != null) return m;
+  if (m.role === "user" || (m.role === "u" && m.content)) return { id: m.id || uid(), role: "u", text: m.content || m.text || "" };
+  if (m.role === "k" && m.resp) {
+    const resp = { ...m.resp };
+    return { ...m, done: m.done !== false, resp: { ...resp, processSteps: historyProcessSteps(resp), toolCalls: resp.toolCalls || [] } };
+  }
+  if (m.role === "assistant" || m.role === "k") {
+    const resp = {
+      phases: RX.phases(window.RXI.lang),
+      answerMd: m.content || (m.resp && m.resp.answerMd) || "",
+      conviction: null,
+      toolCalls: (m.resp && m.resp.toolCalls) || [],
+      citations: (m.resp && m.resp.citations) || [],
+    };
+    return {
+      id: m.id || uid(),
+      role: "k",
+      done: true,
+      kol: { id: kolId, display_name: kolId === "qinbafrank" ? "Qinbafrank" : "Serenity", handle: kolId },
+      resp: { ...resp, processSteps: historyProcessSteps(resp) },
+      streamText: "",
+      error: null,
+    };
+  }
+  return m;
+}
+
+function BootScreen({ label, detail }) {
+  return React.createElement("div", { className: "auth boot" },
+    React.createElement("div", { className: "auth-bg" }),
+    React.createElement("div", { className: "auth-card boot-card" },
+      React.createElement("div", { className: "auth-logo boot-logo" }, React.createElement(Icon, { name: "candlestick", size: 23, color: "var(--on-accent)" })),
+      React.createElement("div", { className: "boot-brand" }, "Robindex"),
+      React.createElement("div", { className: "boot-sub" }, detail || (window.RXI.lang === "en" ? "AI finance persona terminal" : "AI 金融分身 · 交易研究终端")),
+      React.createElement("div", { className: "thinking boot-status" },
+        React.createElement("span", null, label || (window.RXI.lang === "en" ? "Loading workspace" : "正在加载工作台")),
+        React.createElement("span", { className: "tdots" }, React.createElement("i"), React.createElement("i"), React.createElement("i")))));
+}
+
 /* ============================ Assistant message ============================ */
 function KMessage({ msg, model, onCite, onWriteCode }) {
   const r = msg.resp;
@@ -123,8 +260,8 @@ function KMessage({ msg, model, onCite, onWriteCode }) {
         React.createElement("b", null, msg.kol.display_name),
         React.createElement("span", { className: "via" },
           React.createElement("span", { className: "mp-badge", style: { background: model.color, width: 15, height: 15, fontSize: 7 } }, model.badge),
-          model.name, " \u00b7 ", T("via"))),
-      React.createElement(ToolGroup, { phases: r.phases, toolCalls: r.toolCalls || [], activePhase: msg.phase, done: msg.done }),
+          model.name)),
+      React.createElement(ToolGroup, { steps: r.processSteps || [], done: msg.done }),
       msg.done
         ? React.createElement(React.Fragment, null,
             React.createElement(AnswerBlocks, { md: r.answerMd, onCite }),
@@ -342,20 +479,10 @@ function App() {
   const [tab, setTab] = uS("ask");
   const [showSettings, setShowSettings] = uS(false);
   const [chats, setChats] = uS(() => {
-    const normalizeMsg = (m, kolId) => {
-      if (m.role === "u" && m.text != null) return m;
-      if (m.role === "k" && m.resp) return m;
-      if (m.role === "user" || (m.role === "u" && m.content)) return { id: m.id || "n", role: "u", text: m.content || m.text || "" };
-      if (m.role === "assistant" || m.role === "k") return { id: m.id || "n", role: "k", done: true,
-        kol: { id: kolId, display_name: kolId === "qinbafrank" ? "Qinbafrank" : "Serenity", handle: kolId },
-        resp: { phases: [{ key: "plan", label: "\u7406\u89e3", verb: "" }, { key: "rag", label: "\u68c0\u7d22", verb: "" }, { key: "rerank", label: "\u7b5b\u9009", verb: "" }, { key: "write", label: "\u751f\u6210", verb: "" }],
-          answerMd: m.content || (m.resp && m.resp.answerMd) || "", conviction: null, toolCalls: [] }, streamText: "", error: null };
-      return m;
-    };
     const saved = LS.get("chats", null);
     if (saved && Array.isArray(saved)) {
       return saved
-        .map((c) => ({ ...c, messages: (c.messages || []).map((m) => normalizeMsg(m, c.kol && c.kol.id)) }))
+        .map((c) => ({ ...c, messages: (c.messages || []).map((m) => normalizeHistoryMsg(m, c.kol && c.kol.id)) }))
         .filter((c) => c.messages && c.messages.length > 0);
     }
     try {
@@ -363,7 +490,7 @@ function App() {
       const validPersonas = ["qinbafrank", "aleabitoreddit"];
       return old.filter((c) => validPersonas.includes(c.persona)).map((c) => {
         const kolId = c.persona;
-        const msgs = (c.messages || []).map((m, i) => normalizeMsg({ ...m, id: "old_" + i }, kolId));
+        const msgs = (c.messages || []).map((m, i) => normalizeHistoryMsg({ ...m, id: "old_" + i }, kolId));
         return {
           id: c.id, kol: { id: kolId, display_name: kolId === "qinbafrank" ? "Qinbafrank" : "Serenity", handle: kolId,
             avatar_url: kolId === "qinbafrank" ? "https://unavatar.io/x/qinbafrank" : "https://pbs.twimg.com/profile_images/1996176688414367744/LXfA_lIx_400x400.jpg",
@@ -423,8 +550,9 @@ function App() {
     return pathMatch ? decodeURIComponent(pathMatch[1]) : url.searchParams.get("chat");
   };
   const showChat = (chat) => {
-    setActive(chat); setView("chat"); setTab("ask"); setMtab("chat");
-    const saved = chat.messages || [];
+    const saved = (chat.messages || []).map((m) => normalizeHistoryMsg(m, chat.kol && chat.kol.id));
+    const normalizedChat = { ...chat, messages: saved };
+    setActive(normalizedChat); setView("chat"); setTab("ask"); setMtab("chat");
     setMessages(saved);
     const lastK = saved.filter((m) => m.role === "k" && m.done);
     if (!lastK.length) { setSources([]); setRailTab("persona"); return; }
@@ -492,6 +620,9 @@ function App() {
         if (chatParam) { const match = filtered.find((c) => c.id === chatParam); if (match) showChat(match); }
         return filtered;
       });
+    }).catch((err) => {
+      console.error("[Desk] RX.init failed in App:", err);
+      setInitDone(true);
     });
   }, []);
 
@@ -501,9 +632,13 @@ function App() {
     RX.loadHistory(userId).then((cloudChats) => {
       if (!cloudChats.length) return;
       setChats((cur) => {
+        const normalizedCloud = cloudChats.map((c) => ({
+          ...c,
+          messages: (c.messages || []).map((m) => normalizeHistoryMsg(m, c.kol && c.kol.id)),
+        }));
         const localIds = new Set(cur.map((c) => c.id));
         const localKeys = new Set(cur.map((c) => c.kol.id + "::" + c.title));
-        const newCloud = cloudChats.filter((c) => !isEmptyChat(c) && !localIds.has(c.id) && !localKeys.has(c.kol.id + "::" + c.title) && validIds.has(c.kol.id));
+        const newCloud = normalizedCloud.filter((c) => !isEmptyChat(c) && !localIds.has(c.id) && !localKeys.has(c.kol.id + "::" + c.title) && validIds.has(c.kol.id));
         if (newCloud.length) {
           const merged = [...newCloud, ...cur];
           const chatParam = requestedChatId();
@@ -559,15 +694,27 @@ function App() {
     const userMsg = { id: uid(), role: "u", text: question };
     const lang_ = window.RXI.lang;
     const ph = RX.phases(lang_);
-    const kMsg = { id: uid(), role: "k", kol, resp: { phases: ph, toolCalls: [] }, phase: 0, done: false, streamText: "", error: null };
+    const kMsg = { id: uid(), role: "k", kol, resp: { phases: ph, toolCalls: [], processSteps: [] }, phase: 0, done: false, streamText: "", error: null };
     setMessages((m) => [...m, userMsg, kMsg]);
 
     const toolCalls = [];
 
     if (RX.isBackendReady()) {
       RX.streamChat(kol.id, question, model, {
-        onPhase: (idx) => {
-          setMessages((m) => m.map((x) => x.id === kMsg.id ? { ...x, phase: Math.min(idx + 1, ph.length) } : x));
+        onPhase: (idx, text, phaseKey) => {
+          const key = phaseKey || `phase-${idx}`;
+          setMessages((m) => m.map((x) => {
+            if (x.id !== kMsg.id) return x;
+            const current = (x.resp.processSteps || []).map((s) => s.state === "run" && s.id !== `phase:${key}` ? { ...s, state: "done" } : s);
+            const processSteps = upsertProcessStep(current, {
+              id: `phase:${key}`,
+              text: processText(lang_, kol, key, text),
+              detail: text || "",
+              kind: key,
+              state: "run",
+            });
+            return { ...x, phase: Math.min(idx + 1, ph.length), resp: { ...x.resp, processSteps } };
+          }));
         },
         onMeta: (meta) => {
           const cites = (meta.citations || []).map((c, i) => ({
@@ -584,22 +731,48 @@ function App() {
           setRailTab("sources");
           setHighlight(null);
           console.log("[Desk] onMeta: citations =", cites.length);
-          setMessages((m) => m.map((x) => x.id === kMsg.id ? { ...x, _citations: cites, resp: { ...x.resp, citations: cites } } : x));
+          setMessages((m) => m.map((x) => {
+            if (x.id !== kMsg.id) return x;
+            const chartText = meta.chart && meta.chart.symbol ? (lang_ === "en" ? `, with ${meta.chart.symbol} market context` : `，并确认 ${meta.chart.symbol} 行情`) : "";
+            const sourceText = lang_ === "en"
+              ? `I found ${cites.length} source${cites.length === 1 ? "" : "s"} to ground the answer${chartText}`
+              : `已筛选 ${cites.length} 条可引用原文${chartText}`;
+            const current = (x.resp.processSteps || []).map((s) => s.state === "run" ? { ...s, state: "done" } : s);
+            const processSteps = upsertProcessStep(current, { id: "phase:meta", text: sourceText, kind: "meta", state: "done" });
+            return { ...x, _citations: cites, resp: { ...x.resp, citations: cites, processSteps } };
+          }));
         },
         onToolCall: (tc) => {
-          toolCalls.push({ name: tc.name || "tool", args: typeof tc.args === "string" ? tc.args : JSON.stringify(tc.args || ""), result: {} });
-          setMessages((m) => m.map((x) => x.id === kMsg.id ? { ...x, resp: { ...x.resp, toolCalls: [...toolCalls] } } : x));
+          const displayArgs = typeof tc.args === "string" ? tc.args : JSON.stringify(tc.args || {});
+          toolCalls.push({ name: tc.name || "tool", args: displayArgs, result: {} });
+          setMessages((m) => m.map((x) => {
+            if (x.id !== kMsg.id) return x;
+            const processSteps = upsertProcessStep(x.resp.processSteps || [], {
+              id: `tool:${toolCalls.length}:${tc.name || "tool"}`,
+              text: toolProcessText(tc.name || "tool", tc.args, lang_),
+              detail: tc.name || "tool",
+              kind: "tool",
+              state: "done",
+            });
+            return { ...x, resp: { ...x.resp, toolCalls: [...toolCalls], processSteps } };
+          }));
         },
         onDelta: (fullText) => {
-          setMessages((m) => m.map((x) => x.id === kMsg.id ? { ...x, streamText: fullText } : x));
+          setMessages((m) => m.map((x) => {
+            if (x.id !== kMsg.id) return x;
+            const current = (x.resp.processSteps || []).map((s) => s.state === "run" ? { ...s, state: "done" } : s);
+            const processSteps = upsertProcessStep(current, { id: "phase:write", text: processText(lang_, kol, "write"), kind: "write", state: "run" });
+            return { ...x, streamText: fullText, resp: { ...x.resp, processSteps } };
+          }));
         },
         onDone: (fullText, meta) => {
           const conviction = 60 + Math.floor(Math.random() * 25);
           setMessages((m) => m.map((x) => {
             if (x.id !== kMsg.id) return x;
             const cites = x._citations || x.resp.citations || [];
+            const processSteps = (x.resp.processSteps || []).map((s) => ({ ...s, state: "done" }));
             return { ...x, done: true, phase: ph.length, streamText: "", _citations: cites,
-              resp: { ...x.resp, answerMd: fullText, conviction, toolCalls: toolCalls, citations: cites } };
+              resp: { ...x.resp, answerMd: fullText, conviction, toolCalls: toolCalls, citations: cites, processSteps } };
           }));
           RX.fetchSuggestions(kol.id, question, fullText).then((suggs) => {
             if (suggs.length) {
@@ -610,7 +783,11 @@ function App() {
           });
         },
         onError: (err) => {
-          setMessages((m) => m.map((x) => x.id === kMsg.id ? { ...x, done: true, error: err } : x));
+          setMessages((m) => m.map((x) => {
+            if (x.id !== kMsg.id) return x;
+            const processSteps = (x.resp.processSteps || []).map((s) => s.state === "run" ? { ...s, state: "error" } : s);
+            return { ...x, done: true, error: err, resp: { ...x.resp, processSteps } };
+          }));
         },
       });
     } else {
@@ -632,13 +809,9 @@ function App() {
   const goHome = () => { setView("home"); setActive(null); setMtab("home"); };
   const signOut = () => { privy.logout(); setShowSettings(false); goHome(); };
 
-  if (!privy.ready || !initDone) return React.createElement("div", { className: "auth" },
-    React.createElement("div", { className: "auth-bg" }),
-    React.createElement("div", { className: "auth-card", style: { textAlign: "center" } },
-      React.createElement("div", { className: "auth-logo" }, React.createElement(Icon, { name: "candlestick", size: 22, color: "var(--on-accent)" })),
-      React.createElement("div", { className: "thinking", style: { justifyContent: "center", marginTop: 16 } },
-        React.createElement("span", null, "Loading"),
-        React.createElement("span", { className: "tdots" }, React.createElement("i"), React.createElement("i"), React.createElement("i")))));
+  if (!privy.ready || !initDone) return React.createElement(BootScreen, {
+    label: window.RXI.lang === "en" ? "Preparing secure session" : "正在准备安全会话",
+  });
 
   // Unauthenticated gate — branded welcome screen with a single Sign In button
   if (!loggedIn) return React.createElement(window.LoginGate, { privy, theme, setTheme, lang, setLang });
@@ -717,17 +890,17 @@ function AppWrapper() {
   React.useEffect(() => {
     RX.init().then(() => {
       setPrivyAppId(RX.config.privyAppId);
+    }).catch((err) => {
+      console.error("[Desk] RX.init failed in AppWrapper:", err);
+      setPrivyAppId(RX.config.privyAppId || "client-clxxyzdummyappidforlocaldev");
     });
   }, []);
 
   if (!privyAppId) {
-    return React.createElement("div", { className: "auth" },
-      React.createElement("div", { className: "auth-bg" }),
-      React.createElement("div", { className: "auth-card", style: { textAlign: "center" } },
-        React.createElement("div", { className: "auth-logo" }, React.createElement(window.RXC.Icon, { name: "candlestick", size: 22, color: "var(--on-accent)" })),
-        React.createElement("div", { className: "thinking", style: { justifyContent: "center", marginTop: 16 } },
-          React.createElement("span", null, "Loading Config"),
-          React.createElement("span", { className: "tdots" }, React.createElement("i"), React.createElement("i"), React.createElement("i")))));
+    return React.createElement(BootScreen, {
+      label: window.RXI.lang === "en" ? "Loading Robindex" : "正在加载 Robindex",
+      detail: window.RXI.lang === "en" ? "Connecting persona data and login service" : "正在连接分身数据与登录服务",
+    });
   }
 
   const { PrivyProvider } = window.PrivySDK;

@@ -2,9 +2,9 @@ import { Hono } from "hono";
 import type { Env, KolRow } from "./env";
 import { getQuotesCached, getKlineCached, resolveSymbolCached } from "./finance";
 import { retrieve } from "./rag";
-import { planQuery } from "./query-plan";
+import { planQuery, type QueryPlan } from "./query-plan";
 import { indexTweets, indexRawTweets } from "./tagger";
-import { gatherMarketData, buildMessages, maybeUpdateSummary, resolveToolPhase } from "./chat";
+import { gatherMarketData, buildMessages, maybeUpdateSummary, resolveToolPhase, type MarketData } from "./chat";
 import { getStockNews, getMarketNews } from "./marketdata";
 import { runDailyIngest, runWeeklyPersonaRefresh } from "./ingest";
 import { generatePersonaPack, evolvePersona, diagnosePersonaGeneration, logPersonaExperiment } from "./persona-gen";
@@ -22,6 +22,39 @@ import {
 const app = new Hono<{ Bindings: Env }>();
 
 const APP_HOST = "app.robindex.ai";
+
+const NEWS_OR_EVENT_INTENT = /(news|headline|happening|新闻|消息|资讯|事件|最近|发生|利好|利空|政策|财报)/i;
+const PROFILE_INTENT = /(估值|财务|基本面|pe|pb|peg|roe|margin|revenue|profit|earnings|valuation|fundamental|financial)/i;
+const INTRADAY_OR_TECH_INTENT = /(盘中|分钟|分时|日内|技术位|支撑|压力|k线|k-line|intraday|minute|technical|support|resistance)/i;
+const CURRENT_MARKET_INTENT = /(现在|今天|今日|当前|能不能买|可以买|该不该买|要不要买|买入|卖出|加仓|减仓|仓位|now|today|buy|sell|position)/i;
+
+export function shouldRunToolPhase(plan: QueryPlan, market: MarketData, message: string, plannedInstruments: string[]): boolean {
+  if (!plan.needs_tools) return false;
+
+  const hasPlannedInstrument = plannedInstruments.some(Boolean) || plan.instruments.length > 0;
+  const hasQuote = market.quotes.length > 0 && !!market.primary;
+  const hasDailyKline = !!market.klineText.trim();
+  const hasProfile = !!market.extraContext.trim();
+  const asksNews = NEWS_OR_EVENT_INTENT.test(message);
+  const asksProfile = PROFILE_INTENT.test(message);
+  const asksIntradayOrTech = INTRADAY_OR_TECH_INTENT.test(message);
+  const asksCurrentMarket = CURRENT_MARKET_INTENT.test(message);
+
+  if (hasPlannedInstrument && !hasQuote) return true;
+  if (asksNews && market.news.length === 0) return true;
+  if (asksProfile && !hasProfile) return true;
+  if (asksIntradayOrTech && !hasDailyKline) return true;
+  if (!market.primary && asksCurrentMarket) return true;
+
+  const prefetchCoversDeepStockQuestion =
+    hasQuote &&
+    hasDailyKline &&
+    hasProfile &&
+    (!asksNews || market.news.length > 0);
+  if (prefetchCoversDeepStockQuestion) return false;
+
+  return !market.primary;
+}
 
 function requestHost(req: Request): string {
   return new URL(req.url).hostname.toLowerCase();
@@ -450,12 +483,12 @@ app.post("/api/chat", async (c) => {
           chart: market.primary ? { code: market.primary.code, symbol: market.primary.symbol, market: market.primary.market } : null,
         });
 
-        // Step 4: Tool phase — ONLY when the planner flagged needs_tools (route=deep). The quick route
-        // (viewpoint/framework/verify questions) is answered from the corpus + the pre-fetched quote/kline
-        // already injected into LIVE MARKET DATA, so we skip the tool LLM rounds entirely (saves ~35s).
+        // Step 4: Tool phase — run the LLM tool chooser only when the planner needs live data AND the
+        // deterministic prefetch did not already cover the requested quote/news/profile/kline context.
+        // The common stock case is answered from SOURCE TWEETS + LIVE MARKET DATA with no extra tool LLM.
         let toolMsgs: any[] = messages;
         let toolCalls: { tool: string; args: Record<string, any>; result_summary: string }[] = [];
-        if (plan.needs_tools) {
+        if (shouldRunToolPhase(plan, market, body.message, plannedInstruments)) {
           send("progress", { phase: "tools", text: "正在调用工具获取深度数据…" });
           const toolRounds = plan.route === "quick" ? 1 : market.primary ? 1 : 2;
           const toolPhase = await resolveToolPhase(c.env, model, messages, (evt) => {
@@ -594,7 +627,8 @@ app.get("/api/chat/history/:id", async (c) => {
 });
 
 app.post("/api/citations/hydrate", async (c) => {
-  const body = await c.req.json<{ kol_id?: string; handle?: string; citations?: any[] }>().catch(() => ({}));
+  const body: { kol_id?: string; handle?: string; citations?: any[] } =
+    await c.req.json<{ kol_id?: string; handle?: string; citations?: any[] }>().catch(() => ({}));
   const kolId = body.kol_id || "";
   const handle = body.handle || kolId;
   const citations = Array.isArray(body.citations) ? body.citations : [];

@@ -203,10 +203,11 @@ a{color:inherit;text-decoration:none;}
 .tool-line{display:flex;align-items:center;gap:9px;font-family:var(--mono);font-size:12px;}
 .tool-line .st{width:15px;height:15px;flex:none;display:flex;align-items:center;justify-content:center;}
 .st-wait{width:9px;height:9px;border-radius:50%;border:1.5px solid var(--ghost);}
-.tool-call{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.tool-call .fn{color:var(--accent);}
+.tool-call{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+.tool-call .fn{color:var(--text);}
 .tool-call .arg{color:var(--blue);}
-.tool-ms{margin-left:auto;font-size:10px;color:var(--faint);flex:none;}
+.tool-ms{margin-left:auto;font-size:10px;color:var(--faint);flex:none;max-width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tool[data-state="error"] .tool-call .fn{color:var(--down);}
 .tool-res{margin:8px 0 1px 24px;display:flex;flex-wrap:wrap;gap:6px;}
 .kv{font-family:var(--mono);font-size:11px;background:var(--panel-2);border:1px solid var(--border-soft);border-radius:5px;padding:3px 8px;display:flex;gap:6px;}
 .kv .k{color:var(--faint);}
@@ -452,6 +453,12 @@ a{color:inherit;text-decoration:none;}
 .auth-card{position:relative;z-index:1;width:100%;max-width:404px;background:var(--panel);border:1px solid var(--border);border-radius:var(--r-xl);box-shadow:var(--sh-lg);padding:34px 30px 22px;display:flex;flex-direction:column;}
 .auth-logo{width:52px;height:52px;border-radius:15px;background:linear-gradient(135deg,var(--accent),var(--accent-dim));display:flex;align-items:center;justify-content:center;margin:0 auto 18px;box-shadow:0 8px 24px var(--accent-ghost);}
 [data-theme="codex"] .auth-logo{background:var(--accent);}
+.boot{background:var(--bg);}
+.boot-card{max-width:390px;min-height:242px;align-items:center;justify-content:center;text-align:center;padding:34px 28px 28px;}
+.boot-logo{width:58px;height:58px;border-radius:17px;margin-bottom:18px;}
+.boot-brand{font-size:24px;font-weight:650;letter-spacing:0;color:var(--text);line-height:1.1;}
+.boot-sub{font-size:13px;color:var(--dim);line-height:1.55;margin-top:8px;max-width:280px;}
+.boot-status{justify-content:center;margin-top:24px;color:var(--dim);padding:0;}
 .auth-h{font-size:22px;font-weight:600;text-align:center;margin:0 0 6px;letter-spacing:-.015em;}
 .auth-sub{font-size:13px;color:var(--dim);text-align:center;margin:0 0 24px;line-height:1.5;}
 .auth-field{display:flex;align-items:center;gap:9px;padding:0 13px;height:46px;border:1px solid var(--border);border-radius:var(--r);background:var(--bg-2);margin-bottom:11px;transition:.14s;}

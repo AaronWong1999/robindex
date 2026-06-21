@@ -352,6 +352,27 @@ async function llmRerank(
   }
 }
 
+export function shouldSkipLlmRerank(
+  pool: { r: any; score: number }[],
+  exactRouteIds: Set<string> = new Set()
+): boolean {
+  if (pool.length < 6) return true;
+
+  const top1 = pool[0]?.score || 0;
+  const top2 = pool[1]?.score || 0;
+  if (top2 > 0 && top1 >= top2 * 1.8 && top1 - top2 >= 8) return true;
+
+  if (pool.length >= 4 && exactRouteIds.size) {
+    const top3 = pool.slice(0, 3);
+    const next = pool[3]?.score || 0;
+    const allExact = top3.every((x) => exactRouteIds.has(String(x.r.id)));
+    const stableLead = top3[2].score >= next + 4 && top3[0].score - top3[2].score <= 10;
+    if (allExact && stableLead) return true;
+  }
+
+  return false;
+}
+
 // ---------------- Public retrieval ----------------
 
 // Plan-driven retrieval: FTS5 multi-route candidate generation → signal blend → LLM rerank.
@@ -378,6 +399,7 @@ export async function retrieve(
 
   // Step 2: multi-route FTS5. If the FTS table isn't provisioned, fall back to legacy retrieval.
   const ftsScores = new Map<string, number>();
+  let exactRouteIds = new Set<string>();
   const mergeRoute = (m: Map<string, number>) => {
     for (const [id, s] of m) ftsScores.set(id, Math.max(ftsScores.get(id) || 0, s));
   };
@@ -392,6 +414,7 @@ export async function retrieve(
         ftsRoute(env, scope, p.related_entities.map((r) => r.name), W_RELATED, 14),
         ftsRoute(env, scope, allTerms, W_DEFAULT, 30),
       ]);
+      exactRouteIds = new Set(routes[0].keys());
       for (const m of routes) mergeRoute(m);
     } else {
       // Default query-side-only: match ONLY the original-text column with the planner's bilingual terms.
@@ -402,6 +425,7 @@ export async function retrieve(
         concepts2.length ? ftsRoute(env, scope, concepts2, TEXT_ONLY, 30, "{text}") : Promise.resolve(new Map<string, number>()),
         ftsRoute(env, scope, [...p.related_entities.map((r) => r.name), ...p.required_stances], TEXT_ONLY, 20, "{text}"),
       ]);
+      exactRouteIds = new Set(routes[0].keys());
       for (const m of routes) mergeRoute(m);
     }
   } catch (e) {
@@ -481,15 +505,17 @@ export async function retrieve(
   const KEEP = isQuick ? 14 : 18;
   const RERANK_SNIPPET = isQuick ? 110 : 140;
   const pool = scored.slice(0, POOL);
-  const order = await llmRerank(
-    env,
-    rerankModel || env.MODEL_FLASH,
-    query,
-    p,
-    pool.map((x) => ({ id: String(x.r.id), date: (x.r.created_at_iso || "").slice(0, 10), text: rowTextWithQuote(x.r) })),
-    KEEP,
-    RERANK_SNIPPET
-  );
+  const order = shouldSkipLlmRerank(pool, exactRouteIds)
+    ? []
+    : await llmRerank(
+        env,
+        rerankModel || env.MODEL_FLASH,
+        query,
+        p,
+        pool.map((x) => ({ id: String(x.r.id), date: (x.r.created_at_iso || "").slice(0, 10), text: rowTextWithQuote(x.r) })),
+        KEEP,
+        RERANK_SNIPPET
+      );
   if (order.length) {
     const rank = new Map(order.map((id, i) => [id, i]));
     const inOrder = scored

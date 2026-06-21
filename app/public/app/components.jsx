@@ -144,33 +144,33 @@ function ThemeMenu({ value, onChange }) {
 }
 
 /* ----------------------------------------------------------------------------
-   Pipeline / tool run group — mirrors the live SSE phase + tool stream
+   Dynamic analysis process — mirrors live SSE progress without exposing raw CoT
 ---------------------------------------------------------------------------- */
-function ToolGroup({ phases, toolCalls, activePhase, done }) {
-  const phaseDoneCount = done ? phases.length : activePhase;
+function ToolGroup({ steps, done }) {
+  if (done && (!Array.isArray(steps) || !steps.length)) return null;
+  const items = Array.isArray(steps) && steps.length ? steps : [{
+    id: "boot",
+    text: EN() ? "I am reading the question" : "正在理解问题",
+    state: "run",
+  }];
+  const doneCount = items.filter((s) => s.state === "done").length;
   return React.createElement("div", { className: "toolgrp" },
     React.createElement("div", { className: "toolgrp-head" },
       React.createElement(Icon, { name: done ? "check" : "cpu", size: 14, color: "var(--accent)", style: { flex: "none" } }),
-      React.createElement("b", null, done ? Tc("retrievalDone") : Tc("toolRun")),
-      React.createElement("span", { className: "count" }, `${phaseDoneCount}/${phases.length} ${Tc("phasesUnit")}`)),
-    phases.map((p, i) => {
-      const state = done || i < activePhase ? "done" : i === activePhase ? "run" : "wait";
-      const tc = toolCalls[i];
-      return React.createElement("div", { className: "tool", key: p.key, "data-state": state },
+      React.createElement("b", null, EN() ? "Analysis process" : "分析过程"),
+      React.createElement("span", { className: "count" }, done ? (EN() ? "done" : "已完成") : `${doneCount}/${items.length}`)),
+    items.map((p) => {
+      const state = done ? "done" : (p.state || "done");
+      return React.createElement("div", { className: "tool", key: p.id, "data-state": state },
         React.createElement("div", { className: "tool-line" },
           React.createElement("span", { className: "st" },
             state === "run" ? React.createElement("span", { className: "spin" })
               : state === "done" ? React.createElement(Icon, { name: "check", size: 14, color: "var(--accent)" })
+              : state === "error" ? React.createElement(Icon, { name: "x", size: 13, color: "var(--down)" })
               : React.createElement("span", { className: "st-wait" })),
           React.createElement("span", { className: "tool-call" },
-            React.createElement("span", { className: "fn" }, tc ? tc.name : p.key),
-            tc ? React.createElement("span", { className: "arg" }, `(${tc.args})`) : null),
-          React.createElement("span", { className: "tool-ms" }, p.label)),
-        state === "done" && tc && React.createElement("div", { className: "tool-res" },
-          Object.entries(tc.result).map(([k, v]) =>
-            React.createElement("span", { className: "kv", key: k },
-              React.createElement("span", { className: "k" }, k),
-              React.createElement("span", { className: "v" }, String(v))))));
+            React.createElement("span", { className: "fn" }, p.text)),
+          p.detail ? React.createElement("span", { className: "tool-ms" }, p.detail) : null));
     }));
 }
 

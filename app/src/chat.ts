@@ -344,7 +344,7 @@ export async function resolveToolPhase(
   env: Env,
   model: string,
   messages: { role: string; content: string }[],
-  onEvent?: (evt: { type: "progress" | "tool_call"; text?: string; name?: string; args?: string }) => void,
+  onEvent?: (evt: { type: "progress" | "tool_call"; text?: string; name?: string; args?: any }) => void,
   maxRounds = 2
 ): Promise<{ messages: any[]; toolCalls: ToolCallRecord[] }> {
   let msgs: any[] = [...messages];
@@ -374,7 +374,7 @@ export async function resolveToolPhase(
         onEvent?.({
           type: "tool_call",
           name: tc.function?.name || "unknown",
-          args: Object.keys(args).join(", "),
+          args,
         });
         const name = tc.function?.name || "";
         const out = await executeTool(env, name, args);
