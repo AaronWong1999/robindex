@@ -258,7 +258,8 @@ function SourceCard({ kol, tw, active }) {
       className: "src-toggle",
       onClick: () => setExpanded((v) => !v) },
       expanded ? (EN() ? "Collapse" : "收起") : (EN() ? "Expand" : "展开原文")),
-    quoted && React.createElement("div", { className: "src-quote" },
+    quoted && React.createElement("a", {
+      className: "src-quote", href: quoted.url || tw.url, target: "_blank", rel: "noreferrer" },
       React.createElement("div", { className: "src-quote-top" },
         quoted.handle
           ? React.createElement("img", {
