@@ -93,20 +93,36 @@ export async function createBillingCheckout(
   return { id: json.id, url: json.url };
 }
 
-/** Verify an Airwallex webhook: HMAC-SHA256 over (x-timestamp + raw body) == x-signature (hex). */
+async function hmacHex(secret: string, msg: string): Promise<string> {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(msg));
+  return [...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+function timingSafeEq(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+/** Verify an Airwallex webhook: HMAC-SHA256 over (x-timestamp + raw body) == x-signature (hex).
+ * The signing key is the webhook secret; we accept it both as displayed and with the `whsec_` prefix
+ * stripped, since Airwallex's prefix convention varies. */
 export async function verifyAirwallexWebhook(env: Env, payload: string, timestamp: string, signature: string): Promise<any | null> {
   const secret = env.AIRWALLEX_WEBHOOK_SECRET;
   if (!secret || !timestamp || !signature) return null;
-  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${timestamp}${payload}`));
-  const expected = [...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, "0")).join("");
-  if (expected.length !== signature.length) return null;
-  let diff = 0;
-  for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ signature.charCodeAt(i);
-  if (diff !== 0) return null;
-  // 5-minute replay tolerance (timestamp is epoch ms or s depending on account; accept both).
+  const candidates = Array.from(new Set([secret, secret.replace(/^whsec_/, "")]));
+  const msg = `${timestamp}${payload}`;
+  let ok = false;
+  for (const cand of candidates) {
+    if (timingSafeEq(await hmacHex(cand, msg), signature)) { ok = true; break; }
+  }
+  if (!ok) return null;
+  // 5-minute replay tolerance (timestamp is epoch ms or s; tolerate non-numeric formats).
   const ts = Number(timestamp);
-  const ageMs = Math.abs(Date.now() - (ts > 1e12 ? ts : ts * 1000));
-  if (ageMs > 5 * 60 * 1000) return null;
+  if (!isNaN(ts)) {
+    const ageMs = Math.abs(Date.now() - (ts > 1e12 ? ts : ts * 1000));
+    if (ageMs > 5 * 60 * 1000) return null;
+  }
   try { return JSON.parse(payload); } catch { return null; }
 }
