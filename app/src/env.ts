@@ -13,6 +13,12 @@ export interface Env {
   APIFY_TOKEN?: string;        // Worker secret (for cron ingest)
   ADMIN_KEY?: string;          // Worker secret (for bulk import)
   PRIVY_APP_ID?: string;       // Worker secret / env variable for Privy
+  STRIPE_SECRET_KEY?: string;       // Worker secret — Stripe API key (sk_test_… / sk_live_…)
+  STRIPE_WEBHOOK_SECRET?: string;   // Worker secret — Stripe webhook signing secret (whsec_…)
+  AIRWALLEX_API_KEY?: string;       // Worker secret — Airwallex scoped API key
+  AIRWALLEX_CLIENT_ID?: string;     // Worker secret — Airwallex client id
+  AIRWALLEX_WEBHOOK_SECRET?: string;// Worker secret — Airwallex webhook signing secret
+  AIRWALLEX_ENV?: string;           // "prod" (default) | "demo"
   SELF?: Fetcher;              // service binding to this same Worker (reliable self-invocation; a Worker
                               // cannot fetch its own custom domain — CF blocks it — so distill-auto chains via this)
 }

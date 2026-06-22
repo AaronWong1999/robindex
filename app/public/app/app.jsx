@@ -740,6 +740,28 @@ function App() {
     }
   }, [loggedIn]); // pid derived inside, re-run on login flip is sufficient
 
+  // Billing sync: hand the Privy access token to the store and load the server-authoritative balance.
+  // Also reconcile after a Stripe redirect (?billing=success) — the webhook has usually landed by then,
+  // and a short retry covers the race where it hasn't.
+  uE(() => {
+    if (!window.RXB) return;
+    if (loggedIn && privy.authenticated && typeof privy.getAccessToken === "function") {
+      window.RXB.setAuth(() => privy.getAccessToken(), user && user.email);
+      window.RXB.syncFromServer();
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("billing") === "success") {
+        let tries = 0;
+        const poll = setInterval(() => { tries++; window.RXB.syncFromServer(); if (tries >= 5) clearInterval(poll); }, 1500);
+        params.delete("billing");
+        const qs = params.toString();
+        window.history.replaceState({}, "", window.location.pathname + (qs ? "?" + qs : ""));
+        return () => clearInterval(poll);
+      }
+    } else {
+      window.RXB.setAuth(null, null);
+    }
+  }, [loggedIn, privy.authenticated]);
+
   const setLang = (l) => { window.RXI.set(l); setLangState(l); document.documentElement.setAttribute("lang", l === "en" ? "en" : "zh"); };
 
   const openChatView = (chat) => {

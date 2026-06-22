@@ -18,6 +18,13 @@ import {
   getFinancialStatements, getKeyIndicators, getAnalystData,
   getMarketRanking, getSecFilings, getSinaKline,
 } from "./eastmoney-global";
+import { authFromRequest } from "./auth";
+import {
+  getState, grantTopup, activateSubscription, setSubscriptionStatus, eventSeen,
+  PACKS, planFor, subCents, AIRWALLEX_PRICES,
+} from "./billing";
+import { createCheckoutSession, verifyWebhook } from "./stripe";
+import { createPaymentIntent, createBillingCheckout, verifyAirwallexWebhook, awEnv } from "./airwallex";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -766,6 +773,228 @@ app.post("/api/suggest", async (c) => {
   } catch {
     return c.json({ suggestions: [] });
   }
+});
+
+// ---------------- Billing (real payments) ----------------
+// All money-touching reads/writes verify the Privy access token; we trust only the verified DID.
+
+// Current balance, subscriptions, ledger and consumption for the signed-in user.
+app.get("/api/billing/state", async (c) => {
+  const auth = await authFromRequest(c.env, c.req.header("authorization"));
+  if (!auth) return c.json({ error: "unauthorized" }, 401);
+  const email = c.req.query("email") || undefined;
+  return c.json(await getState(c.env, auth.userId, email));
+});
+
+// Start a checkout for a credit pack or a KOL subscription. Amounts are computed server-side from
+// the price tables — never from the request body. Provider is chosen by the client or auto-selected
+// from whatever is configured. Stripe returns a hosted URL; Airwallex returns intent details that the
+// browser hands to the Airwallex.js SDK to redirect.
+app.post("/api/billing/checkout", async (c) => {
+  const auth = await authFromRequest(c.env, c.req.header("authorization"));
+  if (!auth) return c.json({ error: "unauthorized" }, 401);
+
+  const body = await c.req.json<{ type: "pack" | "sub"; packId?: string; kolId?: string; plan?: string; email?: string; provider?: string }>().catch(() => ({} as any));
+  const hasStripe = !!c.env.STRIPE_SECRET_KEY;
+  const hasAirwallex = !!(c.env.AIRWALLEX_API_KEY && c.env.AIRWALLEX_CLIENT_ID);
+  // Auto-select: prefer the explicitly requested provider, else whatever is configured.
+  let provider = body.provider === "stripe" || body.provider === "airwallex" ? body.provider : (hasAirwallex ? "airwallex" : hasStripe ? "stripe" : "");
+  if (provider === "stripe" && !hasStripe) return c.json({ error: "stripe_not_configured" }, 503);
+  if (provider === "airwallex" && !hasAirwallex) return c.json({ error: "airwallex_not_configured" }, 503);
+  if (!provider) return c.json({ error: "no_payment_provider" }, 503);
+
+  const origin = new URL(c.req.url).origin;
+  const successUrl = `${origin}/?billing=success`;
+  const cancelUrl = `${origin}/?billing=cancel`;
+  const now = Date.now();
+
+  // Resolve the order (kind + ref + amount + display name) from the authoritative price tables.
+  let kind: "pack" | "sub", ref: string, amountCents: number, name: string, plan = "promo";
+  if (body.type === "pack") {
+    const pack = body.packId ? PACKS[body.packId] : null;
+    if (!pack) return c.json({ error: "unknown_pack" }, 400);
+    kind = "pack"; ref = pack.id; amountCents = pack.cents;
+    name = `Robindex · ${pack.label} (${pack.credits.toLocaleString()} credits)`;
+  } else if (body.type === "sub") {
+    const kolId = body.kolId || "";
+    if (!kolId) return c.json({ error: "unknown_kol" }, 400);
+    plan = body.plan === "default" ? "default" : "promo";
+    kind = "sub"; ref = kolId; amountCents = subCents(kolId, plan);
+    name = `Robindex · ${planFor(kolId).name} 订阅`;
+  } else {
+    return c.json({ error: "bad_type" }, 400);
+  }
+
+  // Airwallex subscriptions need a recurring Price set up in the account (see AIRWALLEX_PRICES).
+  if (provider === "airwallex" && kind === "sub" && !AIRWALLEX_PRICES[ref]) return c.json({ error: "no_airwallex_price_for_kol" }, 400);
+
+  const recordPayment = (id: string, prov: string) => c.env.DB.prepare(
+    `INSERT OR IGNORE INTO billing_payments (id,user_id,provider,kind,ref,amount_cents,currency,status,created_at) VALUES (?,?,?,?,?,?,?,?,?)`
+  ).bind(id, auth.userId, prov, kind, ref, amountCents, "usd", "created", now).run();
+
+  try {
+    if (provider === "stripe") {
+      const session = await createCheckoutSession(c.env, {
+        kind, userId: auth.userId, email: body.email, ref, name, amountCents,
+        recurring: kind === "sub", successUrl, cancelUrl, metadata: kind === "sub" ? { plan } : undefined,
+      });
+      await recordPayment(session.id, "stripe");
+      return c.json({ provider: "stripe", url: session.url, id: session.id });
+    }
+
+    // Airwallex subscription: Hosted Billing Checkout returns a URL (no SDK), like Stripe.
+    if (kind === "sub") {
+      const co = await createBillingCheckout(c.env, {
+        priceId: AIRWALLEX_PRICES[ref],
+        successUrl: `${origin}/?billing=success&provider=airwallex`, cancelUrl,
+        metadata: { user_id: auth.userId, kol_id: ref, kind: "sub", plan },
+      });
+      await recordPayment(co.id, "airwallex");
+      return c.json({ provider: "airwallex", url: co.url, id: co.id });
+    }
+
+    // Airwallex pack: create a Payment Intent we own; the browser SDK redirects to the hosted page.
+    const intent = await createPaymentIntent(c.env, {
+      amountCents, currency: "USD",
+      merchantOrderId: `${ref}:${now}`,
+      returnUrl: `${origin}/?billing=success&provider=airwallex`,
+      metadata: { userId: auth.userId, kind, ref },
+    });
+    await recordPayment(intent.id, "airwallex");
+    return c.json({ provider: "airwallex", intentId: intent.id, clientSecret: intent.clientSecret, currency: intent.currency, amount: intent.amount, env: awEnv(c.env) });
+  } catch (e) {
+    return c.json({ error: "checkout_failed", detail: String(e) }, 500);
+  }
+});
+
+// Server-authoritative spend: deduct points for a question the user just asked. The client mirrors
+// this for instant UI, but the balance shown comes from the server.
+app.post("/api/billing/consume", async (c) => {
+  const auth = await authFromRequest(c.env, c.req.header("authorization"));
+  if (!auth) return c.json({ error: "unauthorized" }, 401);
+  const b = await c.req.json<{ kolId?: string; model?: string; tokIn?: number; tokOut?: number; points?: number; free?: boolean; byok?: boolean; q?: string }>().catch(() => ({} as any));
+  const points = b.byok || b.free ? 0 : Math.max(0, Number(b.points) || 0);
+  const now = Date.now();
+  const stmts = [
+    c.env.DB.prepare(`INSERT INTO billing_consumption (id,user_id,kol_id,model,tok_in,tok_out,points,free,byok,q,ts) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+      .bind(crypto.randomUUID(), auth.userId, b.kolId || null, b.model || null, b.tokIn || 0, b.tokOut || 0, points, b.free ? 1 : 0, b.byok ? 1 : 0, b.q ? String(b.q).slice(0, 280) : null, now),
+  ];
+  if (b.free) stmts.push(c.env.DB.prepare(`UPDATE billing_accounts SET free_used=free_used+1, updated_at=? WHERE user_id=?`).bind(now, auth.userId));
+  else if (points > 0) stmts.push(c.env.DB.prepare(`UPDATE billing_accounts SET credits=MAX(0,credits-?), updated_at=? WHERE user_id=?`).bind(points, now, auth.userId));
+  await c.env.DB.batch(stmts);
+  return c.json(await getState(c.env, auth.userId));
+});
+
+// Toggle auto-renew (cancel/uncancel at period end). Best-effort Stripe sync, always updates locally.
+app.post("/api/billing/autorenew", async (c) => {
+  const auth = await authFromRequest(c.env, c.req.header("authorization"));
+  if (!auth) return c.json({ error: "unauthorized" }, 401);
+  const b = await c.req.json<{ kolId?: string; on?: boolean }>().catch(() => ({} as any));
+  if (!b.kolId) return c.json({ error: "kolId required" }, 400);
+  await c.env.DB.prepare(`UPDATE billing_subscriptions SET auto_renew=?, updated_at=? WHERE user_id=? AND kol_id=?`)
+    .bind(b.on ? 1 : 0, Date.now(), auth.userId, b.kolId).run();
+  return c.json(await getState(c.env, auth.userId));
+});
+
+// Stripe webhook — the ONLY place credits/subscriptions are granted. Signature-verified, idempotent.
+app.post("/api/stripe/webhook", async (c) => {
+  const payload = await c.req.text();
+  const sig = c.req.header("stripe-signature") || "";
+  const event = await verifyWebhook(c.env, payload, sig);
+  if (!event) return c.json({ error: "bad_signature" }, 400);
+  if (await eventSeen(c.env, "stripe", event.id)) return c.json({ received: true, dedup: true });
+
+  try {
+    if (event.type === "checkout.session.completed") {
+      const s = event.data.object;
+      const md = s.metadata || {};
+      if (s.payment_status === "paid" || s.mode === "subscription") {
+        if (md.kind === "pack") {
+          await grantTopup(c.env, md.userId, md.ref, s.id);
+        } else if (md.kind === "sub") {
+          await activateSubscription(c.env, md.userId, md.ref, md.plan || "promo", {
+            provider: "stripe", providerSubId: s.subscription || undefined, ref: s.id,
+          });
+        }
+        await c.env.DB.prepare(`UPDATE billing_payments SET status='paid' WHERE id=?`).bind(s.id).run();
+      }
+    } else if (event.type === "invoice.paid" || event.type === "invoice.payment_succeeded") {
+      const inv = event.data.object;
+      // Only renewals here — the first cycle is granted by checkout.session.completed.
+      if (inv.billing_reason === "subscription_cycle" && inv.subscription) {
+        const row = await c.env.DB.prepare(`SELECT user_id,kol_id,plan FROM billing_subscriptions WHERE provider_sub_id=?`).bind(inv.subscription).first<any>();
+        if (row) {
+          const periodEnd = inv.lines?.data?.[0]?.period?.end ? inv.lines.data[0].period.end * 1000 : undefined;
+          await activateSubscription(c.env, row.user_id, row.kol_id, row.plan, {
+            provider: "stripe", providerSubId: inv.subscription, periodEnd, ref: inv.id,
+          });
+        }
+      }
+    } else if (event.type === "customer.subscription.deleted") {
+      await setSubscriptionStatus(c.env, event.data.object.id, "canceled", false);
+    } else if (event.type === "customer.subscription.updated") {
+      const sub = event.data.object;
+      await setSubscriptionStatus(c.env, sub.id, sub.status, !sub.cancel_at_period_end);
+    }
+  } catch (e) {
+    return c.json({ error: "handler_failed", detail: String(e) }, 500);
+  }
+  return c.json({ received: true });
+});
+
+// Airwallex webhook — grants credits for one-time packs. Signature-verified, idempotent. We map the
+// succeeded Payment Intent id back to the billing_payments row we created at checkout (no metadata trust).
+app.post("/api/airwallex/webhook", async (c) => {
+  const payload = await c.req.text();
+  const ts = c.req.header("x-timestamp") || "";
+  const sig = c.req.header("x-signature") || "";
+  const event = await verifyAirwallexWebhook(c.env, payload, ts, sig);
+  if (!event) return c.json({ error: "bad_signature" }, 400);
+  const eventId = event.id || `${event.name}:${event.data?.object?.id}`;
+  if (await eventSeen(c.env, "airwallex", eventId)) return c.json({ received: true, dedup: true });
+
+  const evt = String(event.name || event.type || "");
+  const obj = event.data?.object || event.data || {};
+  const toMs = (v: any): number | undefined => {
+    if (v == null) return undefined;
+    if (typeof v === "number") return v > 1e12 ? v : v * 1000;
+    const t = Date.parse(String(v));
+    return isNaN(t) ? undefined : t;
+  };
+
+  try {
+    // One-time packs: map the succeeded Payment Intent id back to our row (no metadata trust).
+    if (evt === "payment_intent.succeeded") {
+      const row = await c.env.DB.prepare(`SELECT user_id,kind,ref,status FROM billing_payments WHERE id=?`).bind(obj.id).first<any>();
+      if (row && row.status !== "paid" && row.kind === "pack") {
+        await grantTopup(c.env, row.user_id, row.ref, obj.id);
+        await c.env.DB.prepare(`UPDATE billing_payments SET status='paid' WHERE id=?`).bind(obj.id).run();
+      }
+    }
+    // Subscriptions: a paid invoice both activates the first cycle and renews later ones.
+    else if (/invoice/i.test(evt) && /(paid|succeeded|payment_succeeded|payment_attempt\.succeeded)/i.test(evt)) {
+      const md = obj.metadata || obj.subscription?.metadata || {};
+      const subId = obj.subscription_id || obj.subscription?.id || (/(^|\.)subscription/i.test(evt) ? obj.id : undefined);
+      let userId = md.user_id, kolId = md.kol_id, plan = md.plan || "promo";
+      if ((!userId || !kolId) && subId) {
+        const row = await c.env.DB.prepare(`SELECT user_id,kol_id,plan FROM billing_subscriptions WHERE provider_sub_id=?`).bind(subId).first<any>();
+        if (row) { userId = userId || row.user_id; kolId = kolId || row.kol_id; plan = row.plan || plan; }
+      }
+      if (userId && kolId) {
+        const periodEnd = toMs(obj.period_end ?? obj.current_period_end ?? obj.next_billing_at ?? obj.subscription?.current_period_end);
+        await activateSubscription(c.env, userId, kolId, plan, {
+          provider: "airwallex", providerSubId: subId || undefined, periodEnd, ref: obj.id || eventId,
+        });
+      }
+    }
+    // Subscription cancelled/expired → stop access at period end.
+    else if (/subscription/i.test(evt) && /(cancel|delet|expir|ended)/i.test(evt)) {
+      if (obj.id) await setSubscriptionStatus(c.env, obj.id, "canceled", false);
+    }
+  } catch (e) {
+    return c.json({ error: "handler_failed", detail: String(e) }, 500);
+  }
+  return c.json({ received: true });
 });
 
 // ---------------- Admin bulk import (protected) ----------------

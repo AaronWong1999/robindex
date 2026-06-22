@@ -198,7 +198,13 @@
     return A.subs[kolId];
   }
   function renew(kolId) { return subscribe(kolId, sub(kolId) && sub(kolId).plan === "default" ? "default" : "promo"); }
-  function setAutoRenew(kolId, on) { if (A.subs[kolId]) { A.subs[kolId].autoRenew = !!on; commit(); } }
+  function setAutoRenew(kolId, on) {
+    if (A.subs[kolId]) { A.subs[kolId].autoRenew = !!on; commit(); }
+    if (serverReady()) {
+      authHeaders().then((h) => fetch("/api/billing/autorenew", { method: "POST", headers: h, body: JSON.stringify({ kolId, on: !!on }) })
+        .then((r) => r.ok && r.json()).then((st) => st && applyState(st)).catch(() => {}));
+    }
+  }
   function cancelSub(kolId) { if (A.subs[kolId]) { A.subs[kolId].autoRenew = false; commit(); } }
 
   function topup(packId) {
@@ -226,9 +232,98 @@
     return h > 0 ? `${h} 小时 ${m} 分` : `${m} 分`;
   }
 
+  // ---- Server sync (real money) ----
+  // When signed in, the browser store becomes a cache of the server's authoritative billing state.
+  // Purchases never grant credits locally — they go through Stripe Checkout and are granted by the
+  // server webhook. setAuth() is called by the app once Privy is ready.
+  let _tokenGetter = null;   // () => Promise<string>  (Privy access token)
+  let _email = null;
+  function setAuth(tokenGetter, email) { _tokenGetter = tokenGetter; _email = email || null; }
+  function serverReady() { return typeof _tokenGetter === "function"; }
+  async function authHeaders() {
+    const tok = _tokenGetter ? await _tokenGetter() : null;
+    return tok ? { Authorization: "Bearer " + tok, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
+  }
+  function labelFor(e) {
+    const en = window.RXI && window.RXI.lang === "en";
+    if (e.type === "topup") return { zh: "充值", en: "Top-up" };
+    if (e.type === "subscription") { const p = planFor(e.kol); return { zh: `订阅赠送 · ${p.name}`, en: `Subscription gift · ${p.name}` }; }
+    if (e.type === "signup") return { zh: "注册赠送", en: "Welcome gift" };
+    return en ? "" : "";
+  }
+  function applyState(st) {
+    if (!st || typeof st !== "object") return;
+    A.credits = st.credits != null ? st.credits : A.credits;
+    if (st.freeUsed != null) A.freeUsed = st.freeUsed;
+    if (st.freeResetAt != null) A.freeResetAt = st.freeResetAt;
+    if (st.subs) A.subs = st.subs;
+    if (Array.isArray(st.ledger)) A.ledger = st.ledger.map((e) => ({ ...e, label: e.label || labelFor(e) }));
+    if (Array.isArray(st.consumption)) A.consumption = st.consumption;
+    commit();
+  }
+  async function syncFromServer() {
+    if (!serverReady()) return null;
+    try {
+      const url = "/api/billing/state" + (_email ? "?email=" + encodeURIComponent(_email) : "");
+      const r = await fetch(url, { headers: await authHeaders() });
+      if (!r.ok) return null;
+      const st = await r.json();
+      applyState(st);
+      return st;
+    } catch (e) { return null; }
+  }
+  // Lazy-load the Airwallex.js SDK (only when an Airwallex checkout is actually started).
+  let _awSdkPromise = null;
+  function loadAirwallexSDK() {
+    if (window.AirwallexComponentsSDK) return Promise.resolve();
+    if (_awSdkPromise) return _awSdkPromise;
+    _awSdkPromise = new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = "https://static.airwallex.com/components/sdk/v1/index.js";
+      s.async = true;
+      s.onload = () => resolve();
+      s.onerror = () => reject(new Error("airwallex_sdk_load_failed"));
+      document.head.appendChild(s);
+    });
+    return _awSdkPromise;
+  }
+  async function airwallexRedirect(j) {
+    await loadAirwallexSDK();
+    const env = j.env || "prod";
+    const { payments } = await window.AirwallexComponentsSDK.init({ env, enabledElements: ["payments"] });
+    await payments.redirectToCheckout({
+      env, mode: "payment",
+      intent_id: j.intentId, client_secret: j.clientSecret,
+      currency: j.currency || "USD", country_code: "HK",
+      successUrl: window.location.origin + "/?billing=success&provider=airwallex",
+      failUrl: window.location.origin + "/?billing=cancel",
+    });
+  }
+  // Start a real checkout for { type:"pack", packId } or { type:"sub", kolId, plan }. Stripe returns a
+  // hosted URL we navigate to; Airwallex returns intent details we hand to its SDK. Optional item.provider
+  // forces a PSP ("stripe" | "airwallex"); otherwise the server auto-selects.
+  async function checkout(item) {
+    if (!serverReady()) return { ok: false, error: "not_signed_in" };
+    try {
+      const body = item.type === "sub"
+        ? { type: "sub", kolId: item.kolId, plan: item.plan || "promo", email: _email }
+        : { type: "pack", packId: item.packId, email: _email };
+      if (item.provider) body.provider = item.provider;
+      const r = await fetch("/api/billing/checkout", { method: "POST", headers: await authHeaders(), body: JSON.stringify(body) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) return { ok: false, error: j.error || ("http_" + r.status) };
+      // Hosted-URL flow: Stripe (packs+subs) and Airwallex subscriptions all return a redirect URL.
+      if (j.url) { window.location.href = j.url; return { ok: true }; }
+      // Airwallex one-time packs come back as a Payment Intent → redirect via their JS SDK.
+      if (j.provider === "airwallex" && j.intentId) { await airwallexRedirect(j); return { ok: true }; }
+      return { ok: false, error: j.error || "no_redirect" };
+    } catch (e) { return { ok: false, error: String(e) }; }
+  }
+
   window.RXB = {
     FREE, PACKS, KOL_PLANS, planFor, RATE, PROVIDERS,
     get, commit, reset, onChange, pick,
+    setAuth, serverReady, syncFromServer, checkout, applyState,
     model, modelMult, isFreeModel, isByok, pointsFor, typicalCost,
     providers, provider, customModels, addCustomModel, removeCustomModel, maskKey,
     freeLeft, freeResetIn, freeCap: FREE.cap,

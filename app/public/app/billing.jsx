@@ -131,6 +131,14 @@ function Paywall({ reason, kol, modelId, kols, onClose, onCheckout }) {
 /* ===================== Checkout modal ===================== */
 function Checkout({ item, kols, onClose, onDone }) {
   const B = window.RXB;
+  const L = (zh, en) => (window.RXI.lang === "en" ? en : zh);
+  const [busy, setBusy] = bS(false);
+  const [err, setErr] = bS(null);
+  const pay = async () => {
+    setBusy(true); setErr(null);
+    const res = await B.checkout(item); // redirects to Stripe on success
+    if (!res || !res.ok) { setBusy(false); setErr(res && res.error || "error"); }
+  };
   const isSub = item.type === "sub";
   const kol = isSub ? kolMeta(kols, item.kolId) : null;
   const plan = isSub ? B.planFor(item.kolId) : null;
@@ -159,17 +167,24 @@ function Checkout({ item, kols, onClose, onDone }) {
           </div>
           <div className="co-ord-p">{B.fmtUsd(price)}{isSub && <span>{BT("perMonth")}</span>}</div>
         </div>
-        <div className="co-form co-pending">
-          <div className="co-pending-ic"><Bicon name="lock" size={18} color="var(--accent)" /></div>
-          <div>
-            <h3>{BT("checkoutUnavailable")}</h3>
-            <p>{BT("checkoutUnavailableSub")}</p>
+        {err && (
+          <div className="co-form co-pending" style={{ borderColor: "var(--danger, #e5484d)" }}>
+            <div className="co-pending-ic"><Bicon name="x" size={18} color="var(--danger, #e5484d)" /></div>
+            <div>
+              <h3>{L("无法发起支付", "Couldn't start checkout")}</h3>
+              <p>{
+                err === "not_signed_in" ? L("请先登录再支付。", "Please sign in first.")
+                : err === "no_payment_provider" ? L("支付尚未配置。", "Payments not configured yet.")
+                : err === "sub_unsupported_airwallex" ? L("订阅暂不支持 Airwallex，请用积分充值；订阅功能将随 Stripe 上线。", "Subscriptions aren't on Airwallex yet — use credit packs; subscriptions arrive with Stripe.")
+                : L("请稍后重试，或联系支持。", "Please try again, or contact support.")
+              }</p>
+            </div>
           </div>
-        </div>
-        <a className="pw-primary co-pay" href="mailto:support@robindex.ai?subject=Robindex%20billing%20access">
-          {BT("contactOpen")}
-        </a>
-        <div className="co-note">{BT("checkoutNoCharge")}</div>
+        )}
+        <button className="pw-primary co-pay" onClick={pay} disabled={busy}>
+          {busy ? L("正在跳转到 Stripe…", "Redirecting to Stripe…") : (<>{L("前往安全支付", "Continue to secure checkout")}<Bicon name="arrowRight" size={16} /></>)}
+        </button>
+        <div className="co-note">{L("由 Stripe 安全处理 · 支付成功后积分/订阅立即到账", "Secured by Stripe · credits/subscription apply right after payment")}</div>
       </div>
     </div>
   );
