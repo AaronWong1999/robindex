@@ -644,7 +644,7 @@ app.post("/api/citations/hydrate", async (c) => {
   if (!ids.length) return c.json({ citations });
 
   const rows = await c.env.DB.prepare(
-    `SELECT id,text,created_at_iso,quoted FROM tweets WHERE kol_id=? AND id IN (${ids.map(() => "?").join(",")})`
+    `SELECT id,text,created_at_iso,quoted,media FROM tweets WHERE kol_id=? AND id IN (${ids.map(() => "?").join(",")})`
   ).bind(kolId, ...ids).all().then((r) => (r.results || []) as any[]);
   const byId = new Map(rows.map((r) => [String(r.id), r]));
 
@@ -653,6 +653,12 @@ app.post("/api/citations/hydrate", async (c) => {
     const cid = citationTweetId(cite);
     if (cid && !cite.tweet_id) cite.tweet_id = cid;
     const row = byId.get(cid);
+    if (row?.media && !cite.media) {
+      try {
+        const media = JSON.parse(row.media);
+        if (Array.isArray(media) && media.length) cite.media = media;
+      } catch {}
+    }
     if (cite.quoted?.text) continue;
     if (row?.quoted) {
       try {

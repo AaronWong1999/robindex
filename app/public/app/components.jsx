@@ -303,6 +303,12 @@ function SourceCard({ kol, tw, active }) {
   const [expanded, setExpanded] = React.useState(false);
   const isLong = tw.snippet && tw.snippet.length > 160;
   const quoted = tw.quoted && tw.quoted.text ? tw.quoted : null;
+  const mediaList = Array.isArray(tw.media) ? tw.media
+    : Array.isArray(tw.images) ? tw.images
+      : Array.isArray(tw.photos) ? tw.photos
+        : tw.media_url ? [tw.media_url]
+          : [];
+  const firstMedia = mediaList.map((m) => typeof m === "string" ? m : (m && (m.url || m.media_url || m.preview_image_url))).find(Boolean);
   React.useEffect(() => { if (active) setExpanded(true); }, [active]);
   return React.createElement("div", {
     className: "src" + (active ? " on" : ""), id: "cite-" + citeKey(tw.ref) },
@@ -318,6 +324,9 @@ function SourceCard({ kol, tw, active }) {
       className: "src-toggle",
       onClick: () => setExpanded((v) => !v) },
       expanded ? (EN() ? "Collapse" : "收起") : (EN() ? "Expand" : "展开原文")),
+    firstMedia && React.createElement("a", {
+      className: "src-media", href: tw.url, target: "_blank", rel: "noreferrer" },
+      React.createElement("img", { src: firstMedia, alt: "", loading: "lazy" })),
     quoted && React.createElement("a", {
       className: "src-quote", href: quoted.url || tw.url, target: "_blank", rel: "noreferrer" },
       React.createElement("div", { className: "src-quote-top" },
