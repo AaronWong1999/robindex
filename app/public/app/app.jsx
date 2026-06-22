@@ -17,6 +17,46 @@ function useMedia(q) {
   return m;
 }
 function localizeModels(lang) { return RX.MODELS.map((m) => ({ ...m, note: (m.note && typeof m.note === "object") ? (m.note[lang] || m.note.zh) : m.note })); }
+function localizeOne(m, lang) { return { ...m, note: (m.note && typeof m.note === "object") ? (m.note[lang] || m.note.zh) : m.note }; }
+
+/* ---- multimodal attachments ---- */
+function useAttach() {
+  const [atts, setAtts] = uS([]);
+  const add = (files) => {
+    const arr = Array.from(files || []).slice(0, 6);
+    arr.forEach((f) => {
+      if (!f) return;
+      const isImg = (f.type || "").startsWith("image/");
+      const url = isImg ? URL.createObjectURL(f) : null;
+      setAtts((a) => [...a, { id: uid(), kind: isImg ? "image" : "file", name: f.name || (isImg ? "\u7c98\u8d34\u56fe\u7247.png" : "file"), url, ext: (f.name || "").split(".").pop().toLowerCase() }].slice(0, 6));
+    });
+  };
+  const remove = (id) => setAtts((a) => a.filter((x) => x.id !== id));
+  const clear = () => setAtts([]);
+  const onPaste = (e) => {
+    const items = (e.clipboardData && e.clipboardData.items) || [];
+    const imgs = [];
+    for (const it of items) { if (it.kind === "file" && (it.type || "").startsWith("image/")) { const f = it.getAsFile(); if (f) imgs.push(f); } }
+    if (imgs.length) { e.preventDefault(); add(imgs); }
+  };
+  return { atts, add, remove, clear, onPaste };
+}
+function AttachBtn({ onAdd, compact }) {
+  const inp = uR(null);
+  return React.createElement("label", { className: "tool-toggle attach-tool", title: T("attach") },
+    React.createElement("input", { ref: inp, type: "file", multiple: true, accept: "image/*,.pdf,.csv,.txt,.xlsx,.png,.jpg,.jpeg", style: { display: "none" }, onChange: (e) => { onAdd(e.target.files); e.target.value = ""; } }),
+    React.createElement(Icon, { name: "paperclip", size: 13 }), !compact && T("attachShort"));
+}
+function AttachRow({ atts, onRemove }) {
+  if (!atts.length) return null;
+  return React.createElement("div", { className: "att-row" }, atts.map((a) =>
+    React.createElement("div", { className: "att-chip" + (a.kind === "image" ? " img" : ""), key: a.id },
+      a.kind === "image"
+        ? React.createElement("img", { src: a.url, alt: a.name })
+        : React.createElement("span", { className: "att-ic" }, React.createElement(Icon, { name: "fileText", size: 16, color: "var(--dim)" })),
+      React.createElement("span", { className: "att-nm" }, a.name),
+      React.createElement("button", { className: "att-x", onClick: () => onRemove(a.id) }, React.createElement(Icon, { name: "x", size: 11 })))));
+}
 
 /* ============================ Sidebar (desktop) ============================ */
 function defaultChatTitle(kol, lang) {
@@ -24,7 +64,11 @@ function defaultChatTitle(kol, lang) {
 }
 function isEmptyChat(c) { return !c.messages || c.messages.length === 0; }
 
-function Sidebar({ kols, chats, activeChat, onPick, onOpenChat, onHome, onSettings, user, loggedIn, onLogin }) {
+function Sidebar({ kols, chats, activeChat, onPick, onOpenChat, onHome, onSettings, user, loggedIn, onLogin, onWallet, onSubs, onUsage }) {
+  const a = window.useBilling ? window.useBilling() : { credits: 0 };
+  const B = window.RXB;
+  const nSubs = B ? Object.keys(B.KOL_PLANS || {}).filter((id) => B.isSubscribed(id)).length : 0;
+  const planLabel = nSubs > 0 ? T("planMember") : T("planFree");
   const recent = chats.filter((c) => !isEmptyChat(c));
   return React.createElement("aside", { className: "side" },
     React.createElement("button", { className: "brand", onClick: onHome },
@@ -40,7 +84,7 @@ function Sidebar({ kols, chats, activeChat, onPick, onOpenChat, onHome, onSettin
         key: k.id, className: "hist" + (activeChat && activeChat.kol.id === k.id ? " on" : ""), onClick: () => onPick(k) },
         React.createElement(Avatar, { kol: k, size: 18, radius: 5, className: "hist-av" }),
         React.createElement("span", { className: "hist-t" }, k.display_name),
-        React.createElement("span", { className: "live-dot" })))),
+        B && B.isSubscribed(k.id) ? React.createElement("span", { className: "hist-sub", title: T("subActive") }, React.createElement(Icon, { name: "crown", size: 11 })) : React.createElement("span", { className: "live-dot" })))),
     React.createElement("div", { className: "side-sec", style: { marginTop: 8 } }, T("recent")),
     React.createElement("div", { className: "side-scroll" },
       recent.length === 0
@@ -49,13 +93,26 @@ function Sidebar({ kols, chats, activeChat, onPick, onOpenChat, onHome, onSettin
             key: c.id, className: "hist" + (activeChat && activeChat.id === c.id ? " on" : ""), onClick: () => onOpenChat(c) },
             React.createElement(Avatar, { kol: c.kol, size: 18, radius: 5, className: "hist-av" }),
             React.createElement("span", { className: "hist-t" }, c.title)))),
+    loggedIn && B ? React.createElement("div", { className: "side-bill" },
+      React.createElement("button", { className: "sb-item", onClick: onWallet },
+        React.createElement(Icon, { name: "wallet", size: 15, color: "var(--accent)" }),
+        React.createElement("span", { className: "sb-t" }, T("wallet")),
+        React.createElement("span", { className: "sb-cr" }, React.createElement(Icon, { name: "zap", size: 10 }), B.fmt(a.credits))),
+      React.createElement("button", { className: "sb-item", onClick: onSubs },
+        React.createElement(Icon, { name: "crown", size: 15, color: "var(--accent)" }),
+        React.createElement("span", { className: "sb-t" }, T("mySubs")),
+        React.createElement("span", { className: "sb-n" }, nSubs)),
+      React.createElement("button", { className: "sb-item", onClick: onUsage },
+        React.createElement(Icon, { name: "gauge", size: 15, color: "var(--accent)" }),
+        React.createElement("span", { className: "sb-t" }, T("usageTitle")),
+        React.createElement(Icon, { name: "chevronRight", size: 13, color: "var(--faint)" }))) : null,
     loggedIn
       ? React.createElement("button", { className: "side-foot", onClick: onSettings },
           React.createElement("div", { className: "av" }, (user && user.email ? user.email[0] : "U").toUpperCase()),
           React.createElement("div", { style: { minWidth: 0, textAlign: "left" } },
             React.createElement("div", { className: "nm" }, user && user.email ? user.email.split("@")[0] : "Trader"),
-            React.createElement("div", { className: "sub" }, T("proSeat"))),
-          React.createElement("div", { className: "credits", title: T("credits") }, React.createElement(Icon, { name: "zap", size: 11 }), "8.2K"))
+            React.createElement("div", { className: "sub" }, planLabel)),
+          React.createElement("div", { className: "credits", title: T("credits") }, React.createElement(Icon, { name: "zap", size: 11 }), B ? B.fmt(a.credits) : "0"))
       : React.createElement("button", { className: "side-foot", onClick: onLogin },
           React.createElement("div", { className: "av av-anon" }, React.createElement(Icon, { name: "user", size: 14, color: "var(--dim)" })),
           React.createElement("div", { style: { minWidth: 0, textAlign: "left" } },
@@ -64,7 +121,7 @@ function Sidebar({ kols, chats, activeChat, onPick, onOpenChat, onHome, onSettin
 }
 
 /* ============================ Home ============================ */
-function Home({ kols, target, setTarget, onAsk, models, model, setModel, effort, setEffort, loggedIn, onLogin }) {
+function Home({ kols, target, setTarget, onAsk, models, model, setModel, effort, setEffort, loggedIn, onLogin, onLocked, onSubscribe, onAddModel }) {
   const [text, setText] = uS("");
   const tk = kols.find((k) => k.id === target) || kols[0];
   if (!tk) return React.createElement("div", { className: "home" },
@@ -94,8 +151,9 @@ function Home({ kols, target, setTarget, onAsk, models, model, setModel, effort,
             React.createElement("span", { className: "tool-toggle on" }, React.createElement(Icon, { name: "search", size: 13 }), T("toolSearch")),
             React.createElement("span", { className: "tool-toggle" }, React.createElement(Icon, { name: "barChart", size: 13 }), T("toolMarket")),
             React.createElement("div", { className: "spacer" }),
-            React.createElement(ModelPicker, { models, value: model, onChange: setModel, up: true, compact: true, effort, setEffort }),
+            React.createElement(ModelPicker, { models, value: model, onChange: setModel, up: true, compact: true, effort, setEffort, subscribed: window.RXB ? window.RXB.isSubscribed(tk.id) : true, onLocked: onLocked ? (mid) => onLocked(tk, mid) : undefined, onAddModel }),
             React.createElement("button", { className: "send", disabled: !text.trim(), onClick: submit }, React.createElement(Icon, { name: "send", size: 17 }))))),
+      loggedIn && window.RXB ? React.createElement(window.FreeQuotaBar, { kol: tk, onSubscribe }) : null,
       React.createElement("div", { className: "home-grid-lab" }, T("chooseP")),
       React.createElement("div", { className: "kgrid" }, kols.map((k) =>
         React.createElement("button", { key: k.id, className: "kcard", style: { "--glow": k.accent + "22" }, onClick: () => { if (!loggedIn) { onLogin(); return; } onAsk(k, null); } },
@@ -266,6 +324,13 @@ function KMessage({ msg, model, onCite, onWriteCode }) {
         ? React.createElement(React.Fragment, null,
             React.createElement(AnswerBlocks, { md: r.answerMd, onCite }),
             r.conviction != null && React.createElement(Conviction, { value: r.conviction }),
+            msg.bill && window.RXB ? React.createElement("div", { className: "msg-meter" },
+              React.createElement(Icon, { name: "gauge", size: 12, color: "var(--faint)" }),
+              msg.bill.free
+                ? React.createElement("span", { className: "mm-free" }, T("mpFree"))
+                : React.createElement("span", { className: "mm-pts" }, "\u2212", window.RXB.fmtPts(msg.bill.points), " ", T("creditsWord")),
+              React.createElement("span", { className: "mm-tok" }, "\u2193 ", window.RXB.fmtTok(msg.bill.tokIn), " \u00b7 \u2191 ", window.RXB.fmtTok(msg.bill.tokOut), " Token"),
+              React.createElement("span", { className: "mm-id" }, msg.bill.id, "\u2026")) : null,
             React.createElement("div", { className: "aacts" },
               React.createElement("button", { className: "aact" }, React.createElement(Icon, { name: "copy", size: 14 }), T("actCopy")),
               React.createElement("button", { className: "aact" }, React.createElement(Icon, { name: "refresh", size: 14 }), T("actRetry")),
@@ -402,32 +467,37 @@ function EmptyThread({ kol, onAsk }) {
         React.createElement("span", null, s),
         React.createElement(Icon, { name: "arrowRight", size: 14, color: "var(--faint)", style: { marginLeft: "auto" } })))));
 }
-function Composer({ kol, onAsk, models, model, setModel, effort, setEffort, dynamicSuggestions }) {
+function Composer({ kol, onAsk, models, model, setModel, effort, setEffort, dynamicSuggestions, onSubscribe, onAddModel, subscribed, onLocked }) {
   const [text, setText] = uS("");
   const [tools, setTools] = uS(true);
   const ta = uR(null);
+  const attach = useAttach();
   const suggs = (dynamicSuggestions && dynamicSuggestions.length ? dynamicSuggestions : (kol.suggested || [])).slice(0, 3);
-  const submit = () => { if (text.trim()) { onAsk(text.trim()); setText(""); if (ta.current) ta.current.style.height = "auto"; } };
+  const submit = () => { if (text.trim()) { onAsk(text.trim(), attach.atts.length ? attach.atts : null); setText(""); attach.clear(); if (ta.current) ta.current.style.height = "auto"; } };
   return React.createElement("div", { className: "composer-wrap" },
     React.createElement("div", { className: "composer" },
       suggs.length > 0 && React.createElement("div", { className: "chips" }, suggs.map((s) =>
         React.createElement("button", { key: s, className: "chip", onClick: () => onAsk(s) }, s))),
+      window.RXB ? React.createElement(window.FreeQuotaBar, { kol, onSubscribe }) : null,
       React.createElement("div", { className: "box" },
         React.createElement("textarea", {
           ref: ta, value: text, rows: 1, placeholder: T("composerPlaceholder")(kol.display_name),
           onChange: (e) => { setText(e.target.value); e.target.style.height = "auto"; e.target.style.height = Math.min(e.target.scrollHeight, 160) + "px"; },
-          onKeyDown: (e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit(); } } }),
+          onKeyDown: (e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit(); } },
+          onPaste: attach.onPaste }),
+        React.createElement(AttachRow, { atts: attach.atts, onRemove: attach.remove }),
         React.createElement("div", { className: "box-bar" },
+          React.createElement(AttachBtn, { onAdd: attach.add }),
           React.createElement("button", { className: "tool-toggle" + (tools ? " on" : ""), onClick: () => setTools((t) => !t) }, React.createElement(Icon, { name: "search", size: 13 }), T("toolSearch")),
           React.createElement("span", { className: "tool-toggle" }, React.createElement(Icon, { name: "barChart", size: 13 }), T("toolMarket")),
           React.createElement("div", { className: "spacer" }),
-          React.createElement(ModelPicker, { models, value: model, onChange: setModel, up: true, compact: true, effort, setEffort }),
+          React.createElement(ModelPicker, { models, value: model, onChange: setModel, up: true, compact: true, effort, setEffort, subscribed, onLocked, onAddModel }),
           React.createElement("button", { className: "send", disabled: !text.trim(), onClick: submit }, React.createElement(Icon, { name: "send", size: 17 })))),
       React.createElement("div", { className: "composer-foot" }, React.createElement("b", null, kol.display_name), " ", T("composerFootB"), " ", T("composerFoot"))));
 }
 
 /* ============================ Thread + tabs (shared) ============================ */
-function ChatArea({ kol, messages, model, tab, setTab, onCite, onWriteCode, onAsk, threadRef, models, modelId, setModel, effort, setEffort, loggedIn, onLogin }) {
+function ChatArea({ kol, messages, model, tab, setTab, onCite, onWriteCode, onAsk, threadRef, models, modelId, setModel, effort, setEffort, loggedIn, onLogin, onSubscribe, onAddModel, onLocked }) {
   const lastK = messages.filter((m) => m.role === "k" && m.done && m.resp && m.resp.suggestions);
   const dynSuggs = lastK.length ? lastK[lastK.length - 1].resp.suggestions : null;
   return React.createElement(React.Fragment, null,
@@ -441,7 +511,7 @@ function ChatArea({ kol, messages, model, tab, setTab, onCite, onWriteCode, onAs
                     ? React.createElement("div", { className: "msg msg-u", key: m.id }, React.createElement("div", { className: "bub" }, m.text))
                     : React.createElement(KMessage, { key: m.id, msg: m, model, onCite, onWriteCode })))),
           loggedIn
-            ? React.createElement(Composer, { kol, onAsk, models, model: modelId, setModel, effort, setEffort, dynamicSuggestions: dynSuggs })
+            ? React.createElement(Composer, { kol, onAsk, models, model: modelId, setModel, effort, setEffort, dynamicSuggestions: dynSuggs, onSubscribe, onAddModel, subscribed: window.RXB ? window.RXB.isSubscribed(kol.id) : true, onLocked: onLocked ? (mid) => onLocked(kol, mid) : undefined })
             : React.createElement("div", { className: "composer-wrap" },
                 React.createElement("div", { className: "composer" },
                   React.createElement("button", { className: "auth-primary", style: { margin: "12px 0" }, onClick: onLogin },
@@ -514,6 +584,9 @@ function App() {
   const [highlight, setHighlight] = uS(null);
   const [citeTick, setCiteTick] = uS(0);
   const [mtab, setMtab] = uS("home");
+  const [paywall, setPaywall] = uS(null);
+  const [checkout, setCheckout] = uS(null);
+  const [addModelOpen, setAddModelOpen] = uS(false);
   const [initDone, setInitDone] = uS(false);
   const [railWidth, setRailWidth] = uS(380);
   const railDragRef = uR(null);
@@ -798,7 +871,7 @@ function App() {
     }
   };
 
-  const composerAsk = (question) => { if (curKol) ask(curKol, question); };
+  const composerAsk = (question, atts) => { if (curKol) ask(curKol, question); };
   const onCite = (ref) => {
     setRailTab("sources");
     setHighlight(citeKey(ref));
@@ -807,6 +880,15 @@ function App() {
   };
   const onWriteCode = () => setTab("code");
   const goHome = () => { setView("home"); setActive(null); setMtab("home"); };
+  const B = window.RXB;
+  const onLocked = (kol, modelId) => setPaywall({ reason: "model-locked", kol, modelId });
+  const onSubscribe = (kolId) => setPaywall({ reason: "quota", kol: kols.find((k) => k.id === kolId) || curKol, modelId: "flash" });
+  const onCheckout = (item) => { setPaywall(null); setCheckout(item); };
+  const onCheckoutDone = () => setCheckout(null);
+  const openWallet = () => { setShowSettings(false); setView("wallet"); setActive(null); setMtab("wallet"); };
+  const openSubs = () => { setShowSettings(false); setView("subs"); setActive(null); setMtab("subs"); };
+  const openUsage = () => { setShowSettings(false); setView("usage"); setActive(null); setMtab("usage"); };
+  const openAddModel = () => setAddModelOpen(true);
   const signOut = () => { privy.logout(); setShowSettings(false); goHome(); };
 
   if (!privy.ready || !initDone) return React.createElement(BootScreen, {
@@ -825,29 +907,37 @@ function App() {
 
   if (mobile) {
     let body;
-    if (mtab === "home") body = React.createElement("div", { className: "m-body scrollable" }, React.createElement(Home, { kols, target, setTarget, onAsk: openKol, models, model, setModel, effort, setEffort, loggedIn, onLogin: promptLogin }));
+    if (mtab === "home") body = React.createElement("div", { className: "m-body scrollable" }, React.createElement(Home, { kols, target, setTarget, onAsk: openKol, models, model, setModel, effort, setEffort, loggedIn, onLogin: promptLogin, onLocked, onSubscribe, onAddModel: openAddModel }));
     else if (mtab === "chat") body = curKol
       ? React.createElement("div", { className: "m-body chat-body" },
           React.createElement("div", { className: "m-subtabs" },
             React.createElement("button", { className: "tab" + (tab === "ask" ? " on" : ""), onClick: () => setTab("ask") }, React.createElement(Icon, { name: "sparkles", size: 13 }), T("tabAsk")),
             React.createElement("button", { className: "tab" + (tab === "code" ? " on" : ""), onClick: () => setTab("code") }, React.createElement(Icon, { name: "code", size: 13 }), T("tabCode"), React.createElement("span", { className: "soon-tag-sm" }, "SOON"))),
-          React.createElement(ChatArea, { kol: curKol, messages, model: curModel, tab, setTab, onCite, onWriteCode, onAsk: composerAsk, threadRef, models, modelId: model, setModel, effort, setEffort, loggedIn, onLogin: promptLogin }))
+          React.createElement(ChatArea, { kol: curKol, messages, model: curModel, tab, setTab, onCite, onWriteCode, onAsk: composerAsk, threadRef, models, modelId: model, setModel, effort, setEffort, loggedIn, onLogin: promptLogin, onSubscribe, onAddModel: openAddModel, onLocked }))
       : React.createElement("div", { className: "m-body scrollable" }, React.createElement(MobileNoChat, { onHome: () => setMtab("home") }));
     else if (mtab === "sources") body = React.createElement("div", { className: "m-body" }, curKol
       ? React.createElement(Rail, { kol: curKol, sources, railTab, setRailTab, highlight, citeTick, mobile: true })
       : React.createElement(MobileNoChat, { onHome: () => setMtab("home") }));
+    else if (mtab === "wallet") body = React.createElement("div", { className: "m-body scrollable" }, React.createElement(window.WalletPage, { onCheckout, onClose: () => setMtab("me"), onOpenUsage: () => setMtab("usage"), mobile: true }));
+    else if (mtab === "usage") body = React.createElement("div", { className: "m-body scrollable" }, React.createElement(window.UsagePage, { onCheckout, onClose: () => setMtab("wallet"), mobile: true }));
+    else if (mtab === "subs") body = React.createElement("div", { className: "m-body scrollable" }, React.createElement(window.SubsPage, { kols, onCheckout, onClose: () => setMtab("me"), mobile: true }));
     else body = React.createElement("div", { className: "m-body scrollable" }, loggedIn
-      ? React.createElement(window.SettingsPage, { user, model, setModel, theme, setTheme, lang, setLang, onSignOut: signOut })
+      ? React.createElement(window.SettingsPage, { user, model, setModel, theme, setTheme, lang, setLang, onSignOut: signOut, onOpenWallet: openWallet, onOpenSubs: openSubs, onOpenUsage: () => setMtab("usage"), onAddModel: openAddModel })
       : React.createElement("div", { className: "m-body scrollable", style: { padding: 20 } },
           React.createElement("button", { className: "auth-primary", onClick: promptLogin }, T("authSignIn"))));
+    const modals = React.createElement(React.Fragment, null,
+      paywall && window.Paywall ? React.createElement(window.Paywall, { reason: paywall.reason, kol: paywall.kol, modelId: paywall.modelId, kols, onClose: () => setPaywall(null), onCheckout }) : null,
+      checkout && window.Checkout ? React.createElement(window.Checkout, { item: checkout, kols, onClose: () => setCheckout(null), onDone: onCheckoutDone }) : null,
+      addModelOpen && window.AddModelModal ? React.createElement(window.AddModelModal, { onClose: () => setAddModelOpen(false), onSaved: (m) => { setAddModelOpen(false); setModel(m.id); } }) : null);
     return React.createElement("div", { className: "app mobile" },
       React.createElement(window.MobileTopBar, { kol: mtab === "chat" ? curKol : null, lang, setLang, theme, setTheme, loggedIn, onLogin: promptLogin }),
       body,
-      React.createElement(window.BottomNav, { tab: mtab, setTab: setMtab, srcCount: sources.length }));
+      React.createElement(window.BottomNav, { tab: (mtab === "wallet" || mtab === "subs" || mtab === "usage") ? "me" : mtab, setTab: setMtab, srcCount: sources.length }),
+      modals);
   }
 
   return React.createElement("div", { className: "app" },
-    React.createElement(Sidebar, { kols, chats, activeChat: active, user, onPick: switchKol, onOpenChat: openExisting, onHome: goHome, onSettings: () => setShowSettings(true), loggedIn, onLogin: promptLogin }),
+    React.createElement(Sidebar, { kols, chats, activeChat: active, user, onPick: switchKol, onOpenChat: openExisting, onHome: goHome, onSettings: () => setShowSettings(true), loggedIn, onLogin: promptLogin, onWallet: openWallet, onSubs: openSubs, onUsage: openUsage }),
     React.createElement("div", { className: "main" },
       React.createElement("div", { className: "topbar" },
         view === "chat" && curKol
@@ -857,24 +947,33 @@ function App() {
                 React.createElement("div", { className: "nm" }, curKol.display_name, React.createElement("span", { className: "live-pill" }, React.createElement("span", { className: "dot" }), T("online"))),
                 React.createElement("div", { className: "role" }, curKol.role)))
           : React.createElement("div", { className: "kol-id" },
-              React.createElement("div", { className: "brand-mark", style: { width: 34, height: 34, borderRadius: 9 } }, React.createElement(Icon, { name: "candlestick", size: 18, color: "var(--on-accent)" })),
+              React.createElement("div", { className: "brand-mark", style: { width: 34, height: 34, borderRadius: 9 } }, React.createElement(Icon, { name: view === "wallet" ? "wallet" : view === "subs" ? "crown" : view === "usage" ? "gauge" : "candlestick", size: 18, color: "var(--on-accent)" })),
               React.createElement("div", { className: "meta" },
-                React.createElement("div", { className: "nm" }, T("selectPersona")),
-                React.createElement("div", { className: "role" }, T("deskSub")))),
+                React.createElement("div", { className: "nm" }, view === "wallet" ? T("walletTitle") : view === "subs" ? T("subsTitle") : view === "usage" ? T("usageTitle") : T("selectPersona")),
+                React.createElement("div", { className: "role" }, view === "wallet" ? T("creditsUnit") : view === "subs" ? T("planMember") : view === "usage" ? T("usageSub") : T("deskSub")))),
         view === "chat" && React.createElement("div", { className: "tabs" },
           React.createElement("button", { className: "tab" + (tab === "ask" ? " on" : ""), onClick: () => setTab("ask") }, React.createElement(Icon, { name: "sparkles", size: 13 }), T("tabAsk")),
           React.createElement("button", { className: "tab" + (tab === "code" ? " on" : ""), onClick: () => setTab("code") }, React.createElement(Icon, { name: "code", size: 13 }), T("tabCode"), React.createElement("span", { className: "soon-tag-sm" }, "SOON"))),
         React.createElement("div", { className: "spacer" }),
         topRight),
       view === "home"
-        ? React.createElement(Home, { kols, target, setTarget, onAsk: openKol, models, model, setModel, effort, setEffort, loggedIn, onLogin: promptLogin })
-        : React.createElement("div", { className: "center" },
-            React.createElement(ChatArea, { kol: curKol, messages, model: curModel, tab, setTab, onCite, onWriteCode, onAsk: composerAsk, threadRef, models, modelId: model, setModel, effort, setEffort, loggedIn, onLogin: promptLogin }),
-            React.createElement("div", { className: "rail-wrap", style: { width: railWidth, minWidth: railWidth } },
-              React.createElement("div", { className: "rail-resize", onMouseDown: onResizeDown }),
-              React.createElement(Rail, { kol: curKol, sources, railTab, setRailTab, highlight, citeTick })))),
+        ? React.createElement(Home, { kols, target, setTarget, onAsk: openKol, models, model, setModel, effort, setEffort, loggedIn, onLogin: promptLogin, onLocked, onSubscribe, onAddModel: openAddModel })
+        : view === "wallet"
+          ? React.createElement(window.WalletPage, { onCheckout, onOpenUsage: openUsage })
+          : view === "usage"
+            ? React.createElement(window.UsagePage, { onCheckout })
+            : view === "subs"
+              ? React.createElement(window.SubsPage, { kols, onCheckout })
+              : React.createElement("div", { className: "center" },
+                  React.createElement(ChatArea, { kol: curKol, messages, model: curModel, tab, setTab, onCite, onWriteCode, onAsk: composerAsk, threadRef, models, modelId: model, setModel, effort, setEffort, loggedIn, onLogin: promptLogin, onSubscribe, onAddModel: openAddModel, onLocked }),
+                  React.createElement("div", { className: "rail-wrap", style: { width: railWidth, minWidth: railWidth } },
+                    React.createElement("div", { className: "rail-resize", onMouseDown: onResizeDown }),
+                    React.createElement(Rail, { kol: curKol, sources, railTab, setRailTab, highlight, citeTick })))),
     showSettings && React.createElement("div", { className: "set-overlay", onClick: (e) => { if (e.target.classList.contains("set-overlay")) setShowSettings(false); } },
-      React.createElement(window.SettingsPage, { user, model, setModel, theme, setTheme, lang, setLang, onSignOut: signOut, onClose: () => setShowSettings(false) })));
+      React.createElement(window.SettingsPage, { user, model, setModel, theme, setTheme, lang, setLang, onSignOut: signOut, onClose: () => setShowSettings(false), onOpenWallet: openWallet, onOpenSubs: openSubs, onOpenUsage: openUsage, onAddModel: openAddModel })),
+    paywall && window.Paywall ? React.createElement(window.Paywall, { reason: paywall.reason, kol: paywall.kol, modelId: paywall.modelId, kols, onClose: () => setPaywall(null), onCheckout }) : null,
+    checkout && window.Checkout ? React.createElement(window.Checkout, { item: checkout, kols, onClose: () => setCheckout(null), onDone: onCheckoutDone }) : null,
+    addModelOpen && window.AddModelModal ? React.createElement(window.AddModelModal, { onClose: () => setAddModelOpen(false), onSaved: (m) => { setAddModelOpen(false); setModel(m.id); } }) : null);
 }
 
 function MobileNoChat({ onHome }) {

@@ -46,6 +46,22 @@ const ICONS = {
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18z"/>',
   gauge: '<path d="M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/><path d="M13.4 12.6 19 7M4 18a9 9 0 1 1 16 0"/>',
+  wallet: '<rect x="3" y="6" width="18" height="13" rx="2.5"/><path d="M3 10h18"/><circle cx="16.5" cy="13.5" r="1.25" fill="currentColor" stroke="none"/>',
+  gift: '<path d="M20 12v8H4v-8"/><rect x="2.5" y="7.5" width="19" height="4.5" rx="1"/><path d="M12 7.5V20"/><path d="M12 7.5C12 7.5 11 3.5 8.5 3.5S6 5 6.2 6c.4 1.5 5.8 1.5 5.8 1.5zM12 7.5s1-4 3.5-4S18 5 17.8 6c-.4 1.5-5.8 1.5-5.8 1.5z"/>',
+  receipt: '<path d="M5 3v18l2-1 2 1 2-1 2 1 2-1 2 1V3l-2 1-2-1-2 1-2-1-2 1z"/><path d="M8 8h8M8 12h8M8 16h5"/>',
+  crown: '<path d="M4 8l4 3.5L12 5l4 6.5L20 8l-1.6 10H5.6z"/>',
+  lock: '<rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+  infinity: '<path d="M7 9a3 3 0 0 0 0 6c1.7 0 2.6-1.3 5-3.5S16.3 8 18 8a3 3 0 0 1 0 6c-1.7 0-2.6-1.3-5-3.5S8.7 6 7 6" transform="translate(0 3)"/>',
+  creditCard: '<rect x="2" y="5" width="20" height="14" rx="2.5"/><path d="M2 10h20M6 15h4"/>',
+  flame: '<path d="M12 3c1.2 3.6 5 4.8 5 9a5 5 0 0 1-10 0c0-2 1-3.2 2-4.2.5 2 2.2 2.2 3 1-1-2-1-4 0-5.8z"/>',
+  minus: '<path d="M5 12h14"/>',
+  key: '<circle cx="7.5" cy="15.5" r="4.5"/><path d="m11 12 8.5-8.5M15 7l3.5 3.5M18 4l3 3"/>',
+  paperclip: '<path d="M21.4 11.05 12.2 20.3a5.5 5.5 0 0 1-7.78-7.78l9.2-9.2a3.67 3.67 0 0 1 5.18 5.18l-9.2 9.2a1.83 1.83 0 0 1-2.6-2.6l8.5-8.48"/>',
+  image: '<rect x="3" y="3" width="18" height="18" rx="2.5"/><circle cx="8.8" cy="9" r="1.6"/><path d="m4 16 4.5-4 4 3.3L16 11l4 4.5"/>',
+  fileText: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>',
+  trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"/>',
+  plug: '<path d="M9 2v6M15 2v6M7 8h10v3a5 5 0 0 1-10 0zM12 16v6"/>',
+  starOn: '<path d="M12 3l2.5 6.3L21 10l-5 4.4L17.5 21 12 17.3 6.5 21 8 14.4 3 10l6.5-.7z" fill="currentColor" stroke="none"/>',
 };
 
 function Icon({ name, size = 18, color, strokeWidth = 1.8, style }) {
@@ -77,39 +93,82 @@ function Avatar({ kol, size = 34, radius = 9, className }) {
 }
 
 /* ----------------------------------------------------------------------------
-   Model picker (DeepSeek V4 Pro / Flash)
+   Model picker — full multi-provider catalog with per-model credit cost.
+   Free plan: only the free (Flash) model is selectable; the rest show a lock
+   and route to the paywall via onLocked. Subscribed: every model unlocked,
+   each labelled with its credit cost.
 ---------------------------------------------------------------------------- */
-function ModelPicker({ models, value, onChange, up, compact, effort, setEffort }) {
+function ModelPicker({ models, value, onChange, up, compact, effort, setEffort, subscribed, onLocked, onAddModel }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
     const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
     document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h);
   }, []);
+  const RXB = window.RXB;
   const cur = models.find((m) => m.id === value) || models[0];
   const efs = [{ id: "low", k: "effLow" }, { id: "med", k: "effMed" }, { id: "high", k: "effHigh" }, { id: "max", k: "effMax" }];
   const hasEff = !!setEffort;
   const curEf = efs.find((e) => e.id === effort) || efs[2];
+  const locked = (m) => !subscribed && !m.free;
+  const pick = (m) => {
+    if (locked(m)) { setOpen(false); if (onLocked) onLocked(m.id); return; }
+    onChange(m.id); setOpen(false);
+  };
+  // current-model cost chip = 计费倍率 / 自有 API
+  const curChip = cur.byok
+    ? React.createElement("span", { className: "mp-cr byok" }, React.createElement(Icon, { name: "key", size: 9 }), Tc("byokTag"))
+    : (!subscribed && cur.free)
+      ? React.createElement("span", { className: "mp-cr free" }, Tc("mpFree"))
+      : React.createElement("span", { className: "mp-mult" + (cur.discount ? " disc" : "") }, window.RXB.fmtMult(cur.mult));
+  // group order from catalog
+  const groups = [];
+  models.forEach((m) => { const g = m.group || m.provider; let e = groups.find((x) => x.g === g); if (!e) { e = { g, items: [] }; groups.push(e); } e.items.push(m); });
   return React.createElement("div", { className: "mp" + (up ? " mp-up" : ""), ref },
     React.createElement("button", { className: "mp-btn" + (compact ? " compact" : ""), onClick: () => setOpen((o) => !o) },
       React.createElement("span", { className: "mp-badge", style: { background: cur.color } }, cur.badge),
       React.createElement("span", { className: "nm" }, cur.name),
+      curChip,
       hasEff && React.createElement("span", { className: "mp-eff" }, Tc(curEf.k)),
       React.createElement(Icon, { name: "chevronDown", size: 13, color: "var(--faint)", style: up ? { transform: "rotate(180deg)" } : null })),
-    open && React.createElement("div", { className: "mp-menu" + (up ? " up" : "") },
+    open && React.createElement("div", { className: "mp-menu mp-models" + (up ? " up" : "") },
       hasEff && React.createElement(React.Fragment, null,
         React.createElement("div", { className: "mp-head" }, React.createElement(Icon, { name: "gauge", size: 12, color: "var(--faint)" }), Tc("reasoningTitle")),
         React.createElement("div", { className: "eff-row" }, efs.map((e) =>
           React.createElement("button", { key: e.id, className: "eff-pill" + (curEf.id === e.id ? " on" : ""), onClick: () => setEffort(e.id) }, Tc(e.k)))),
         React.createElement("div", { className: "mp-sep" })),
-      React.createElement("div", { className: "mp-head" }, hasEff ? Tc("modelTitle") : (EN() ? "Select model · your compute" : "选择模型 · 自选算力")),
-      models.map((m) => React.createElement("button", {
-        key: m.id, className: "mp-item", onClick: () => { onChange(m.id); setOpen(false); } },
-        React.createElement("span", { className: "mp-badge", style: { background: m.color } }, m.badge),
-        React.createElement("div", { style: { minWidth: 0, flex: 1 } },
-          React.createElement("div", { className: "nm" }, m.name),
-          React.createElement("div", { className: "sub" }, m.note)),
-        m.id === value && React.createElement(Icon, { name: "check", size: 15, color: "var(--accent)" })))));
+      React.createElement("div", { className: "mp-models-scroll" },
+        groups.map((grp) => React.createElement(React.Fragment, { key: grp.g },
+          React.createElement("div", { className: "mp-head" }, grp.g),
+          grp.items.map((m) => {
+            const lk = locked(m);
+            const isFreeUse = !subscribed && m.free;
+            return React.createElement("button", {
+              key: m.id, className: "mp-item mp-model" + (lk ? " locked" : "") + (m.id === value ? " sel" : ""), onClick: () => pick(m) },
+              React.createElement("span", { className: "mp-badge", style: { background: m.color, opacity: lk ? .55 : 1 } }, m.badge),
+              React.createElement("div", { style: { minWidth: 0, flex: 1 } },
+                React.createElement("div", { className: "nm" }, m.name),
+                React.createElement("div", { className: "sub" }, m.note)),
+              React.createElement("span", { className: "mp-meta" },
+                m.byok
+                  ? (lk
+                      ? React.createElement("span", { className: "mp-lock" }, React.createElement(Icon, { name: "lock", size: 11 }))
+                      : React.createElement("span", { className: "mp-cr byok" }, React.createElement(Icon, { name: "key", size: 9 }), Tc("byokTag")))
+                  : React.createElement(React.Fragment, null,
+                      m.discount && React.createElement("span", { className: "mp-disc" }, Tc("discTag")),
+                      React.createElement("span", { className: "mp-reason r-" + (m.reason || "med") }, Tc(m.reason === "low" ? "effLow" : m.reason === "high" ? "effHigh" : "effMed")),
+                      isFreeUse
+                        ? React.createElement("span", { className: "mp-cr free" }, Tc("mpFree"))
+                        : lk
+                          ? React.createElement("span", { className: "mp-lock" }, React.createElement(Icon, { name: "lock", size: 11 }))
+                          : React.createElement("span", { className: "mp-mult" + (m.discount ? " disc" : "") }, window.RXB.fmtMult(m.mult)))),
+              m.id === value && !lk && React.createElement(Icon, { name: "check", size: 14, color: "var(--accent)", style: { marginLeft: 4 } }));
+          })))),
+      onAddModel && React.createElement("button", { className: "mp-add", onClick: () => { setOpen(false); onAddModel(); } },
+        React.createElement(Icon, { name: "plus", size: 14 }), Tc("addModel")),
+      React.createElement("div", { className: "mp-foot" },
+        React.createElement(Icon, { name: subscribed ? "zap" : "lock", size: 11, color: "var(--faint)" }),
+        subscribed ? Tc("mpComputeNote") : Tc("mpUnlockAll"))));
 }
 
 /* ----------------------------------------------------------------------------
@@ -144,7 +203,7 @@ function ThemeMenu({ value, onChange }) {
 }
 
 /* ----------------------------------------------------------------------------
-   Dynamic analysis process — mirrors live SSE progress without exposing raw CoT
+   Pipeline / tool run group — mirrors the live SSE phase + tool stream
 ---------------------------------------------------------------------------- */
 function ToolGroup({ steps, done }) {
   if (done && (!Array.isArray(steps) || !steps.length)) return null;
@@ -187,6 +246,7 @@ function citeKey(ref) {
 function citeLabel(ref) {
   return citeKey(ref).replace(/^T/i, "");
 }
+const citeN = (ref) => String(ref).replace(/^T/i, "");
 function inline(text, onCite, key) {
   const parts = text.split(/(\*\*.+?\*\*|\[T?\d+(?:\s*,\s*T?\d+)*\])/g).filter(Boolean);
   return parts.map((seg, i) => {

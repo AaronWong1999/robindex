@@ -5,10 +5,41 @@
   const pick = (o, lang) => (o && typeof o === "object" && ("zh" in o || "en" in o)) ? (o[lang] || o.zh) : o;
 
   const MODELS = [
-    { id: "pro", name: "DeepSeek V4 Pro", short: "Pro", provider: "DeepSeek", badge: "P4", color: "#4D6BFE",
+    // —— DeepSeek ——
+    { id: "pro", name: "DeepSeek V4 Pro", short: "Pro", provider: "DeepSeek", group: "DeepSeek", badge: "P4", color: "#4D6BFE", mult: 0.16, reason: "high", default: true,
       note: { zh: "深度分析 · 长链推理 · 多工具", en: "Deep analysis · long reasoning · tools" } },
-    { id: "flash", name: "DeepSeek V4 Flash", short: "Flash", provider: "DeepSeek", badge: "F4", color: "#6E8BFF",
+    { id: "flash", name: "DeepSeek V4 Flash", short: "Flash", provider: "DeepSeek", group: "DeepSeek", badge: "F4", color: "#6E8BFF", mult: 0.06, reason: "high", free: true,
       note: { zh: "快速 · 低成本 · 日常追问", en: "Fast · low cost · quick follow-ups" } },
+    { id: "ds32", name: "DeepSeek V3.2", short: "V3.2", provider: "DeepSeek", group: "DeepSeek", badge: "V3", color: "#3D5AE0", mult: 0.10, reason: "med",
+      note: { zh: "稳定基座 · 通用推理", en: "Stable base · general reasoning" } },
+    // —— GLM · Zhipu ——
+    { id: "glm52", name: "GLM-5.2", short: "5.2", provider: "Zhipu", group: "GLM · 智谱", badge: "G5", color: "#5B8DEF", mult: 1.06, reason: "med",
+      note: { zh: "旗舰推理 · 最强综合", en: "Flagship reasoning · top all-round" } },
+    { id: "glm51", name: "GLM-5.1", short: "5.1", provider: "Zhipu", group: "GLM · 智谱", badge: "G5", color: "#5B8DEF", mult: 1.06, reason: "med",
+      note: { zh: "高强度推理", en: "High-intensity reasoning" } },
+    { id: "glm50", name: "GLM-5.0", short: "5.0", provider: "Zhipu", group: "GLM · 智谱", badge: "G5", color: "#5B8DEF", mult: 0.80, reason: "med",
+      note: { zh: "均衡之选", en: "Balanced choice" } },
+    { id: "glm50t", name: "GLM-5.0 Turbo", short: "5.0T", provider: "Zhipu", group: "GLM · 智谱", badge: "G5", color: "#5B8DEF", mult: 0.62, reason: "med",
+      note: { zh: "提速版", en: "Speed-tuned" } },
+    { id: "glm5vt", name: "GLM-5v Turbo", short: "5vT", provider: "Zhipu", group: "GLM · 智谱", badge: "5V", color: "#5B8DEF", mult: 0.95, reason: "med",
+      note: { zh: "多模态 · 看图", en: "Multimodal · vision" } },
+    { id: "glm47", name: "GLM-4.7", short: "4.7", provider: "Zhipu", group: "GLM · 智谱", badge: "G4", color: "#7AA0E8", mult: 0.23, reason: "low",
+      note: { zh: "轻量 · 低成本", en: "Light · low cost" } },
+    // —— MiniMax ——
+    { id: "mm3", name: "MiniMax-M3", short: "M3", provider: "MiniMax", group: "MiniMax", badge: "M3", color: "#8B7CF6", mult: 0.25, reason: "med",
+      note: { zh: "长上下文 · 高性价比", en: "Long context · great value" } },
+    { id: "mm27", name: "MiniMax-M2.7", short: "M2.7", provider: "MiniMax", group: "MiniMax", badge: "M2", color: "#8B7CF6", mult: 0.26, reason: "med",
+      note: { zh: "稳定通用", en: "Stable general-purpose" } },
+    // —— Kimi · Moonshot ——
+    { id: "kimi27", name: "Kimi K2.7 Code", short: "K2.7", provider: "Moonshot", group: "Kimi · 月之暗面", badge: "K2", color: "#14B8A6", mult: 0.76, reason: "med",
+      note: { zh: "代码 · 工具调用强", en: "Code · strong tool use" } },
+    { id: "kimi26", name: "Kimi K2.6", short: "K2.6", provider: "Moonshot", group: "Kimi · 月之暗面", badge: "K2", color: "#14B8A6", mult: 0.70, reason: "med",
+      note: { zh: "长文 · 检索", en: "Long-form · retrieval" } },
+    { id: "kimi25", name: "Kimi K2.5", short: "K2.5", provider: "Moonshot", group: "Kimi · 月之暗面", badge: "K2", color: "#2DD4BF", mult: 0.45, reason: "med",
+      note: { zh: "经济档", en: "Economy tier" } },
+    // —— Hunyuan ——
+    { id: "hy3", name: "Hunyuan Hy3", short: "Hy3", provider: "Hunyuan", group: "Hunyuan · 混元", badge: "H3", color: "#F5A623", mult: 0.04, wasMult: 0.37, discount: true, reason: "high",
+      note: { zh: "预览版 · 中文优", en: "Preview · strong Chinese" } },
   ];
 
   const PHASES = [
