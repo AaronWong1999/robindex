@@ -25,10 +25,19 @@ import {
 } from "./billing";
 import { createCheckoutSession, verifyWebhook } from "./stripe";
 import { createPaymentIntent, createBillingCheckout, verifyAirwallexWebhook, awEnv } from "./airwallex";
+import { APPLE_PAY_DOMAIN_ASSOCIATION } from "./applepay";
 
 const app = new Hono<{ Bindings: Env }>();
 
 const APP_HOST = "app.robindex.ai";
+
+// Apple Pay domain verification (Airwallex merchant domain registration). Must be served verbatim with
+// Content-Type application/octet-stream. The worker runs first, so this beats the SPA asset fallback.
+app.get("/.well-known/apple-developer-merchantid-domain-association", (c) =>
+  new Response(APPLE_PAY_DOMAIN_ASSOCIATION, {
+    headers: { "Content-Type": "application/octet-stream", "Cache-Control": "public, max-age=3600" },
+  }),
+);
 
 const NEWS_OR_EVENT_INTENT = /(news|headline|happening|新闻|消息|资讯|事件|最近|发生|利好|利空|政策|财报)/i;
 const PROFILE_INTENT = /(估值|财务|基本面|pe|pb|peg|roe|margin|revenue|profit|earnings|valuation|fundamental|financial)/i;
