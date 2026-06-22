@@ -301,7 +301,10 @@ function Conviction({ value }) {
 ---------------------------------------------------------------------------- */
 function SourceCard({ kol, tw, active }) {
   const [expanded, setExpanded] = React.useState(false);
-  const isLong = tw.snippet && tw.snippet.length > 160;
+  const tweetUrl = tw.url || (tw.tweet_id ? "https://x.com/" + kol.handle + "/status/" + tw.tweet_id : "");
+  const snippet = String(tw.snippet || tw.text || "").trim();
+  const date = tw.date || (tw.created_at_iso ? String(tw.created_at_iso).slice(0, 10) : "");
+  const isLong = snippet.length > 160;
   const quoted = tw.quoted && tw.quoted.text ? tw.quoted : null;
   const mediaList = Array.isArray(tw.media) ? tw.media
     : Array.isArray(tw.images) ? tw.images
@@ -317,15 +320,17 @@ function SourceCard({ kol, tw, active }) {
       React.createElement("div", { className: "src-id" },
         React.createElement("div", { className: "src-nm" }, kol.display_name,
           React.createElement(Icon, { name: "xLogo", size: 11, color: "var(--faint)" })),
-        React.createElement("div", { className: "src-h" }, "@" + kol.handle, " · ", tw.date)),
+        React.createElement("div", { className: "src-h" }, "@" + kol.handle, date ? " · " + date : "")),
       React.createElement("span", { className: "src-ref" }, citeLabel(tw.ref))),
-    React.createElement("div", { className: "src-text" + (!expanded && isLong ? " clamp" : "") }, tw.snippet),
+    snippet
+      ? React.createElement("div", { className: "src-text" + (!expanded && isLong ? " clamp" : "") }, snippet)
+      : React.createElement("div", { className: "src-text src-text-empty" }, EN() ? "Source text is loading." : "来源原文正在补全。"),
     isLong && React.createElement("button", {
       className: "src-toggle",
       onClick: () => setExpanded((v) => !v) },
       expanded ? (EN() ? "Collapse" : "收起") : (EN() ? "Expand" : "展开原文")),
     firstMedia && React.createElement("a", {
-      className: "src-media", href: tw.url, target: "_blank", rel: "noreferrer" },
+      className: "src-media", href: tweetUrl, target: "_blank", rel: "noreferrer" },
       React.createElement("img", { src: firstMedia, alt: "", loading: "lazy" })),
     quoted && React.createElement("a", {
       className: "src-quote", href: quoted.url || tw.url, target: "_blank", rel: "noreferrer" },
@@ -344,8 +349,10 @@ function SourceCard({ kol, tw, active }) {
           React.createElement("div", { className: "src-quote-h" }, quoted.handle ? "@" + quoted.handle : "", quoted.date ? " · " + quoted.date : ""))),
       React.createElement("div", { className: "src-quote-text" }, quoted.text)),
     React.createElement("div", { className: "src-foot" },
-      React.createElement("a", { className: "src-open", href: tw.url, target: "_blank", rel: "noreferrer" },
-        EN() ? "View on X →" : "在 X 查看原文 →")));
+      tweetUrl
+        ? React.createElement("a", { className: "src-open", href: tweetUrl, target: "_blank", rel: "noreferrer" },
+            EN() ? "View on X →" : "在 X 查看原文 →")
+        : React.createElement("span", { className: "src-open muted" }, EN() ? "Original link unavailable" : "暂无原文链接")));
 }
 
 window.RXC = { Icon, Avatar, ModelPicker, ThemeMenu, THEMES, ToolGroup, AnswerBlocks, Conviction, SourceCard, citeKey, citeLabel };

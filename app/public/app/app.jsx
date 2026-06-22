@@ -588,6 +588,7 @@ function App() {
   const [checkout, setCheckout] = uS(null);
   const [addModelOpen, setAddModelOpen] = uS(false);
   const [initDone, setInitDone] = uS(false);
+  const [historyLoadDone, setHistoryLoadDone] = uS(false);
   const [railWidth, setRailWidth] = uS(380);
   const railDragRef = uR(null);
   const threadRef = uR(null);
@@ -649,6 +650,7 @@ function App() {
   uE(() => { LS.set("effort", effort); }, [effort]);
   uE(() => { const saved = chats.filter((c) => !isEmptyChat(c)); if (saved.length) LS.set("chats", saved); }, [chats]);
   uE(() => {
+    if (!active && requestedChatId() && !historyLoadDone) return;
     if (active) {
       const url = new URL(window.location);
       url.pathname = "/chat/" + encodeURIComponent(active.id);
@@ -660,7 +662,7 @@ function App() {
       url.searchParams.delete("chat");
       history.replaceState(null, "", url);
     }
-  }, [active]);
+  }, [active, historyLoadDone]);
   uE(() => {
     if (active && messages.length) {
       setChats((prev) => {
@@ -702,6 +704,7 @@ function App() {
   uE(() => {
     if (!initDone) return;
     const validIds = new Set(RX.kols(window.RXI.lang).map((k) => k.id));
+    setHistoryLoadDone(false);
     RX.loadHistory(userId).then((cloudChats) => {
       if (!cloudChats.length) return;
       setChats((cur) => {
@@ -720,7 +723,7 @@ function App() {
         }
         return cur;
       });
-    });
+    }).catch(() => {}).finally(() => setHistoryLoadDone(true));
   }, [initDone, userId]);
 
   // Login transition: when Privy auth flips to true, ensure in-memory chats are persisted under the real user id

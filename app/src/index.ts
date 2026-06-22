@@ -644,7 +644,7 @@ app.post("/api/citations/hydrate", async (c) => {
   if (!ids.length) return c.json({ citations });
 
   const rows = await c.env.DB.prepare(
-    `SELECT id,text,created_at_iso,quoted,media FROM tweets WHERE kol_id=? AND id IN (${ids.map(() => "?").join(",")})`
+    `SELECT id,text,created_at_iso,likes,views,quoted,media FROM tweets WHERE kol_id=? AND id IN (${ids.map(() => "?").join(",")})`
   ).bind(kolId, ...ids).all().then((r) => (r.results || []) as any[]);
   const byId = new Map(rows.map((r) => [String(r.id), r]));
 
@@ -653,6 +653,16 @@ app.post("/api/citations/hydrate", async (c) => {
     const cid = citationTweetId(cite);
     if (cid && !cite.tweet_id) cite.tweet_id = cid;
     const row = byId.get(cid);
+    if (row) {
+      cite.ref = cite.ref || cite.cite || "";
+      cite.tweet_id = String(row.id);
+      cite.snippet = String(cite.snippet || cite.text || row.text || "");
+      cite.text = cite.text || cite.snippet;
+      cite.date = cite.date || String(row.created_at_iso || "").slice(0, 10);
+      cite.url = cite.url || `https://x.com/${handle}/status/${row.id}`;
+      cite.likes = cite.likes ?? row.likes ?? 0;
+      cite.views = cite.views || row.views || "";
+    }
     if (row?.media && !cite.media) {
       try {
         const media = JSON.parse(row.media);

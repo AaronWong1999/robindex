@@ -1,81 +1,89 @@
 # Robindex Plan
 
-Last updated: 2026-06-20.
+Last updated: 2026-06-22.
 
-Read `README.md` for architecture, deploy steps, and repo layout. This file tracks live status, recent changes, and next work.
+Use `README.md` as the handoff source of truth for architecture, files, deploys, and operational notes. This file is only the current product status, recent changes, and next work.
 
 ## Live Status
 
-| What | Where |
+| Area | Status |
 | --- | --- |
-| Marketing site | https://robindex.ai , https://www.robindex.ai |
-| Product (Desk) | https://app.robindex.ai |
-| Worker version | Deployed via `npm run deploy` in `app/` |
+| Marketing | Live at https://robindex.ai and https://www.robindex.ai |
+| Product | Live at https://app.robindex.ai |
+| Auth | Privy email + Google |
+| Personas | `qinbafrank`, `aleabitoreddit` / Serenity |
+| Chat | SSE streaming, sourced answer renderer, D1/localStorage history sync |
+| Deep links | `/chat/:id` direct load and refresh |
+| Source rail | Persona/source tabs, full tweet hydration, media and quoted tweet cards |
+| Deploy | `cd app && npm run deploy:cf` |
 
-Live personas:
+Latest verified deploy: `af782781-47b6-4cab-9b12-fb1e9d2d9864`.
 
-- `qinbafrank` — `v2-mapreduce-2026-06-18`
-- `aleabitoreddit` — `v2-mapreduce-2026-06-19`
+## Recently Shipped
 
-## What Shipped (2026-06-20)
+### Product UI
 
-### Design system + domain split
+- Three-column Desk with resizable right source rail.
+- Mobile top bar and bottom nav.
+- Four themes: Aurora, Terminal, Matrix, Codex.
+- Chinese/English UI.
+- Model picker with platform models, BYOK custom models, and reasoning effort.
+- Billing, subscription, usage, wallet, checkout, and paywall UI surfaces.
+- Code tab placeholder remains marked SOON.
 
-- Applied Claude Code design (Antigravity-style landing + WorkBuddy/Codex Desk UI).
-- **Marketing**: static `index.html` (SEO-first — content in HTML, OG/hreflang/JSON-LD).
-- **Product**: React 18 SPA via `desk.html` + `app/public/app/`, no build step.
-- **Domains**: `robindex.ai` / `www` → landing; `app.robindex.ai` → Desk. Main-domain `/research`, `/desk`, `/kol/*` redirect to app subdomain.
+### Auth And History
 
-### Robindex Desk
+- Replaced mock login with Privy native login modal.
+- Cloud history persists full frontend message payloads in D1 `chat_history`.
+- Logged-in users sync under `privy.user.id`.
+- Deep links use `/chat/:id`.
+- Direct refresh of `/chat/:id` no longer races back to `/`.
 
-- Stack: React 18 CDN + Babel standalone
-- Layout: sidebar · thread · resizable sources rail (desktop); bottom nav (mobile)
-- 4 themes: Terminal, Aurora, Matrix, Codex
-- Model picker + reasoning effort (Low / Med / High / Max)
-- Bilingual 中/EN
-- Mock auth (localStorage); settings overlay
-- Code tab placeholder (SOON — Step 2)
+### Source Rail Hardening
 
-### Cloud chat history (D1)
+- Fixed flex shrink bug that compressed 18 source cards into one viewport.
+- Hydrate endpoint now restores full tweet text, date, X URL, media, quoted tweet, likes, and views for historical citations.
+- Source cards render stable fallback states when old citation payloads are incomplete.
+- Cards with media now keep the same footer spacing as cards without media.
 
-- Migration `0008_user_chat_history.sql` — `chat_history` table
-- APIs: `GET/PUT/DELETE /api/chat/history`
-- Frontend: localStorage + 2s debounced D1 sync + merge on init
-- URL `?chat=<id>` restores active conversation
+### Ops
 
-## Current Pipeline
-
-### Full backfill
-
-`POST /api/admin/distill-auto?kol_id=<id>&reset=1`
-
-1. `map` — flash partial persona over corpus chunks
-2. `group` — pro group reduce
-3. `final` — pro final draft
-4. `finalize` — quote verification, exemplars, publish
-5. `eval` — flash answer/judge; rollback only if full eval regresses
-
-### Weekly update
-
-`runWeeklyPersonaRefresh()`:
-
-1. Weekly stance chunk when enough new tweets exist
-2. `distillPersonaIncremental()` if `persona_facts:merged` exists
-3. 12-case smoke eval
-4. Suspicious smoke → full eval via `distill_job:<kol>` KV queue
+- `npm run preflight` verifies Cloudflare auth and production smoke paths.
+- `npm run deploy:cf` is the preferred deploy path because it loads `scripts/cloudflare-dns-patch.cjs`.
 
 ## Known Constraints
 
-- Cloudflare Worker CPU/time limits bound chat and distill jobs.
-- Auth is mock (localStorage UUID). Real auth needed for reliable cross-device sync.
-- Citation persistence on refresh has been improved but may need more hardening.
-- GetXAPI timeline depth is finite; very old quoted context may be missing.
-- `account.guard.json` holds live secrets locally — never commit.
+- The frontend still uses browser-loaded Babel JSX rather than a normal app build.
+- `privy-bundle.js` is checked in and must be rebuilt with `npm run build:privy` when Privy dependency/entry changes.
+- Code generation/backtest tab is product placeholder only.
+- Billing/subscription UI exists, but payment/business logic should be audited before depending on it for revenue enforcement.
+- Worker CPU/time limits shape chat, distill, and eval job design.
+- Very old quoted tweet context can still be missing if the corpus does not contain it and short-link expansion fails.
+- Secrets live locally in `account.guard.json`; never commit.
 
 ## Next Work
 
-1. **Step 2 — KOL writes code**: Persona turns thesis into backtestable strategy code (UI marked SOON).
-2. **Real auth**: Cloudflare Access or JWT; replace mock UUID with email-based identity.
-3. **Citation hardening**: Source tweets reliably survive refresh and history restore.
-4. **More KOLs**: Self-serve onboarding path.
-5. **Eval quality**: Pairwise comparison, citation relevance scoring, real user questions.
+1. Code tab: turn persona theses into runnable strategy/backtest code instead of placeholder UI.
+2. Auth hardening: ensure every history, subscription, and billing endpoint derives user identity server-side rather than trusting client `user_id`.
+3. Billing enforcement: connect subscription/credits state to backend model access and usage accounting.
+4. More personas: add a repeatable onboarding/admin path for new KOLs.
+5. Evaluation quality: add pairwise answer comparison, citation relevance checks, and more real user questions.
+6. Frontend build: consider replacing in-browser Babel with a small Vite/esbuild pipeline once product surface stabilizes.
+7. Observability: add targeted logs/metrics for chat latency, retrieval quality, citation hydration misses, and source rail errors.
+
+## Handoff Checklist
+
+Before shipping frontend changes:
+
+- Run `cd app && npm run preflight`.
+- Check `https://app.robindex.ai/chat/<id>` direct refresh when touching history/routing.
+- Check a source rail with many citations and one card with media.
+- Confirm mobile still has bottom navigation and source view.
+- Deploy with `npm run deploy:cf`.
+
+Before shipping backend/chat changes:
+
+- Run `npm run test:dsl` if streaming cleaner or tool DSL changed.
+- Run `npm run test:prompt` if prompt formatting changed.
+- Smoke `/api/kols`, `/api/tweets`, and one chat path.
+- Do not commit local secrets or raw paid data.

@@ -1,186 +1,264 @@
 # Robindex
 
-Robindex is a Cloudflare-native AI trader desk. A user picks a finance KOL persona and asks questions — the model answers **as** that KOL, grounded in the KOL's real historical tweets, a distilled persona pack, and live market data, with clickable source-tweet citations.
+Robindex is a Cloudflare-native AI finance persona desk. A user signs in, picks a finance KOL persona, asks a market question, and gets a sourced answer written through that KOL's framework. Every cited claim links back to real tweets in the right-side source rail.
 
-There is no fine-tuning. The system is retrieval + persona distillation + tools, so model upgrades improve the product without retraining.
+There is no fine-tuning. The product is retrieval, persona distillation, live market tools, and prompt assembly. Model upgrades and better retrieval improve the product without retraining.
 
 ## Production
 
 | URL | Purpose |
 | --- | --- |
-| https://robindex.ai | Marketing site (static landing page, SEO) |
-| https://www.robindex.ai | Same as above |
-| https://app.robindex.ai | **Robindex Desk** — the product (React SPA) |
+| https://robindex.ai | SEO marketing site |
+| https://www.robindex.ai | SEO marketing site |
+| https://app.robindex.ai | Robindex Desk product SPA |
 
-API routes (`/api/*`) work on all three hosts. Visiting `/research`, `/desk`, or `/kol/*` on the marketing domain redirects to `app.robindex.ai`.
+The Worker serves both static assets and APIs. API routes are under `/api/*`. App deep links such as `/chat/:id` are served by the Desk SPA on `app.robindex.ai`.
 
-## Current State
+Latest verified production deploy: Cloudflare Worker version `af782781-47b6-4cab-9b12-fb1e9d2d9864` on 2026-06-22.
 
-- Live KOLs:
-  - `qinbafrank` — persona `v2-mapreduce-2026-06-18`, ~13.7k tweets
-  - `aleabitoreddit` — persona `v2-mapreduce-2026-06-19`, ~5.9k tweets
-- Both KOLs have full-corpus `persona_facts:merged`; weekly updates use incremental map-reduce.
-- Tweet corpora and FTS5 search indexes live in D1; raw paid tweet pulls archived in R2.
+## Current Product
+
+- Privy login with email and Google.
+- Two live personas:
+  - `qinbafrank` — macro transmission, AI trend, US stocks, crypto x TradFi.
+  - `aleabitoreddit` / Serenity — AI semiconductor supply chain, photonics/CPO.
+- Chat answers stream over SSE.
+- The answer renderer supports clickable numeric citations.
+- Right rail has two tabs: persona profile and cited source tweets.
+- Source cards hydrate historical citations back into full tweet text, dates, media, quoted tweets, and X links.
+- Desktop layout: sidebar, conversation thread, resizable source rail.
+- Mobile layout: top bar, bottom nav, chat/source/persona views.
+- Bilingual UI: Chinese and English.
+- Themes: Aurora, Terminal, Matrix, Codex.
+- Billing/subscription UI, credits, BYOK custom model config, model picker, and reasoning effort controls are present in the frontend.
+- Code tab is still a placeholder marked SOON.
 
 ## Architecture
 
-One Cloudflare Worker (`app/src/index.ts`) serves static assets and JSON/SSE APIs.
+One Cloudflare Worker in `app/src/index.ts` serves:
+
+- host routing and SPA fallback
+- static marketing and Desk assets through `ASSETS`
+- JSON APIs
+- SSE chat streaming
+- admin endpoints
+- scheduled ingest, persona refresh, distill, and eval drivers
 
 | Concern | Implementation |
 | --- | --- |
-| Marketing site | Static HTML at `app/public/index.html` + `landing-static.js` + `app/public/app/landing.css` |
-| Desk SPA | `app/public/desk.html` → React 18 (CDN + Babel) in `app/public/app/` |
-| API / SSE chat | Hono Worker in `app/src/index.ts` |
-| Chat history | D1 `chat_history` + localStorage sync |
+| Marketing site | `app/public/index.html`, `app/public/landing-static.js`, `app/public/app/landing.css` |
+| Desk SPA | `app/public/desk.html` with React 18 CDN + Babel JSX files under `app/public/app/` |
+| Worker/API | Hono in `app/src/index.ts` |
+| Auth | Privy React SDK bundled into `app/public/app/privy-bundle.js` |
+| Chat state | localStorage for instant UI, D1 `chat_history` for cloud sync |
 | Database | D1 `robindex-db` |
-| Raw archive | R2 `robindex-raw` |
-| Cache | KV `CACHE` |
-| LLM | Cloudflare AI Gateway → `deepseek/deepseek-v4-flash` / `deepseek/deepseek-v4-pro` |
-| Market data | Tencent quote/kline, Eastmoney A-share/global |
-| Cron | daily ingest, weekly persona refresh, per-minute distill job driver |
+| Raw tweet archive | R2 `robindex-raw` |
+| Cache/job state | KV `CACHE` |
+| LLM | Cloudflare AI Gateway, mostly DeepSeek V4 Flash/Pro via OpenRouter gateway |
+| Retrieval | D1 FTS5 trigram search plus LLM rerank |
+| Market data | Tencent quotes/kline, Eastmoney A-share/global data |
+| Deploy | Wrangler, `app/wrangler.jsonc` |
 
-Retrieval uses **FTS5**, not vectors. Finance tweets are short, bilingual, and jargon-dense; sparse retrieval plus LLM query expansion has been more controllable than embeddings.
+## Frontend Map
 
-### Domain routing (Worker)
-
-Host-based routing in `app/src/index.ts`:
-
-- `robindex.ai` / `www.robindex.ai` → `/` serves static landing; app paths redirect to `app.robindex.ai`
-- `app.robindex.ai` → `/` and unmatched non-API paths serve `desk.html` (SPA shell)
-
-Custom domains are declared in `app/wrangler.jsonc`.
-
-## Frontend
-
-### Marketing site (static)
-
-`app/public/index.html` is a single static page for SEO:
-
-- Full Chinese body content in HTML (crawlable without JS)
-- Open Graph, Twitter Card, canonical, hreflang, JSON-LD
-- `landing-static.js` — theme toggle, 中/EN copy swap, nav scroll, reveal animations
-- Styles: `app/public/app/themes.css` (design tokens) + `app/public/app/landing.css`
-
-All CTAs point to `https://app.robindex.ai/`.
-
-### Robindex Desk (SPA)
-
-Entry: `app/public/desk.html` (served at `https://app.robindex.ai/`).
-
-| File | Purpose |
+| File | Role |
 | --- | --- |
-| `themes.css` | 4-theme design system (Terminal / Aurora / Matrix / Codex) + layout |
-| `landing.css` | Marketing page only |
-| `i18n.js` | Bilingual UI strings (中/EN) |
-| `data.js` | KOL enrichment, `/api/kols` init, SSE `/api/chat`, `/api/suggest`, cloud history |
-| `components.jsx` | Icons, Avatar, ModelPicker (incl. reasoning effort), citations, rail |
-| `auth.jsx` | Login screen (mock — email/social/wallet → localStorage) |
-| `settings.jsx` | Settings overlay |
-| `mobile.jsx` | Mobile top bar + bottom nav |
-| `app.jsx` | App shell: auth gate, chat state, SSE, resizable sources rail, cloud sync |
+| `app/public/desk.html` | Product SPA shell |
+| `app/public/index.html` | Marketing page HTML |
+| `app/public/app/app.jsx` | Main Desk app shell, Privy state, chat state, routing, SSE handling |
+| `app/public/app/components.jsx` | Icons, avatar, model picker, answer renderer, source cards |
+| `app/public/app/themes.css` | Design tokens, themes, Desk layout, source rail, billing/settings styles |
+| `app/public/app/data.js` | KOL data enrichment, API calls, SSE client, history sync helpers |
+| `app/public/app/auth.jsx` | Privy login gate |
+| `app/public/app/settings.jsx` | Settings and custom model/API key UI |
+| `app/public/app/billing.jsx` | Wallet, subscription, checkout, usage, paywall UI |
+| `app/public/app/mobile.jsx` | Mobile top bar and bottom nav |
+| `app/public/app/i18n.js` | Chinese/English strings |
+| `app/public/app/privy-bundle.js` | Browser bundle built from `app/src/privy-entry.js` |
 
-Desk features: three-column desktop (sidebar · thread · rail), mobile bottom nav, 4 themes, model + reasoning-effort picker, bilingual UI, PWA manifest.
+This frontend intentionally has no app build step. JSX is loaded by Babel in the browser. The Privy SDK is the only bundled frontend dependency.
 
-### Chat history sync
+## Backend Map
 
-1. **Init**: localStorage → merge cloud (`GET /api/chat/history`) → dedupe by id and `kol_id::title`
-2. **On change**: localStorage (instant) → debounced 2s cloud save (`PUT /api/chat/history/:id`)
-3. **URL**: active chat tracked via `?chat=<id>`, auto-opens on load
-4. **User id**: random UUID in localStorage (`rx.userId`)
+| File | Role |
+| --- | --- |
+| `app/src/index.ts` | Worker routes, host routing, SSE chat endpoint, history APIs, admin APIs, cron |
+| `app/src/chat.ts` | Prompt assembly, market context, tool phase, model streaming helpers |
+| `app/src/rag.ts` | Query-side retrieval, FTS search, LLM rerank, citation construction |
+| `app/src/query-plan.ts` | LLM query planning and instrument detection |
+| `app/src/source-format.ts` | Citation prompt formatting |
+| `app/src/finance.ts` | Quotes and kline helpers |
+| `app/src/eastmoney-astock.ts` | A-share fundamentals, fund flow, sectors, reports |
+| `app/src/eastmoney-global.ts` | Global equity fundamentals and filings |
+| `app/src/marketdata.ts` | Stock and market news |
+| `app/src/ingest.ts` | GetXAPI/Apify ingest and raw archive |
+| `app/src/persona-distill.ts` | Map/reduce persona distillation |
+| `app/src/persona-gen.ts` | Persona generation/evolution/diagnostics |
+| `app/src/eval.ts` | Eval cases, scoring, rollback |
+| `app/schema.sql` | Baseline D1 schema |
+| `app/migrations/` | D1 migrations |
 
-| Endpoint | Method | Description |
+## Request Flow
+
+1. User asks in the Desk composer.
+2. Frontend posts to `/api/chat` and reads SSE events.
+3. Worker loads the KOL row and persona pack.
+4. `planQuery()` expands the question into instruments and search terms.
+5. `retrieve()` searches `tweet_search`, reranks candidates, and returns source citations.
+6. `gatherMarketData()` fetches relevant quotes, kline, news, and fundamentals.
+7. Worker sends citation metadata early so the right rail can populate before the final answer finishes.
+8. `buildMessages()` assembles persona, source tweets, live data, history summary, and tool memory.
+9. Model output streams back as deltas.
+10. Final answer, citations, and tool calls are persisted.
+
+## Chat History And Deep Links
+
+Current URL format is `/chat/:id`, for example `https://app.robindex.ai/chat/m2`.
+
+History sync works like this:
+
+1. localStorage loads first for instant UI.
+2. `GET /api/chat/history?user_id=<id>` merges D1 history.
+3. Message changes save to localStorage immediately.
+4. Cloud save is debounced with `PUT /api/chat/history/:id`.
+5. Deep links wait for history loading before rewriting the URL, so direct refresh of `/chat/:id` stays on that chat.
+
+History identity:
+
+- Logged-in users use `privy.user.id`.
+- Before login, the app uses local `rx.userId`.
+- On login transition, in-memory chats are persisted under the real Privy user id.
+
+History endpoints:
+
+| Endpoint | Method | Purpose |
 | --- | --- | --- |
 | `/api/chat/history?user_id=` | GET | List conversations |
-| `/api/chat/history/:id?user_id=` | GET | Single conversation |
-| `/api/chat/history/:id` | PUT | Upsert conversation |
-| `/api/chat/history/:id?user_id=` | DELETE | Delete conversation |
+| `/api/chat/history/:id?user_id=` | GET | Fetch one conversation |
+| `/api/chat/history/:id` | PUT | Upsert full frontend message payload |
+| `/api/chat/history/:id?user_id=` | DELETE | Delete one conversation |
 
-## How A Reply Is Built
+## Source Rail Notes
 
-1. Chat endpoint loads KOL row and `persona_pack`.
-2. `planQuery()` expands the question into instruments and bilingual search terms.
-3. `retrieve()` searches that KOL's corpus in `tweet_search`, then `llmRerank()` picks source tweets.
-4. `gatherMarketData()` injects quotes, K-lines, news, fundamentals, benchmark context.
-5. `buildMessages()` assembles system prompt with persona pack, citations, live data.
-6. Bounded tool phase fetches missing data; answer streams over SSE.
+The source rail is central to the product. Recent fixes to preserve:
 
-## Persona Pipeline
+- `.rail-scroll>* { flex: 0 0 auto; }` prevents many source cards from being squeezed into one viewport.
+- `/api/citations/hydrate` backfills `snippet`, `date`, `url`, `likes`, `views`, media, and quoted tweets for historical citations.
+- Source media uses `margin: 10px 0` so the "View on X" footer has the same spacing with or without images.
+- Source cards gracefully render when a historical citation is missing text or URL.
 
-Full-corpus generation: `POST /api/admin/distill-auto?kol_id=<id>&reset=1`
+If the rail looks wrong, inspect rendered `.src` card height, `.rail-scroll.scrollHeight`, and citation hydration output before changing the design.
 
-1. `mapStage` — flash partial persona over corpus chunks
-2. `reduceGroup` — pro group merge
-3. `reduceFinalDraft` — pro final draft
-4. `finalizeMerged` — quote verification, exemplars, publish `persona_pack`
-5. Eval scores new persona; rollback only on regression
+## Data Model
+
+Important tables:
+
+| Table | Role |
+| --- | --- |
+| `kols` | Persona metadata and `persona_pack` |
+| `tweets` | Canonical tweet corpus |
+| `tweet_tags` | Machine-generated retrieval fields |
+| `tweet_search` | FTS5 trigram index |
+| `chat_history` | User-scoped full frontend conversation payloads |
+| `conversations`, `messages` | Backend chat/message persistence |
+| `knowledge_chunks` | Distilled long-form knowledge |
+| `persona_facts` | Persona distillation map/reduce state |
+| `eval_cases`, `eval_results` | Eval set and scores |
+| `sync_state` | Ingest progress |
 
 ## Scheduled Jobs
 
 | Cron | Job |
 | --- | --- |
-| `0 9 * * *` | Daily GetXAPI ingest |
-| `30 9 * * 1` | Weekly stance chunk + incremental persona refresh |
-| `* * * * *` | Drive in-progress distill-auto / eval jobs from KV |
+| `0 9 * * *` | Daily ingest |
+| `30 9 * * 1` | Weekly stance chunk and incremental persona refresh |
+| `* * * * *` | Drive in-progress distill/eval jobs |
 
-## Data Model
+Cron definitions live in `app/wrangler.jsonc`.
 
-See `app/schema.sql` and `app/migrations/`.
-
-| Table | Role |
-| --- | --- |
-| `kols` | KOL metadata, `persona_pack` |
-| `tweets` | Canonical tweet corpus |
-| `tweet_search` | FTS5 index (trigram) |
-| `chat_history` | User-scoped conversations (full message JSON) |
-| `persona_facts` | Map/reduce partials and merged persona JSON |
-| `eval_cases`, `eval_results` | Golden eval set and version scores |
-
-## Operations
-
-Secrets live in `account.guard.json` at repo root (gitignored). Never commit it.
+## Local Setup
 
 ```bash
 cd app
-export CLOUDFLARE_API_KEY=$(node -p "require('../account.guard.json').CLOUDFLARE_API_KEY")
-export CLOUDFLARE_EMAIL=$(node -p "require('../account.guard.json').expectedEmail")
-unset CLOUDFLARE_API_TOKEN   # use Global API Key + email, not a token
-export NODE_OPTIONS='--require ./scripts/cloudflare-dns-patch.cjs'
-
-npx tsc --noEmit
-npm run deploy
+npm install
+npm run preflight
 ```
 
-Admin endpoints require header `x-admin-key: $ADMIN_KEY`:
+Useful scripts:
 
-- `GET /api/admin/stats`
-- `POST /api/admin/ingest`
-- `POST /api/admin/distill-auto?kol_id=<id>&reset=1`
-- `POST /api/admin/eval-run?kol_id=<id>&limit=2`
+| Command | Purpose |
+| --- | --- |
+| `npm run preflight` | Verify Cloudflare auth and key production smoke paths |
+| `npm run deploy:cf` | Deploy with the Cloudflare DNS patch required for this environment |
+| `npm run whoami:cf` | Verify Cloudflare auth |
+| `npm run tail` | Tail Worker logs |
+| `npm run test:dsl` | Test DSL stream cleaners |
+| `npm run test:prompt` | Test prompt formatting |
+| `npm run build:privy` | Rebuild `privy-bundle.js` after SDK entry/dependency changes |
 
-Smoke checks:
+## Deploy
+
+Secrets are local and must never be committed. The expected local file is `account.guard.json` at repo root.
+
+Preferred deploy path:
 
 ```bash
-curl -s https://robindex.ai/ | head -5                    # static landing
-curl -s https://app.robindex.ai/ | head -5                # desk SPA
-curl -s https://robindex.ai/api/kols
-curl -s "https://robindex.ai/api/tweets?kol_id=qinbafrank&limit=1"
+cd app
+npm run preflight
+npm run deploy:cf
 ```
+
+`deploy:cf` sets `NODE_OPTIONS='--require ./scripts/cloudflare-dns-patch.cjs'` before running Wrangler. Use it instead of raw `wrangler deploy` on this machine.
+
+Admin endpoints require `x-admin-key: $ADMIN_KEY`.
+
+Common admin endpoints:
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/admin/stats` | Corpus and persona stats |
+| `POST /api/admin/ingest` | Trigger ingest |
+| `POST /api/admin/distill-auto?kol_id=<id>&reset=1` | Full persona distill |
+| `POST /api/admin/eval-run?kol_id=<id>&limit=2` | Eval run |
+
+## Smoke Checks
+
+```bash
+curl -s https://robindex.ai/ | head -5
+curl -s https://app.robindex.ai/ | head -5
+curl -s https://app.robindex.ai/api/kols
+curl -s "https://app.robindex.ai/api/tweets?kol_id=qinbafrank&limit=1"
+```
+
+For source rail regressions, use Chrome or the in-app browser on a historical chat with many citations and verify:
+
+- URL remains `/chat/:id` after refresh.
+- `.src` cards have natural heights, not ~20-30px.
+- `.rail-scroll.scrollHeight` is larger than its viewport when there are many citations.
+- cards with media have normal spacing above "View on X".
 
 ## Repository Layout
 
+```text
+.
+├── README.md
+├── Plan.md
+└── app
+    ├── package.json
+    ├── wrangler.jsonc
+    ├── schema.sql
+    ├── migrations/
+    ├── scripts/
+    ├── src/
+    └── public/
+        ├── index.html
+        ├── desk.html
+        └── app/
 ```
-app/
-  src/index.ts          Worker: routes, host routing, SSE chat, admin, cron
-  src/chat.ts           Prompt assembly, market context, tools, streaming
-  src/rag.ts            FTS retrieval, rerank, quote attachment
-  src/persona-distill.ts  Map-reduce persona generation
-  src/eval.ts           Eval set, scoring, rollback
-  public/
-    index.html          Marketing site (static, SEO)
-    desk.html           Desk SPA shell
-    landing-static.js   Landing page JS (theme, i18n, nav)
-    app/                Desk + shared design system (React JSX, CSS, data)
-  migrations/           D1 migrations
-  wrangler.jsonc        Worker config + custom domains
-  schema.sql            D1 baseline schema
-```
+
+## Do Not Commit
+
+- `account.guard.json`
+- API keys, Privy secrets, AI Gateway keys, Cloudflare tokens
+- raw paid tweet exports unless intentionally archived to R2
+- local browser/session data
