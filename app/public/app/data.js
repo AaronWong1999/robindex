@@ -170,12 +170,27 @@
   async function streamChat(kolId, question, model, callbacks) {
     const { onPhase, onMeta, onToolCall, onDelta, onDone, onError } = callbacks;
     try {
+      // Include auth token when available (needed for BYOK model routing and credit checks).
+      const headers = { "Content-Type": "application/json" };
+      if (window.RXB && window.RXB.serverReady()) {
+        const authHeaders = await window.RXB.authHeaders();
+        Object.assign(headers, authHeaders);
+      }
       const res = await fetch("/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ kol_id: kolId, model, message: question }),
       });
-      if (!res.ok) { onError("Server error: " + res.status); return; }
+      if (!res.ok) {
+        // Try to read JSON error body for user-friendly messages (e.g. credit exhaustion).
+        try {
+          const body = await res.json();
+          onError(body.message || ("Server error: " + res.status));
+        } catch {
+          onError("Server error: " + res.status);
+        }
+        return;
+      }
       const reader = res.body.getReader();
       const dec = new TextDecoder();
       let buf = "";
@@ -207,6 +222,10 @@
             } else if (type === "delta") {
               fullText += parsed;
               onDelta(fullText);
+            } else if (type === "consumption") {
+              // Server-side billing consumption row written — refresh the billing store so the new
+              // charge shows up immediately in 用量明细 / 钱包.
+              if (window.RXB && window.RXB.syncFromServer) window.RXB.syncFromServer();
             } else if (type === "error") {
               onError(parsed.message || "Unknown error");
               return;

@@ -194,17 +194,43 @@ function Checkout({ item, kols, onClose, onDone }) {
 function AddModelModal({ onClose, onSaved }) {
   const B = window.RXB;
   const provs = B.providers();
-  const [provId, setProvId] = bS((provs.find((p) => p.dflt) || provs[0]).id);
+  const initProv = provs.find((p) => p.dflt) || provs[0];
+  const [provId, setProvId] = bS(initProv.id);
   const [provOpen, setProvOpen] = bS(false);
   const [apiKey, setApiKey] = bS("");
   const [showKey, setShowKey] = bS(false);
-  const [modelName, setModelName] = bS("Auto");
-  const [mOpen, setMOpen] = bS(false);
+  // baseUrl is read-only for built-in providers; only editable when the user picks "自定义" OR
+  // edits a built-in URL (in which case we silently flip to "custom" so the saved record reflects reality).
+  const [baseUrl, setBaseUrl] = bS(initProv.baseUrl || "");
+  const [baseUrlDirty, setBaseUrlDirty] = bS(false);
+  const [modelName, setModelName] = bS(initProv.models?.[0] || "Auto");
   const prov = B.provider(provId) || provs[0];
   const groups = [];
   provs.forEach((p) => { let g = groups.find((x) => x.g === p.group); if (!g) { g = { g: p.group, items: [] }; groups.push(g); } g.items.push(p); });
+  // If the user edits the baseUrl of a built-in provider, treat it as a custom endpoint.
+  const effectiveProvId = baseUrlDirty && provId !== "custom" ? "custom" : provId;
+  const isCustom = effectiveProvId === "custom";
+  const pickProv = (p) => {
+    setProvId(p.id);
+    setBaseUrl(p.baseUrl || "");
+    setBaseUrlDirty(false);
+    setModelName(p.models?.[0] || "Auto");
+    setProvOpen(false);
+  };
+  const onBaseUrlChange = (v) => {
+    setBaseUrl(v);
+    // Built-in providers have a known default; any deviation means the user is overriding the endpoint.
+    if (provId !== "custom" && v && v !== prov.baseUrl) setBaseUrlDirty(true);
+  };
+  const save = () => {
+    const finalUrl = (baseUrl || prov.baseUrl || "").trim();
+    if (!finalUrl) { alert("请填写接口地址"); return; }
+    // Persist with the effective provider id — if the URL was edited, we treat it as a custom endpoint.
+    const useProv = isCustom ? "custom" : provId;
+    const m = B.addCustomModel({ providerId: useProv, providerName: prov.name, baseUrl: finalUrl, apiKey, modelName });
+    onSaved && onSaved(m);
+  };
   const groupLabel = (g) => g === "Custom" ? BT("provCustom") : g;
-  const save = () => { const m = B.addCustomModel({ providerId: provId, providerName: prov.name, baseUrl: prov.baseUrl, apiKey, modelName }); onSaved && onSaved(m); };
   return (
     <div className="pw-overlay" onClick={(e) => { if (e.target.classList.contains("pw-overlay")) onClose(); }}>
       <div className="am-card">
@@ -215,7 +241,6 @@ function AddModelModal({ onClose, onSaved }) {
         <div className="am-body">
           <div className="am-field">
             <div className="am-lab-row"><span className="am-lab">{BT("provider")}</span><a className="am-doc" href="#" onClick={(e) => e.preventDefault()}>{BT("viewDocs")}</a></div>
-            <div className="am-url">{prov.baseUrl || BT("customUrlPlaceholder")}</div>
             <div className="am-select">
               <button className="am-sel-btn" onClick={() => setProvOpen((o) => !o)}>
                 <span className="mp-badge" style={{ background: prov.color, width: 18, height: 18, fontSize: 8 }}>{prov.badge}</span>
@@ -228,7 +253,7 @@ function AddModelModal({ onClose, onSaved }) {
                     <React.Fragment key={g.g}>
                       <div className="mp-head">{groupLabel(g.g)}</div>
                       {g.items.map((p) => (
-                        <button key={p.id} className={"mp-item" + (p.id === provId ? " sel" : "")} onClick={() => { setProvId(p.id); setModelName(((B.provider(p.id) || {}).models || ["Auto"])[0]); setProvOpen(false); }}>
+                        <button key={p.id} className={"mp-item" + (p.id === provId ? " sel" : "")} onClick={() => pickProv(p)}>
                           <span className="mp-badge" style={{ background: p.color, width: 18, height: 18, fontSize: 8 }}>{p.badge}</span>
                           <span className="nm" style={{ flex: 1 }}>{p.name}</span>
                           {p.id === provId && <Bicon name="check" size={14} color="var(--accent)" />}
@@ -241,6 +266,18 @@ function AddModelModal({ onClose, onSaved }) {
             </div>
           </div>
           <div className="am-field">
+            <span className="am-lab">{BT("baseUrl")}</span>
+            <input
+              className="am-input"
+              type="text"
+              value={baseUrl}
+              onChange={(e) => onBaseUrlChange(e.target.value)}
+              readOnly={!isCustom}
+              placeholder={isCustom ? "https://api.example.com/v1/chat/completions" : (prov.baseUrl || BT("customUrlPlaceholder"))}
+              style={!isCustom ? { background: "var(--panel-2)", color: "var(--faint)", cursor: "default" } : null}
+            />
+          </div>
+          <div className="am-field">
             <span className="am-lab">API Key</span>
             <div className="am-key">
               <input type={showKey ? "text" : "password"} value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={BT("apiKeyPlaceholder")} />
@@ -249,19 +286,15 @@ function AddModelModal({ onClose, onSaved }) {
           </div>
           <div className="am-field">
             <span className="am-lab">{BT("modelName")}</span>
-            <div className="am-select">
-              <button className="am-sel-btn" onClick={() => setMOpen((o) => !o)}><span className="am-sel-nm">{modelName}</span><Bicon name="chevronDown" size={14} color="var(--faint)" /></button>
-              {mOpen && (
-                <div className="am-menu">
-                  {(prov.models || ["Auto"]).map((mn) => (
-                    <button key={mn} className={"mp-item" + (mn === modelName ? " sel" : "")} onClick={() => { setModelName(mn); setMOpen(false); }}>
-                      <span className="nm" style={{ flex: 1 }}>{mn}</span>
-                      {mn === modelName && <Bicon name="check" size={14} color="var(--accent)" />}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+            <input
+              className="am-input"
+              type="text"
+              value={modelName}
+              onChange={(e) => setModelName(e.target.value)}
+              placeholder={isCustom ? BT("customModelPlaceholder") : (prov.models?.[0] || "Auto")}
+              autoComplete="off"
+              spellCheck={false}
+            />
           </div>
           <div className="am-note"><Bicon name="key" size={12} color="var(--faint)" />{BT("byokNote")}</div>
         </div>
@@ -447,10 +480,15 @@ function UsagePage({ onClose, onCheckout, mobile }) {
   const [range, setRange] = bS(7);
   const t0 = Date.now();
   const rows = a.consumption.filter((e) => e.ts >= t0 - range * 86400000);
-  const spent = rows.reduce((s, e) => s + (e.points || 0), 0);
+  // Only count credits actually spent (exclude free + BYOK which cost $0 of platform credits).
+  const spent = rows.reduce((s, e) => s + (e.byok || e.free ? 0 : (e.points || 0)), 0);
   const tin = rows.reduce((s, e) => s + (e.tokIn || 0), 0);
   const tout = rows.reduce((s, e) => s + (e.tokOut || 0), 0);
+  const byokCount = rows.filter((e) => e.byok).length;
+  const freeCount = rows.filter((e) => e.free).length;
   const mdl = (id) => B.model(id) || { name: id, color: "#8A8F98", badge: "··" };
+  // 扣费方式: byok = 自有 API, free = 免费试用, system = 平台积分
+  const chargeKind = (e) => e.byok ? "byok" : e.free ? "free" : "system";
   return (
     <div className={"bill-page" + (mobile ? " mob" : "")}>
       <div className="bill-head">
@@ -470,20 +508,29 @@ function UsagePage({ onClose, onCheckout, mobile }) {
             {[3, 7, 30].map((d) => <button key={d} className={"urg" + (range === d ? " on" : "")} onClick={() => setRange(d)}>{d}d</button>)}
           </div>
         </div>
+        {/* charge-source legend so the user can tell which bucket a question landed in */}
+        <div className="usage-legend">
+          <span className="usage-legend-k">{BT("usageChargeFrom")}</span>
+          <span className={"usage-chip sys"}><Bicon name="zap" size={11} />{BT("usageChipSystem")}{rows.length - byokCount - freeCount > 0 ? " · " + (rows.length - byokCount - freeCount) : ""}</span>
+          <span className={"usage-chip free"}><Bicon name="gift" size={11} />{BT("mpFree")}{freeCount > 0 ? " · " + freeCount : ""}</span>
+          <span className={"usage-chip byok"}><Bicon name="key" size={11} />{BT("byokTag")}{byokCount > 0 ? " · " + byokCount : ""}</span>
+        </div>
         <div className="usage-table">
           <div className="utr utr-h">
             <span className="uc-id">{BT("colReq")}</span>
             <span className="uc-mdl">{BT("modelTitle")}</span>
             <span className="uc-tok">{BT("usageTokens")} <i>({BT("tokInOut")})</i></span>
             <span className="uc-pts">{BT("colPoints")}</span>
+            <span className="uc-src">{BT("usageChargeFrom")}</span>
             <span className="uc-q">{BT("colPrompt")}</span>
           </div>
           {rows.length === 0
             ? <div className="usage-empty">{BT("ledgerEmpty")}</div>
             : rows.map((e, i) => {
                 const m = mdl(e.model);
+                const k = chargeKind(e);
                 return (
-                  <div className="utr" key={e.id || i}>
+                  <div className={"utr utr-" + k} key={e.id || i}>
                     <span className="uc-id mono">{e.id ? e.id + "…" : "—"}</span>
                     <span className="uc-mdl">
                       <span className="mp-badge" style={{ background: m.color, width: 18, height: 18, fontSize: 8 }}>{m.badge}</span>
@@ -491,6 +538,11 @@ function UsagePage({ onClose, onCheckout, mobile }) {
                     </span>
                     <span className="uc-tok mono"><i className="tin">↓ {B.fmtTok(e.tokIn)}</i><i className="tout">↑ {B.fmtTok(e.tokOut)}</i></span>
                     <span className={"uc-pts" + (e.free ? " free" : "")}>{e.free ? BT("mpFree") : "−" + B.fmtPts(e.points)}</span>
+                    <span className={"uc-src chip " + k}>
+                      {k === "byok" && (<><Bicon name="key" size={11} />{BT("byokTag")}</>)}
+                      {k === "free" && (<><Bicon name="gift" size={11} />{BT("mpFree")}</>)}
+                      {k === "system" && (<><Bicon name="zap" size={11} />{BT("usageChipSystem")}</>)}
+                    </span>
                     <span className="uc-q">{e.q ? B.pick(e.q, lang) : "—"}</span>
                   </div>
                 );

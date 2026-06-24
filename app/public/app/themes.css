@@ -932,7 +932,7 @@ sup.cite-grp{display:inline-flex;gap:2px;vertical-align:super;margin:0 1px;line-
 [data-theme="codex"] .urg.on{color:var(--up);border-color:rgba(25,195,125,.4);background:rgba(25,195,125,.1);}
 
 .usage-table{border:1px solid var(--border);border-radius:var(--r-lg);background:var(--panel);overflow:hidden;}
-.utr{display:grid;grid-template-columns:128px 158px 130px 96px minmax(0,1fr);gap:14px;align-items:center;
+.utr{display:grid;grid-template-columns:120px 152px 122px 92px 122px minmax(0,1fr);gap:14px;align-items:center;
   padding:13px 16px;border-bottom:1px solid var(--border-soft);font-size:12.5px;}
 .utr:last-child{border-bottom:none;}
 .utr:not(.utr-h):hover{background:var(--panel-2);}
@@ -949,16 +949,31 @@ sup.cite-grp{display:inline-flex;gap:2px;vertical-align:super;margin:0 1px;line-
 .uc-pts{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--text);}
 .uc-pts.free{color:var(--up);}
 .uc-q{color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.uc-src{display:flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;}
+.uc-src.chip{padding:4px 8px;border-radius:6px;width:max-content;}
+.uc-src.system{color:#4D6BFE;background:rgba(77,107,254,.08);border:1px solid rgba(77,107,254,.22);}
+.uc-src.free{color:#2DB37A;background:rgba(45,179,122,.08);border:1px solid rgba(45,179,122,.22);}
+.uc-src.byok{color:#8B7CF6;background:rgba(139,124,246,.1);border:1px solid rgba(139,124,246,.28);}
+.utr-byok{background:rgba(139,124,246,.04);}
+.utr-free{background:rgba(45,179,122,.04);}
+.usage-legend{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0 10px;padding:8px 12px;
+  background:var(--panel-2);border:1px solid var(--border-soft);border-radius:8px;font-size:11.5px;}
+.usage-legend-k{color:var(--faint);font-family:var(--mono);font-size:10.5px;letter-spacing:.04em;}
+.usage-chip{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:5px;font-size:11px;font-weight:600;}
+.usage-chip.sys{color:#4D6BFE;background:rgba(77,107,254,.08);border:1px solid rgba(77,107,254,.22);}
+.usage-chip.free{color:#2DB37A;background:rgba(45,179,122,.08);border:1px solid rgba(45,179,122,.22);}
+.usage-chip.byok{color:#8B7CF6;background:rgba(139,124,246,.1);border:1px solid rgba(139,124,246,.28);}
 .usage-empty{padding:34px;text-align:center;font-size:12.5px;color:var(--faint);}
 .usage-foot{display:flex;align-items:center;gap:8px;margin-top:14px;font-family:var(--mono);font-size:10.5px;color:var(--faint);line-height:1.5;}
 
 @media (max-width:760px){
   .usage-stats{grid-template-columns:1fr 1fr;}
-  .utr{grid-template-columns:1fr auto;grid-template-areas:"mdl pts" "tok pts" "q q" "id id";row-gap:7px;column-gap:12px;}
+  .utr{grid-template-columns:1fr auto;grid-template-areas:"mdl pts" "tok pts" "src src" "q q" "id id";row-gap:7px;column-gap:12px;}
   .utr-h{display:none;}
   .uc-mdl{grid-area:mdl;}
   .uc-pts{grid-area:pts;justify-self:end;align-self:start;}
   .uc-tok{grid-area:tok;flex-direction:row;gap:12px;}
+  .uc-src{grid-area:src;justify-self:start;}
   .uc-q{grid-area:q;white-space:normal;}
   .uc-id{grid-area:id;font-size:10px;}
 }
@@ -1017,6 +1032,10 @@ sup.cite-grp{display:inline-flex;gap:2px;vertical-align:super;margin:0 1px;line-
 [data-theme="codex"] .am-doc{color:var(--up);}
 .am-url{font-family:var(--mono);font-size:10.5px;color:var(--faint);word-break:break-all;
   background:var(--panel-2);border:1px solid var(--border-soft);border-radius:7px;padding:7px 10px;}
+.am-input{width:100%;padding:11px 13px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--panel-2);
+  font-size:13px;font-family:var(--mono);color:var(--text);outline:none;transition:.12s;}
+.am-input:focus{border-color:var(--accent-dim);}
+.am-input::placeholder{color:var(--faint);font-family:var(--mono);}
 .am-select{position:relative;}
 .am-sel-btn{display:flex;align-items:center;gap:9px;width:100%;padding:11px 13px;border-radius:var(--r-sm);
   border:1px solid var(--border-strong);background:var(--panel-2);font-size:13px;color:var(--text);text-align:left;}

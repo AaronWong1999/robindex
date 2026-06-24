@@ -688,8 +688,12 @@ export async function distillPersonaIncremental(
   merged.analytical_exemplars = Array.from(new Set([...freshExemplars, ...(prior.analytical_exemplars || [])])).slice(0, 5);
   applyTripleGate(merged);
 
-  // Persist (use full tweet span metadata via a light count query for date bounds).
-  await saveMerged(env, kolId, merged, fresh);
+  // Persist the consolidated persona with full-corpus metadata. The incremental merge only maps the
+  // fresh tweets, but the merged JSON still represents prior facts + fresh partials, so auditing fields
+  // such as tweets_covered/date_min/date_max must reflect the complete corpus rather than this week's
+  // slice.
+  const allTweets = await loadAllTweets(env, kolId);
+  await saveMerged(env, kolId, merged, allTweets);
 
   const pack = buildMarkdown(kol, merged);
   const validation = await validatePersona(env, kol, merged, fresh);

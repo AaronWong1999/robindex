@@ -21,11 +21,23 @@ import {
 import { authFromRequest } from "./auth";
 import {
   getState, grantTopup, activateSubscription, setSubscriptionStatus, eventSeen,
-  PACKS, planFor, subCents, AIRWALLEX_PRICES,
+  PACKS, planFor, subCents, AIRWALLEX_PRICES, ensureAccount, FREE,
 } from "./billing";
 import { createCheckoutSession, verifyWebhook } from "./stripe";
 import { createPaymentIntent, createBillingCheckout, verifyAirwallexWebhook, awEnv } from "./airwallex";
 import { APPLE_PAY_DOMAIN_ASSOCIATION } from "./applepay";
+import { getByokConfigByModelId, listByokModels, saveByokModel, deleteByokModel, BYOK_PROVIDERS } from "./byok";
+
+/** True iff the user has either a non-zero credit balance or an active subscription. */
+async function hasCreditBalance(env: Env, userId: string): Promise<boolean> {
+  const row = await env.DB.prepare(
+    `SELECT credits, free_used FROM billing_accounts WHERE user_id=?`
+  ).bind(userId).first<{ credits: number; free_used: number }>();
+  if (row && row.credits > 0) return true;
+  // Also count as "has credit" if the free daily cap hasn't been used.
+  if (row && row.free_used < FREE.cap) return true;
+  return false;
+}
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -375,7 +387,34 @@ app.post("/api/chat", async (c) => {
   const kol = await c.env.DB.prepare(`SELECT * FROM kols WHERE id=?`).bind(body.kol_id).first<KolRow>();
   if (!kol) return c.json({ error: "unknown kol_id" }, 404);
 
-  const model = body.model === "pro" ? c.env.MODEL_PRO : c.env.MODEL_FLASH;
+  // Resolve model: BYOK models (cm_xxx) route through the user's own API; system models
+  // ("pro", "flash") go through the Cloudflare AI Gateway. These two paths are mutually exclusive.
+  let model: string;
+  let byokCfg: ReturnType<typeof getByokConfigByModelId> extends Promise<infer T> ? T : never = null;
+  const auth = await authFromRequest(c.env, c.req.header("Authorization"));
+  if (auth && body.model && body.model.startsWith("cm_")) {
+    const cfg = await getByokConfigByModelId(c.env, auth.userId, body.model);
+    if (cfg && cfg.baseUrl) {
+      byokCfg = cfg as any;
+      model = cfg.modelName;
+    } else {
+      return c.json({ error: "invalid_byok", message: "自有 API 未配置或已失效，请检查设置" }, 400);
+    }
+  } else {
+    // System model path: resolve model name + check credits/quota.
+    model = body.model === "pro" ? c.env.MODEL_PRO : c.env.MODEL_FLASH;
+    if (auth) {
+      const state = await getState(c.env, auth.userId);
+      await ensureAccount(c.env, auth.userId);
+      const rolled = await getState(c.env, auth.userId); // re-read after rollFree
+      if (rolled.freeUsed >= FREE.cap && rolled.credits <= 0) {
+        return c.json({
+          error: "no_credits",
+          message: "今日免费次数已用完，积分余额为 0。请前往积分中心购买积分，或配置自有 API（设置 → 添加模型）。",
+        }, 402);
+      }
+    }
+  }
 
   // Conversation (bound to one KOL).
   let convId = body.conversation_id;
@@ -513,7 +552,7 @@ app.post("/api/chat", async (c) => {
               send("progress", { phase: "tools", text: `工具: ${evt.name || "unknown"}` });
               send("tool_call", { name: evt.name || "unknown", args: evt.args || "" });
             }
-          }, toolRounds);
+          }, toolRounds, byokCfg || undefined);
           toolMsgs = toolPhase.messages;
           toolCalls = toolPhase.toolCalls;
         }
@@ -530,19 +569,32 @@ app.post("/api/chat", async (c) => {
           },
         ];
 
-        // Step 4: Stream final LLM response
+        // Step 4: Stream final LLM response — route through BYOK or system gateway.
         send("progress", { phase: "thinking", text: "正在生成回复…" });
-        const upstream = await fetch(c.env.GATEWAY_URL, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "cf-aig-authorization": `Bearer ${c.env.CFGATEWAYKEY}`,
-            ...(c.env.OPENROUTER_KEY ? { Authorization: `Bearer ${c.env.OPENROUTER_KEY}` } : {}),
-            "HTTP-Referer": "https://robindex.ai",
-            "X-Title": "Robindex",
-          },
-          body: JSON.stringify({ model, messages: finalMessages, stream: true, temperature: 0.6 }),
-        });
+        const effectiveModel = byokCfg && byokCfg.modelName !== "Auto" ? byokCfg.modelName : model;
+        const upstream = await (byokCfg
+          ? fetch(byokCfg.baseUrl, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${byokCfg.apiKey}`,
+                "HTTP-Referer": "https://robindex.ai",
+                "X-Title": "Robindex",
+              },
+              body: JSON.stringify({ model: effectiveModel, messages: finalMessages, stream: true, temperature: 0.6 }),
+            })
+          : fetch(c.env.GATEWAY_URL, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "cf-aig-authorization": `Bearer ${c.env.CFGATEWAYKEY}`,
+                ...(c.env.OPENROUTER_KEY ? { Authorization: `Bearer ${c.env.OPENROUTER_KEY}` } : {}),
+                "HTTP-Referer": "https://robindex.ai",
+                "X-Title": "Robindex",
+              },
+              body: JSON.stringify({ model, messages: finalMessages, stream: true, temperature: 0.6 }),
+            })
+        );
 
         if (!upstream.ok || !upstream.body) {
           send("error", { status: upstream.status });
@@ -603,7 +655,34 @@ app.post("/api/chat", async (c) => {
         await c.env.DB.prepare(`UPDATE conversations SET updated_at=datetime('now') WHERE id=?`)
           .bind(convId!)
           .run();
-        await maybeUpdateSummary(c.env, convId!, model);
+        // Skip summary generation for BYOK models — background tasks shouldn't spend user's API credits.
+        if (!byokCfg) await maybeUpdateSummary(c.env, convId!, model);
+
+        // Record a billing consumption row so /api/billing/state surfaces it (with byok flag
+        // set when the user used their own key). Token counts are best-effort estimated.
+        if (auth) {
+          const approxIn = body.message.length * 1.7 + 2600;
+          const approxOut = full.length / 2.2;
+          const isFree = !byokCfg && body.model === "flash" && !(await hasCreditBalance(c.env, auth.userId));
+          const points = byokCfg || isFree ? 0 : Math.round(((approxIn * 0.20) + (approxOut * 0.90)) / 1000 * 100) / 100;
+          await c.env.DB.prepare(
+            `INSERT INTO billing_consumption (id,user_id,kol_id,model,tok_in,tok_out,points,free,byok,q,ts) VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+          ).bind(
+            crypto.randomUUID(),
+            auth.userId,
+            kol.id,
+            body.model || null,
+            Math.round(approxIn),
+            Math.round(approxOut),
+            points,
+            isFree ? 1 : 0,
+            byokCfg ? 1 : 0,
+            String(body.message).slice(0, 280),
+            Date.now(),
+          ).run();
+          // Mirror to localStorage so the page instantly reflects the new row.
+          send("consumption", { byok: !!byokCfg, free: isFree, points, model: body.model });
+        }
       } catch (e) {
         send("error", { message: String(e) });
         controller.close();
@@ -903,6 +982,34 @@ app.post("/api/billing/autorenew", async (c) => {
   await c.env.DB.prepare(`UPDATE billing_subscriptions SET auto_renew=?, updated_at=? WHERE user_id=? AND kol_id=?`)
     .bind(b.on ? 1 : 0, Date.now(), auth.userId, b.kolId).run();
   return c.json(await getState(c.env, auth.userId));
+});
+
+// ---- BYOK (Bring Your Own Key) model management ----
+// Users manage their own LLM API keys and endpoints. These endpoints require authentication.
+
+app.get("/api/byok/models", async (c) => {
+  const auth = await authFromRequest(c.env, c.req.header("authorization"));
+  if (!auth) return c.json({ error: "unauthorized" }, 401);
+  const models = await listByokModels(c.env, auth.userId);
+  return c.json({ models, providers: BYOK_PROVIDERS });
+});
+
+app.post("/api/byok/models", async (c) => {
+  const auth = await authFromRequest(c.env, c.req.header("authorization"));
+  if (!auth) return c.json({ error: "unauthorized" }, 401);
+  const b = await c.req.json<{ id?: string; providerId: string; modelName: string; displayName?: string; baseUrl?: string; apiKey: string; color?: string; badge?: string }>().catch(() => ({} as any));
+  if (!b.providerId || !b.apiKey) return c.json({ error: "providerId and apiKey required" }, 400);
+  const saved = await saveByokModel(c.env, auth.userId, b);
+  return c.json({ model: saved });
+});
+
+app.delete("/api/byok/models/:id", async (c) => {
+  const auth = await authFromRequest(c.env, c.req.header("authorization"));
+  if (!auth) return c.json({ error: "unauthorized" }, 401);
+  const id = c.req.param("id");
+  const ok = await deleteByokModel(c.env, auth.userId, id);
+  if (!ok) return c.json({ error: "not_found" }, 404);
+  return c.json({ deleted: true });
 });
 
 // Stripe webhook — the ONLY place credits/subscriptions are granted. Signature-verified, idempotent.

@@ -47,14 +47,9 @@
   // ---- BYOK: 自有 API 提供商预设（仅支持 OpenAI 兼容协议）----
   // 用户填入自己的 API Key 后，推理费由提供商直接向用户结算，平台扣 0 积分。
   const PROVIDERS = [
-    { id: "tc-token-pro",  group: "Token Plan", name: "腾讯云 Token Plan / 企业版专业", baseUrl: "https://api.lkeap.cloud.tencent.com/plan/v3/chat/completions", color: "#1E88E5", badge: "TC", models: ["Auto", "DeepSeek-V4-Pro", "DeepSeek-V4-Flash", "GLM-5.2", "Kimi-K2.7-Code"] },
-    { id: "tc-token-lite", group: "Token Plan", name: "腾讯云 Token Plan / 企业版轻享", baseUrl: "https://api.lkeap.cloud.tencent.com/plan/v3/chat/completions", color: "#1E88E5", badge: "TC", models: ["Auto", "DeepSeek-V4-Flash", "GLM-5v-Turbo"] },
-    { id: "tc-token-personal", group: "Token Plan", name: "腾讯云 Token Plan / 通用（个人版）", baseUrl: "https://api.lkeap.cloud.tencent.com/plan/v3/chat/completions", color: "#1E88E5", badge: "TC", dflt: true, models: ["Auto", "MiniMax-M2.5", "MiniMax-M2.7", "GLM-5", "GLM-5.1", "Kimi-K2.5"] },
-    { id: "tc-hy",         group: "Token Plan", name: "腾讯云 Token Plan / Hy（个人版）", baseUrl: "https://api.hunyuan.cloud.tencent.com/v1/chat/completions", color: "#F5A623", badge: "HY", models: ["Auto", "Hunyuan-Hy3", "Hunyuan-Turbo"] },
-    { id: "tc-coding",     group: "Coding Plan", name: "腾讯云 Coding Plan", baseUrl: "https://api.lkeap.cloud.tencent.com/coding/v3/chat/completions", color: "#1E88E5", badge: "TC", models: ["Auto", "DeepSeek-V4-Code", "Kimi-K2.7-Code"] },
-    { id: "glm-coding",    group: "Coding Plan", name: "智谱 Coding Plan / GLM Coding", baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions", color: "#3B6FE0", badge: "GLM", models: ["Auto", "GLM-5.2", "GLM-5.1"] },
-    { id: "kimi-coding",   group: "Coding Plan", name: "Kimi Coding Plan", baseUrl: "https://api.moonshot.cn/v1/chat/completions", color: "#14B8A6", badge: "K2", models: ["Auto", "Kimi-K2.7-Code", "Kimi-K2.6"] },
-    { id: "custom",        group: "Custom", name: "自定义 API", baseUrl: "", color: "#6B7280", badge: "API", models: ["Auto"] },
+    { id: "openrouter", group: "OpenRouter", name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1/chat/completions", color: "#71717A", badge: "OR", models: ["openai/gpt-4o", "openai/gpt-4.1", "anthropic/claude-sonnet-4", "anthropic/claude-3.5-sonnet", "google/gemini-2.5-pro", "google/gemini-2.5-flash", "deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash", "deepseek/deepseek-chat", "meta-llama/llama-4-maverick", "qwen/qwen3-235b-a22b", "mistralai/mistral-large", "x-ai/grok-4.1"] },
+    { id: "deepseek", group: "DeepSeek", name: "DeepSeek API", baseUrl: "https://api.deepseek.com/v1/chat/completions", color: "#4D6BFE", badge: "DS", dflt: true, models: ["deepseek-chat", "deepseek-reasoner"] },
+    { id: "custom", group: "Custom", name: "自定义 API", baseUrl: "", color: "#6B7280", badge: "API", models: ["Auto"] },
   ];
   function provider(id) { return PROVIDERS.find((p) => p.id === id) || null; }
   function maskKey(k) { if (!k) return ""; const s = String(k).trim(); return s.length <= 8 ? "••••••••" : s.slice(0, 3) + "••••••" + s.slice(-4); }
@@ -131,9 +126,25 @@
     };
     A.customModels = [m, ...((A && A.customModels) || [])];
     commit();
+
+    // Sync to backend so the BYOK routing works on the server.
+    if (serverReady() && cfg.apiKey) {
+      authHeaders().then((h) => fetch("/api/byok/models", {
+        method: "POST", headers: h,
+        body: JSON.stringify({ id: m.id, providerId: m.providerId, modelName: m.modelName, displayName: m.name, baseUrl: m.baseUrl, apiKey: cfg.apiKey, color: m.color, badge: m.badge }),
+      }).catch(() => {}));
+    }
     return m;
   }
-  function removeCustomModel(id) { A.customModels = ((A && A.customModels) || []).filter((m) => m.id !== id); commit(); }
+  function removeCustomModel(id) {
+    A.customModels = ((A && A.customModels) || []).filter((m) => m.id !== id); commit();
+    // Sync delete to backend.
+    if (serverReady()) {
+      authHeaders().then((h) => fetch("/api/byok/models/" + encodeURIComponent(id), {
+        method: "DELETE", headers: h,
+      }).catch(() => {}));
+    }
+  }
 
   // ---- free quota ----
   function rollFree() {
@@ -269,8 +280,33 @@
       if (!r.ok) return null;
       const st = await r.json();
       applyState(st);
+      // Also sync BYOK models from the server (they drive actual LLM routing).
+      syncByokModels();
       return st;
     } catch (e) { return null; }
+  }
+  async function syncByokModels() {
+    try {
+      const r = await fetch("/api/byok/models", { headers: await authHeaders() });
+      if (!r.ok) return;
+      const j = await r.json();
+      if (j.models && Array.isArray(j.models)) {
+        // Merge server models with local; server is authoritative for cm_ prefix.
+        const serverIds = new Set(j.models.map((m) => m.id));
+        const localOnly = (A.customModels || []).filter((m) => !serverIds.has(m.id));
+        const serverMapped = j.models.map((sm) => ({
+          id: sm.id, byok: true, group: "自有 API · BYOK",
+          modelName: sm.modelName, name: sm.displayName,
+          providerId: sm.providerId, providerName: sm.providerName,
+          baseUrl: sm.baseUrl,
+          apiKey: maskKey(sm.apiKey || ""),
+          color: sm.color || "#6B7280", badge: sm.badge || "API",
+          note: { zh: "自有 API · " + sm.providerName, en: "Your API · " + sm.providerName },
+        }));
+        A.customModels = [...serverMapped, ...localOnly];
+        save(A);
+      }
+    } catch (e) {}
   }
   // Lazy-load the Airwallex.js SDK (only when an Airwallex checkout is actually started).
   let _awSdkPromise = null;
@@ -323,7 +359,7 @@
   window.RXB = {
     FREE, PACKS, KOL_PLANS, planFor, RATE, PROVIDERS,
     get, commit, reset, onChange, pick,
-    setAuth, serverReady, syncFromServer, checkout, applyState,
+    setAuth, serverReady, syncFromServer, checkout, applyState, authHeaders,
     model, modelMult, isFreeModel, isByok, pointsFor, typicalCost,
     providers, provider, customModels, addCustomModel, removeCustomModel, maskKey,
     freeLeft, freeResetIn, freeCap: FREE.cap,

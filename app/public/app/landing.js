@@ -44,7 +44,6 @@ const LP = {
     fcLegal: "条款", fcTerms: "服务条款", fcPrivacy: "隐私政策", fcRisk: "风险提示",
     risk: "投资有风险，本平台内容仅供研究，不构成投资建议。",
     rights: "保留所有权利。",
-    operatedBy: "由 SYNHEART GROUP LIMITED 运营",
     priceEye: "定价", priceH: "从免费开始，按需付费",
     priceSub: "登录即用，每天免费提问 2 次。要更多，就订阅你最想问的分身，或按需充值积分——也可以填入自己的 API Key，零积分直连。",
     pFreeName: "免费版", pFreePrice: "$0", pFreeUnit: "", pFreeNote: "登录即用",
@@ -99,7 +98,6 @@ const LP = {
     fcLegal: "Legal", fcTerms: "Terms", fcPrivacy: "Privacy", fcRisk: "Risk disclosure",
     risk: "Investing carries risk. Content is for research only and is not investment advice.",
     rights: "All rights reserved.",
-    operatedBy: "Operated by SYNHEART GROUP LIMITED",
     priceEye: "Pricing", priceH: "Start free, pay as you grow",
     priceSub: "Sign in and ask 2 questions free every day. Want more — subscribe to the persona you ask most, or top up AI credits on demand. Or plug in your own API key and run credit-free.",
     pFreeName: "Free", pFreePrice: "$0", pFreeUnit: "", pFreeNote: "Sign in and go",
@@ -378,7 +376,7 @@ function Footer({ t }) {
           links.map(([l, href]) => React.createElement("a", { key: l, href }, l)))))),
     React.createElement("div", { className: "lfoot-base" },
       React.createElement("span", { className: "risk" }, t.risk),
-      React.createElement("span", null, "© 2026 Robindex · ", t.operatedBy, " · ", t.rights)));
+      React.createElement("span", null, "© 2026 Robindex · ", t.rights)));
 }
 
 function Landing() {

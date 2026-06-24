@@ -6,6 +6,7 @@ import { TOOLS, executeTool } from "./tools";
 import { sourceTweetForPrompt } from "./source-format";
 import { getAshareValuation, getAshareEstimates } from "./eastmoney-astock";
 import { getStockFinancialProfile } from "./eastmoney-global";
+import type { ByokModelConfig } from "./byok";
 
 // User is asking about news / macro / what's happening — pull fast-news into context.
 const NEWS_INTENT = /(news|headline|macro|happening|宏观|新闻|消息|资讯|事件|最近|发生|利好|利空|政策|加息|降息|cpi|fed|联储|财报)/i;
@@ -345,21 +346,33 @@ export async function resolveToolPhase(
   model: string,
   messages: { role: string; content: string }[],
   onEvent?: (evt: { type: "progress" | "tool_call"; text?: string; name?: string; args?: any }) => void,
-  maxRounds = 2
+  maxRounds = 2,
+  byokCfg?: ByokModelConfig,
 ): Promise<{ messages: any[]; toolCalls: ToolCallRecord[] }> {
   let msgs: any[] = [...messages];
   const toolCalls: ToolCallRecord[] = [];
+  const modelName = byokCfg ? (byokCfg.modelName === "Auto" ? model : byokCfg.modelName) : model;
   try {
     const rounds = Math.max(0, Math.min(2, Math.floor(maxRounds)));
     for (let i = 0; i < rounds; i++) {
       onEvent?.({ type: "progress", text: `正在分析数据（第 ${i + 1} 轮）…` });
-      const res = await fetch(env.GATEWAY_URL, {
-        method: "POST",
-        headers: gatewayHeaders(env),
-        // 1500 (not 600): leaves room for any reasoning text PLUS several tool_call JSON blocks so the
-        // assistant turn isn't truncated mid tool-call (which would end the tool phase early).
-        body: JSON.stringify({ model, messages: msgs, tools: TOOLS, tool_choice: "auto", temperature: 0.2, max_tokens: 1500 }),
-      });
+      const res = await (byokCfg
+        ? fetch(byokCfg.baseUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${byokCfg.apiKey}`,
+              "HTTP-Referer": "https://robindex.ai",
+              "X-Title": "Robindex",
+            },
+            body: JSON.stringify({ model: modelName, messages: msgs, tools: TOOLS, tool_choice: "auto", temperature: 0.2, max_tokens: 1500 }),
+          })
+        : fetch(env.GATEWAY_URL, {
+            method: "POST",
+            headers: gatewayHeaders(env),
+            body: JSON.stringify({ model, messages: msgs, tools: TOOLS, tool_choice: "auto", temperature: 0.2, max_tokens: 1500 }),
+          })
+      );
       if (!res.ok) break;
       const j: any = await res.json().catch(() => null);
       const choice = j?.choices?.[0];
@@ -395,20 +408,34 @@ export async function resolveToolPhase(
   return { messages: msgs, toolCalls };
 }
 
-// Stream a chat completion from the AI Gateway, forwarding deltas to the client as SSE.
+// Stream a chat completion, routing through either the system AI Gateway or a user's BYOK provider.
 export async function streamChat(
   env: Env,
   model: string,
   messages: { role: string; content: string }[],
   citations: Citation[],
   primary: Quote | null,
-  onText: (full: string) => Promise<void>
+  onText: (full: string) => Promise<void>,
+  byokCfg?: ByokModelConfig,
 ): Promise<Response> {
-  const upstream = await fetch(env.GATEWAY_URL, {
-    method: "POST",
-    headers: gatewayHeaders(env),
-    body: JSON.stringify({ model, messages, stream: true, temperature: 0.6 }),
-  });
+  const modelName = byokCfg ? (byokCfg.modelName === "Auto" ? model : byokCfg.modelName) : model;
+  const upstream = await (byokCfg
+    ? fetch(byokCfg.baseUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${byokCfg.apiKey}`,
+          "HTTP-Referer": "https://robindex.ai",
+          "X-Title": "Robindex",
+        },
+        body: JSON.stringify({ model: modelName, messages, stream: true, temperature: 0.6 }),
+      })
+    : fetch(env.GATEWAY_URL, {
+        method: "POST",
+        headers: gatewayHeaders(env),
+        body: JSON.stringify({ model, messages, stream: true, temperature: 0.6 }),
+      })
+  );
 
   if (!upstream.ok || !upstream.body) {
     const errText = await upstream.text().catch(() => "");

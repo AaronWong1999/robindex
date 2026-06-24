@@ -167,3 +167,18 @@ CREATE TABLE IF NOT EXISTS persona_facts (
   updated_at     TEXT DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_persona_facts_kol ON persona_facts(kol_id, kind);
+
+-- BYOK (Bring Your Own Key) — user-provided LLM API configs. See migration 0010.
+CREATE TABLE IF NOT EXISTS byok_models (
+  id           TEXT PRIMARY KEY,
+  user_id      TEXT NOT NULL,
+  provider     TEXT NOT NULL,
+  model_name   TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  base_url     TEXT NOT NULL,
+  api_key      TEXT NOT NULL,
+  color        TEXT DEFAULT '#6B7280',
+  badge        TEXT DEFAULT 'API',
+  created_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_byok_user ON byok_models(user_id);

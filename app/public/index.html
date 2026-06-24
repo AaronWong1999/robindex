@@ -23,7 +23,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,200..500;1,6..72,300..420&family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="manifest" href="/app/manifest.json" />
 <link rel="icon" href="/app/icon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="/app/apple-touch-icon.png" />
 <style>
 :root{--cobalt:#1B30E0;}
 *{box-sizing:border-box;}
@@ -44,51 +46,24 @@ h1,h2,h3{font-weight:400;}
   [data-rx="demo"]{grid-template-columns:1fr!important;}
   [data-rx="demo-rail"]{border-left:none!important;border-top:1px solid #ECECE6!important;}
   [data-rx="bannermore"]{display:none!important;}
-  /* extra responsive for homepage */
-  header[ id="top"] { padding-top: 40px !important; }
-  section { padding-left: 16px !important; padding-right: 16px !important; }
-  .lpersonas { grid-template-columns: 1fr !important; }
-  footer { padding-left: 16px !important; padding-right: 16px !important; }
-  nav > div { padding-left: 16px; padding-right: 16px; }
+  header[id="top"]{padding-top:40px!important;}
+  section{padding-left:16px!important;padding-right:16px!important;}
+  .lpersonas{grid-template-columns:1fr!important;}
+  footer{padding-left:16px!important;padding-right:16px!important;}
+  nav>div{padding-left:16px;padding-right:16px;}
 }
 #rxLangMenu button:not([disabled]):hover{background:#F4F4F1;}
 #rxLangMenu button[disabled]{opacity:.42;cursor:default;}
-@media (max-width: 768px) {
-  /* stack all 2-col feature sections */
-  div[style*="grid-template-columns:1fr 1.05fr"],
-  div[style*="grid-template-columns:1.05fr 1fr"] {
-    grid-template-columns: 1fr !important;
-  }
-  /* hero demo mock on mobile */
-  div[style*="min-height:380px"] { min-height: 320px !important; }
-  /* trust strip wrap tighter */
-  section[style*="border-top:1px solid #F0F0EA"] > div { gap: 12px 20px !important; }
-  /* personas cards stack */
-  div[style*="repeat(auto-fit,minmax(320px,1fr)"] { grid-template-columns: 1fr !important; }
-}
-.lfoot a:hover{opacity:.85;}
 </style>
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "SoftwareApplication",
-  "name": "Robindex",
-  "applicationCategory": "FinanceApplication",
-  "operatingSystem": "Web",
-  "url": "https://robindex.ai/",
-  "description": "金融 KOL 的 AI 分身交易研究终端。选一位 KOL 分身提问，答案逐句标注原文出处，自选模型与推理算力。",
-  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
-  "inLanguage": ["zh", "en"]
-}
-</script>
 </head>
 <body>
+
 <div id="rxContent" style="position:relative;z-index:2;background:#fff;">
 
 <!-- announcement bar -->
 <div id="rxBanner" style="background:#F3F4FF;border-bottom:1px solid #E4E6FA;text-align:center;font-size:13px;color:#3A3C46;padding:9px 20px;letter-spacing:-.005em;">
   <span data-i18n="bannerText">Custom personas are coming — soon, summon any mind to work for you.</span>
-  <a href="#vision" data-rx="bannermore" style="color:var(--cobalt);font-weight:500;margin-left:8px;border-bottom:1px solid rgba(27,48,224,.3);" data-i18n="bannerMore">了解更多</a>
+  <a href="#vision" data-rx="bannermore" style="color:var(--cobalt);font-weight:500;margin-left:8px;border-bottom:1px solid rgba(27,48,224,.3);" data-i18n="bannerMore">Read more</a>
 </div>
 
 <!-- nav -->
@@ -96,14 +71,14 @@ h1,h2,h3{font-weight:400;}
   <div style="max-width:1240px;margin:0 auto;padding:0 24px;height:64px;display:flex;align-items:center;gap:18px;">
     <a href="#top" style="display:flex;align-items:center;gap:9px;flex:none;">
       <span style="width:28px;height:28px;border-radius:8px;background:var(--cobalt);display:flex;align-items:center;justify-content:center;flex:none;box-shadow:0 4px 14px rgba(27,48,224,.3);">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21V4h5.2a4.4 4.4 0 0 1 0 8.8H8"/><path d="M12.4 12.8 17 21"/></svg>
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M8.4 16.9V7.1h3.8a2.55 2.55 0 0 1 0 5.1H8.4"/><path d="M9.5 12.2 15.1 16.9"/></svg>
       </span>
       <span style="font-size:17px;font-weight:600;letter-spacing:-.02em;">Robindex</span>
     </a>
     <div data-rx="nav-links" style="display:flex;align-items:center;gap:30px;margin-left:18px;font-size:14.5px;color:#3D3F48;">
-      <a href="#desk" style="transition:.15s;" data-i18n="navProduct">产品</a>
-      <a href="#roster" data-i18n="navPersonas">分身</a>
-      <a href="#hood" data-i18n="navHow">工作原理</a>
+      <a href="#desk" style="transition:.15s;" data-i18n="navProduct">Product</a>
+      <a href="#roster" data-i18n="navPersonas">Personas</a>
+      <a href="#hood" data-i18n="navHow">How it works</a>
     </div>
     <div style="flex:1;"></div>
     <div id="rxLangWrap" style="position:relative;">
@@ -113,7 +88,7 @@ h1,h2,h3{font-weight:400;}
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
       </button>
       <div id="rxLangMenu" hidden style="position:absolute;top:calc(100% + 8px);right:0;min-width:200px;background:#fff;border:1px solid #E9E9E3;border-radius:12px;box-shadow:0 16px 44px -12px rgba(20,24,60,.24);padding:6px;z-index:60;">
-        <button data-lang="en" type="button" style="display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:9px 10px;border-radius:8px;font-family:inherit;font-size:13.5px;color:#2B2C33;background:none;border:none;cursor:pointer;"><span style="flex:1;">English</span><span style="font-size:11px;color:#A7A9B0;">English</span><svg data-check width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.4" stroke-linecap="round" style="visibility:visible;"><path d="M20 6 9 17l-5-5"/></svg></button>
+        <button data-lang="en" type="button" style="display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:9px 10px;border-radius:8px;font-family:inherit;font-size:13.5px;color:#2B2C33;background:none;border:none;cursor:pointer;"><span style="flex:1;">English</span><span style="font-size:11px;color:#A7A9B0;">English</span><svg data-check width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.4" stroke-linecap="round" style="visibility:hidden;"><path d="M20 6 9 17l-5-5"/></svg></button>
         <button data-lang="zh" type="button" style="display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:9px 10px;border-radius:8px;font-family:inherit;font-size:13.5px;color:#2B2C33;background:none;border:none;cursor:pointer;"><span style="flex:1;">中文</span><span style="font-size:11px;color:#A7A9B0;">Chinese</span><svg data-check width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.4" stroke-linecap="round" style="visibility:hidden;"><path d="M20 6 9 17l-5-5"/></svg></button>
         <div style="height:1px;background:#F0F0EA;margin:6px 6px;"></div>
         <div style="font-family:'Geist Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:#B7B9BF;padding:2px 10px 6px;">More coming</div>
@@ -126,14 +101,14 @@ h1,h2,h3{font-weight:400;}
     <a href="https://app.robindex.ai/" style="display:flex;align-items:center;gap:7px;background:#15161A;color:#fff;font-size:14px;font-weight:500;padding:9px 16px;border-radius:9px;transition:.15s;" data-i18n="navOpen">Open the desk
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
     </a>
-    <button id="rxBurger" data-rx="burger" type="button" aria-label="菜单" style="width:40px;height:40px;border-radius:9px;border:1px solid #E6E6E0;background:#fff;align-items:center;justify-content:center;cursor:pointer;color:#15161A;">
+    <button id="rxBurger" data-rx="burger" type="button" aria-label="Menu" style="width:40px;height:40px;border-radius:9px;border:1px solid #E6E6E0;background:#fff;align-items:center;justify-content:center;cursor:pointer;color:#15161A;">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
     </button>
   </div>
-  <div id="rxMobileMenu" data-rx="mobile-menu" data-open="0" style="flex-direction:column;gap:4px;padding:10px 24px 18px;border-top:1px solid #EFEFEA;background:#fff;display:none;">
-    <a href="#desk" style="padding:11px 4px;font-size:16px;border-bottom:1px solid #F2F2EE;" data-i18n="navProduct">产品</a>
-    <a href="#roster" style="padding:11px 4px;font-size:16px;border-bottom:1px solid #F2F2EE;" data-i18n="navPersonas">分身</a>
-    <a href="#hood" style="padding:11px 4px;font-size:16px;border-bottom:1px solid #F2F2EE;" data-i18n="navHow">工作原理</a>
+  <div id="rxMobileMenu" data-rx="mobile-menu" data-open="0" style="flex-direction:column;gap:4px;padding:10px 24px 18px;border-top:1px solid #EFEFEA;background:#fff;">
+    <a href="#desk" style="padding:11px 4px;font-size:16px;border-bottom:1px solid #F2F2EE;" data-i18n="navProduct">Product</a>
+    <a href="#roster" style="padding:11px 4px;font-size:16px;border-bottom:1px solid #F2F2EE;" data-i18n="navPersonas">Personas</a>
+    <a href="#hood" style="padding:11px 4px;font-size:16px;border-bottom:1px solid #F2F2EE;" data-i18n="navHow">How it works</a>
     <a href="https://app.robindex.ai/" style="margin-top:8px;text-align:center;background:#15161A;color:#fff;font-size:15px;font-weight:500;padding:12px;border-radius:10px;" data-i18n="navOpen">Open the desk</a>
   </div>
 </nav>
@@ -153,12 +128,11 @@ h1,h2,h3{font-weight:400;}
       <a href="https://app.robindex.ai/" style="display:inline-flex;align-items:center;gap:8px;background:#15161A;color:#fff;font-size:15.5px;font-weight:500;padding:14px 24px;border-radius:11px;transition:.15s;" data-i18n="ctaPrimary">Open the desk — it's free
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
       </a>
-      <a href="#desk" style="display:inline-flex;align-items:center;gap:8px;background:#fff;color:#15161A;font-size:15.5px;font-weight:500;padding:14px 22px;border-radius:11px;border:1px solid #E2E2DC;transition:.15s;" data-i18n="ctaGhost">看它怎么运作</a>
+      <a href="#desk" style="display:inline-flex;align-items:center;gap:8px;background:#fff;color:#15161A;font-size:15.5px;font-weight:500;padding:14px 22px;border-radius:11px;border:1px solid #E2E2DC;transition:.15s;" data-i18n="ctaGhost">See how it works</a>
     </div>
-    <p style="margin-top:14px;font-size:13px;color:#6A6C75;" data-i18n="heroNote">无需信用卡 · DeepSeek V4 全程可调 · 中英双语</p>
   </div>
 
-  <!-- product demo -->
+  <!-- product demo: light Aurora desk -->
   <div style="max-width:980px;margin:clamp(44px,6vw,72px) auto 0;animation:rxrise .9s .12s cubic-bezier(.2,.7,.2,1) both;">
     <div style="border:1px solid #E7E7E1;border-radius:16px;background:#fff;box-shadow:0 2px 6px rgba(20,20,30,.04),0 40px 80px -28px rgba(20,24,60,.28);overflow:hidden;text-align:left;">
       <div style="display:flex;align-items:center;gap:8px;height:42px;padding:0 16px;border-bottom:1px solid #F0F0EB;background:#FCFCFB;">
@@ -168,6 +142,7 @@ h1,h2,h3{font-weight:400;}
         <span style="margin:0 auto;font-family:'Geist Mono',monospace;font-size:11.5px;color:#A7A9B0;background:#F3F3EF;border:1px solid #ECECE6;border-radius:7px;padding:3px 14px;">app.robindex.ai</span>
       </div>
       <div data-rx="demo" style="display:grid;grid-template-columns:1.5fr 1fr;min-height:380px;">
+        <!-- conversation -->
         <div style="padding:20px 22px;display:flex;flex-direction:column;gap:16px;">
           <div style="display:flex;align-items:center;gap:10px;">
             <img src="https://unavatar.io/x/qinbafrank" alt="" width="32" height="32" loading="lazy" style="border-radius:8px;object-fit:cover;" />
@@ -191,6 +166,7 @@ h1,h2,h3{font-weight:400;}
             </div>
           </div>
         </div>
+        <!-- source rail -->
         <div data-rx="demo-rail" style="border-left:1px solid #ECECE6;background:#FAFAF8;padding:16px 15px;display:flex;flex-direction:column;gap:11px;">
           <div style="font-family:'Geist Mono',monospace;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:#9A9CA4;" data-i18n="demoSrcH">3 sources cited</div>
           <div style="border:1px solid #ECECE6;border-radius:11px;background:#fff;padding:11px 12px;">
@@ -218,11 +194,11 @@ h1,h2,h3{font-weight:400;}
 <!-- trust strip -->
 <section style="border-top:1px solid #F0F0EA;border-bottom:1px solid #F0F0EA;padding:30px 24px;">
   <div style="max-width:1100px;margin:0 auto;display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:18px 40px;">
-    <span style="font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#9A9CA4;flex:none;" data-i18n="trustLab">建立在最敏锐的头脑真正写下的内容之上</span>
+    <span style="font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#9A9CA4;flex:none;" data-i18n="trustLab">Grounded in what the sharpest minds actually published</span>
     <span style="display:flex;align-items:center;gap:9px;font-size:14px;font-weight:500;color:#3D3F48;"><img src="https://unavatar.io/x/qinbafrank" alt="" width="26" height="26" loading="lazy" style="border-radius:50%;object-fit:cover;" />@qinbafrank</span>
     <span style="display:flex;align-items:center;gap:9px;font-size:14px;font-weight:500;color:#3D3F48;"><img src="https://pbs.twimg.com/profile_images/1996176688414367744/LXfA_lIx_400x400.jpg" alt="" width="26" height="26" loading="lazy" style="border-radius:50%;object-fit:cover;" />@aleabitoreddit</span>
     <span style="display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:#3D3F48;"><svg width="17" height="17" viewBox="0 0 24 24" fill="#1D1D1F"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24h-6.66l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>X / Twitter corpus</span>
-    <span style="display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:#3D3F48;"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#3D3F48" stroke-width="1.7" stroke-linejoin="round"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/></svg><span data-i18n="trustModel">任何最先进的模型</span></span>
+    <span style="display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:#3D3F48;"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#3D3F48" stroke-width="1.7" stroke-linejoin="round"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/></svg><span data-i18n="trustModel">Any frontier model</span></span>
   </div>
 </section>
 
@@ -230,20 +206,20 @@ h1,h2,h3{font-weight:400;}
 <section id="desk" style="padding:clamp(64px,9vw,128px) 24px 0;">
   <div style="max-width:1180px;margin:0 auto;">
     <div style="text-align:center;max-width:760px;margin:0 auto;">
-      <span style="font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--cobalt);" data-i18n="deskEye">终端</span>
-      <h2 style="font-family:'Newsreader',serif;font-weight:400;font-size:clamp(30px,4.6vw,56px);line-height:1.06;letter-spacing:-.022em;color:#14151A;margin:14px 0 0;"><span data-i18n="deskTitleA">它听起来不像 AI，</span> <em data-i18n="deskTitleB" style="font-style:italic;color:var(--cobalt);">它就是 ta 本人。</em></h2>
+      <span style="font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--cobalt);" data-i18n="deskEye">The desk</span>
+      <h2 style="font-family:'Newsreader',serif;font-weight:400;font-size:clamp(30px,4.6vw,56px);line-height:1.06;letter-spacing:-.022em;color:#14151A;margin:14px 0 0;"><span data-i18n="deskTitleA">It doesn't sound like AI.</span> <em data-i18n="deskTitleB" style="font-style:italic;color:var(--cobalt);">It sounds like them.</em></h2>
     </div>
 
     <!-- feature 01 -->
     <div data-rx="feat" style="display:grid;grid-template-columns:1fr 1.05fr;gap:clamp(36px,5vw,72px);align-items:center;margin-top:clamp(48px,6vw,88px);">
       <div>
-        <div style="font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#9A9CA4;">01 · <span style="color:var(--cobalt);" data-i18n="f1eye">有出处的判断</span></div>
-        <h3 style="font-family:'Newsreader',serif;font-weight:400;font-size:clamp(26px,3vw,38px);line-height:1.12;letter-spacing:-.02em;margin:14px 0 0;color:#15161A;" data-i18n="f1h">每一个判断，都能追溯到原文。</h3>
-        <p style="font-size:16.5px;line-height:1.6;color:#54565F;margin:16px 0 0;max-width:46ch;" data-i18n="f1p">不是裹着自信的泛泛之谈。每个结论都来自分身本人真正写下的内容 —— 逐句标注 [#] 角标，一点即展开为原始推文。</p>
+        <div style="font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#9A9CA4;">01 · <span style="color:var(--cobalt);" data-i18n="f1eye">Sourced conviction</span></div>
+        <h3 style="font-family:'Newsreader',serif;font-weight:400;font-size:clamp(26px,3vw,38px);line-height:1.12;letter-spacing:-.02em;margin:14px 0 0;color:#15161A;" data-i18n="f1h">Every judgment, traced to the source.</h3>
+        <p style="font-size:16.5px;line-height:1.6;color:#54565F;margin:16px 0 0;max-width:46ch;" data-i18n="f1p">Not a generic answer dressed up in confidence. Each conclusion is pulled from what the persona actually wrote — annotated inline with [#] markers you can open into the original post.</p>
         <div style="display:flex;flex-direction:column;gap:11px;margin-top:22px;">
-          <div style="display:flex;align-items:flex-start;gap:10px;font-size:14.5px;color:#3D3F48;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.2" style="flex:none;margin-top:2px;"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f1l1">以 KOL 本人的框架，用第一人称作答</span></div>
-          <div style="display:flex;align-items:flex-start;gap:10px;font-size:14.5px;color:#3D3F48;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.2" style="flex:none;margin-top:2px;"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f1l2">稀疏检索 + LLM 重排，覆盖全量语料</span></div>
-          <div style="display:flex;align-items:flex-start;gap:10px;font-size:14.5px;color:#3D3F48;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.2" style="flex:none;margin-top:2px;"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f1l3">判断信心可视化 —— 不确定就说不确定</span></div>
+          <div style="display:flex;align-items:flex-start;gap:10px;font-size:14.5px;color:#3D3F48;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.2" style="flex:none;margin-top:2px;"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f1l1">First-person reasoning in the persona's own framework</span></div>
+          <div style="display:flex;align-items:flex-start;gap:10px;font-size:14.5px;color:#3D3F48;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.2" style="flex:none;margin-top:2px;"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f1l2">Sparse retrieval + LLM rerank over their full corpus</span></div>
+          <div style="display:flex;align-items:flex-start;gap:10px;font-size:14.5px;color:#3D3F48;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.2" style="flex:none;margin-top:2px;"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f1l3">Conviction made visible — when it's unsure, it says so</span></div>
         </div>
       </div>
       <div style="border:1px solid #E9E9E3;border-radius:16px;background:#F8F8F5;padding:22px;">
@@ -253,7 +229,7 @@ h1,h2,h3{font-weight:400;}
           <div><span style="color:#1E9E6A;">✓</span> <span style="color:var(--cobalt);">corpus.search</span>(FTS5) <span style="color:#B7B9BF;">→ 41 hits</span></div>
           <div><span style="color:#1E9E6A;">✓</span> <span style="color:var(--cobalt);">rerank.select</span>(top_k:3)</div>
         </div>
-        <div style="margin-top:14px;font-size:14px;line-height:1.6;color:#2B2C33;background:#fff;border:1px solid #ECECE6;border-radius:12px;padding:14px 16px;"><b style="color:#15161A;">CPO 是方向，但 2026 不是它的兑现年</b> <sup style="color:var(--cobalt);font-weight:600;background:rgba(27,48,224,.1);border-radius:5px;padding:1px 5px;font-size:10px;">1</sup><sup style="color:var(--cobalt);font-weight:600;background:rgba(27,48,224,.1);border-radius:5px;padding:1px 5px;font-size:10px;margin-left:3px;">2</sup></div>
+        <div style="margin-top:14px;font-size:14px;line-height:1.6;color:#2B2C33;background:#fff;border:1px solid #ECECE6;border-radius:12px;padding:14px 16px;"><b style="color:#15161A;">CPO is the direction, but 2026 is not its payoff year</b> <sup style="color:var(--cobalt);font-weight:600;background:rgba(27,48,224,.1);border-radius:5px;padding:1px 5px;font-size:10px;">1</sup><sup style="color:var(--cobalt);font-weight:600;background:rgba(27,48,224,.1);border-radius:5px;padding:1px 5px;font-size:10px;margin-left:3px;">2</sup></div>
       </div>
     </div>
 
@@ -261,8 +237,8 @@ h1,h2,h3{font-weight:400;}
     <div data-rx="feat" style="display:grid;grid-template-columns:1.05fr 1fr;gap:clamp(36px,5vw,72px);align-items:center;margin-top:clamp(48px,6vw,88px);">
       <div style="border:1px solid #E9E9E3;border-radius:16px;background:#F8F8F5;padding:18px;order:2;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-          <span style="font-family:'Geist Mono',monospace;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:#9A9CA4;" data-i18n="f2models">选择任意模型</span>
-          <span style="display:flex;align-items:center;gap:7px;font-family:'Geist Mono',monospace;font-size:10px;color:#9A9CA4;"><span data-i18n="f2max">Max 模式</span><span style="width:30px;height:17px;border-radius:20px;background:var(--cobalt);position:relative;display:inline-block;"><span style="position:absolute;top:2px;right:2px;width:13px;height:13px;border-radius:50%;background:#fff;"></span></span></span>
+          <span style="font-family:'Geist Mono',monospace;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:#9A9CA4;" data-i18n="f2models">Choose any model</span>
+          <span style="display:flex;align-items:center;gap:7px;font-family:'Geist Mono',monospace;font-size:10px;color:#9A9CA4;"><span data-i18n="f2max">Max mode</span><span style="width:30px;height:17px;border-radius:20px;background:var(--cobalt);position:relative;display:inline-block;"><span style="position:absolute;top:2px;right:2px;width:13px;height:13px;border-radius:50%;background:#fff;"></span></span></span>
         </div>
         <div style="background:#fff;border:1px solid #ECECE6;border-radius:12px;padding:6px;display:flex;flex-direction:column;gap:2px;">
           <div style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:9px;background:rgba(27,48,224,.06);border:1px solid rgba(27,48,224,.16);">
@@ -270,7 +246,7 @@ h1,h2,h3{font-weight:400;}
             <span style="font-size:13px;font-weight:600;">Auto</span>
             <span style="font-family:'Geist Mono',monospace;font-size:9.5px;color:#6A6C75;background:#F4F4F1;border:1px solid #ECECE6;border-radius:6px;padding:2px 6px;">High</span>
             <span style="flex:1;"></span>
-            <span style="font-family:'Geist Mono',monospace;font-size:10px;color:#9A9CA4;" data-i18n="f2auto">自动择优</span>
+            <span style="font-family:'Geist Mono',monospace;font-size:10px;color:#9A9CA4;" data-i18n="f2auto">picks the best</span>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.4" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>
           </div>
           <div style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:9px;">
@@ -292,18 +268,30 @@ h1,h2,h3{font-weight:400;}
             <span style="font-size:13px;font-weight:500;">GLM-5.2</span>
             <span style="font-family:'Geist Mono',monospace;font-size:9.5px;color:#6A6C75;background:#F4F4F1;border:1px solid #ECECE6;border-radius:6px;padding:2px 6px;">Medium</span>
             <span style="flex:1;"></span>
-            <span style="font-family:'Geist Mono',monospace;font-size:11px;color:#9A9CA4;">0.76x</span>
+            <span style="font-family:'Geist Mono',monospace;font-size:11px;color:#9A9CA4;">1.06x</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:9px;">
+            <span style="width:24px;height:24px;border-radius:7px;background:#4D6BFE;color:#fff;font-family:'Geist Mono',monospace;font-size:10px;font-weight:600;display:flex;align-items:center;justify-content:center;flex:none;">D</span>
+            <span style="font-size:13px;font-weight:500;">DeepSeek V4</span>
+            <span style="font-family:'Geist Mono',monospace;font-size:9.5px;color:#6A6C75;background:#F4F4F1;border:1px solid #ECECE6;border-radius:6px;padding:2px 6px;">High</span>
+            <span style="flex:1;"></span>
+            <span style="font-family:'Geist Mono',monospace;font-size:11px;color:#9A9CA4;">0.16x</span>
+          </div>
+          <div style="height:1px;background:#F0F0EA;margin:5px 6px;"></div>
+          <div style="display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:9px;color:var(--cobalt);">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            <span style="font-size:12.5px;font-weight:500;" data-i18n="f2custom">Connect your own model API</span>
           </div>
         </div>
       </div>
-      <div>
-        <div style="font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#9A9CA4;">02 · <span style="color:var(--cobalt);" data-i18n="f2eye">模型由你选择</span></div>
-        <h3 style="font-family:'Newsreader',serif;font-weight:400;font-size:clamp(26px,3vw,38px);line-height:1.12;letter-spacing:-.02em;margin:14px 0 0;color:#15161A;" data-i18n="f2h">任何模型，包括最前沿的。</h3>
-        <p style="font-size:16.5px;line-height:1.6;color:#54565F;margin:16px 0 0;max-width:46ch;" data-i18n="f2p">自动择优，或亲手指定任意模型来驱动一位分身 —— 调来最先进的智能，让它在完全的创造力上为你思考。实时切换、推理强度自由调，或接入你自己的模型 API，用你自己的额度。</p>
+      <div style="order:1;">
+        <div style="font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#9A9CA4;">02 · <span style="color:var(--cobalt);" data-i18n="f2eye">Your model, your call</span></div>
+        <h3 style="font-family:'Newsreader',serif;font-weight:400;font-size:clamp(26px,3vw,38px);line-height:1.12;letter-spacing:-.02em;margin:14px 0 0;color:#15161A;" data-i18n="f2h">Any model — even the frontier.</h3>
+        <p style="font-size:16.5px;line-height:1.6;color:#54565F;margin:16px 0 0;max-width:46ch;" data-i18n="f2p">Auto-route, or hand-pick any model to power a persona — bring the most advanced intelligence to bear and let it think at full creative range. Switch in real time, dial reasoning up or down, or plug in your own model API and run on your own quota.</p>
         <div style="display:flex;flex-direction:column;gap:11px;margin-top:22px;">
-          <div style="display:flex;align-items:flex-start;gap:10px;font-size:14.5px;color:#3D3F48;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.2" style="flex:none;margin-top:2px;"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f2l1">任意模型，自动路由或亲手指定</span></div>
-          <div style="display:flex;align-items:flex-start;gap:10px;font-size:14.5px;color:#3D3F48;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.2" style="flex:none;margin-top:2px;"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f2l2">调用最前沿的智能，推理强度自由调</span></div>
-          <div style="display:flex;align-items:flex-start;gap:10px;font-size:14.5px;color:#3D3F48;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.2" style="flex:none;margin-top:2px;"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f2l3">接入自有模型 API —— 用你自己的额度</span></div>
+          <div style="display:flex;align-items:flex-start;gap:10px;font-size:14.5px;color:#3D3F48;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.2" style="flex:none;margin-top:2px;"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f2l1">Any model, auto-routed or hand-picked</span></div>
+          <div style="display:flex;align-items:flex-start;gap:10px;font-size:14.5px;color:#3D3F48;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.2" style="flex:none;margin-top:2px;"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f2l2">Point the frontier at it — full reasoning control</span></div>
+          <div style="display:flex;align-items:flex-start;gap:10px;font-size:14.5px;color:#3D3F48;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.2" style="flex:none;margin-top:2px;"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f2l3">Bring your own model API — run on your own quota</span></div>
         </div>
       </div>
     </div>
@@ -311,178 +299,171 @@ h1,h2,h3{font-weight:400;}
     <!-- feature 03 -->
     <div data-rx="feat" style="display:grid;grid-template-columns:1fr 1.05fr;gap:clamp(36px,5vw,72px);align-items:center;margin-top:clamp(48px,6vw,88px);">
       <div>
-        <div style="font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#9A9CA4;">03 · <span style="color:var(--cobalt);" data-i18n="f3eye">为你的工作方式而生</span></div>
-        <h3 style="font-family:'Newsreader',serif;font-weight:400;font-size:clamp(26px,3vw,38px);line-height:1.12;letter-spacing:-.02em;margin:14px 0 0;color:#15161A;" data-i18n="f3h">一个终端，四种看法。</h3>
-        <p style="font-size:16.5px;line-height:1.6;color:#54565F;margin:16px 0 0;max-width:46ch;" data-i18n="f3p">信号绿交易终端、苹果留白、磷光黑客风、极简 Codex —— 一键切换。桌面到手机自适应，添加到主屏即成 App。</p>
+        <div style="font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#9A9CA4;">03 · <span style="color:var(--cobalt);" data-i18n="f3eye">Built for how you work</span></div>
+        <h3 style="font-family:'Newsreader',serif;font-weight:400;font-size:clamp(26px,3vw,38px);line-height:1.12;letter-spacing:-.02em;margin:14px 0 0;color:#15161A;" data-i18n="f3h">One desk. Four ways to see it.</h3>
+        <p style="font-size:16.5px;line-height:1.6;color:#54565F;margin:16px 0 0;max-width:46ch;" data-i18n="f3p">Signal-green terminal, Apple-clean light, phosphor hacker, minimal Codex — switch in a tap. Fluid from desktop to phone. Add to home screen and it's an app.</p>
         <div style="display:flex;flex-direction:column;gap:11px;margin-top:22px;">
-          <div style="display:flex;align-items:flex-start;gap:10px;font-size:14.5px;color:#3D3F48;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.2" style="flex:none;margin-top:2px;"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f3l1">Terminal · Aurora · Matrix · Codex 四主题</span></div>
-          <div style="display:flex;align-items:flex-start;gap:10px;font-size:14.5px;color:#3D3F48;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.2" style="flex:none;margin-top:2px;"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f3l2">桌面、平板、手机全自适应</span></div>
-          <div style="display:flex;align-items:flex-start;gap:10px;font-size:14.5px;color:#3D3F48;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.2" style="flex:none;margin-top:2px;"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f3l3">PWA：添加到主屏，像原生 App 一样用</span></div>
+          <div style="display:flex;align-items:flex-start;gap:10px;font-size:14.5px;color:#3D3F48;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.2" style="flex:none;margin-top:2px;"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f3l1">Terminal · Aurora · Matrix · Codex themes</span></div>
+          <div style="display:flex;align-items:flex-start;gap:10px;font-size:14.5px;color:#3D3F48;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.2" style="flex:none;margin-top:2px;"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f3l2">Desktop, tablet and phone — fully fluid</span></div>
+          <div style="display:flex;align-items:flex-start;gap:10px;font-size:14.5px;color:#3D3F48;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.2" style="flex:none;margin-top:2px;"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f3l3">PWA: add to home screen, run it like a native app</span></div>
         </div>
       </div>
-      <div style="border:1px solid #E9E9E3;border-radius:16px;background:#F8F8F5;padding:22px;">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-          <div style="background:#fff;border:1px solid #ECECE6;border-radius:12px;padding:14px 16px;">
-            <div style="display:flex;gap:8px;margin-bottom:8px;"><i style="width:18px;height:18px;border-radius:4px;background:#0A0B0D"></i><i style="width:18px;height:18px;border-radius:4px;background:#3DDC97"></i><i style="width:18px;height:18px;border-radius:4px;background:#5B9DFF"></i></div>
-            <div style="font-weight:600;font-size:14px;">Terminal <span style="font-size:12px;color:#6A6C75;" data-i18n="thTerminal">信号绿</span></div>
-          </div>
-          <div style="background:#fff;border:1px solid #ECECE6;border-radius:12px;padding:14px 16px;">
-            <div style="display:flex;gap:8px;margin-bottom:8px;"><i style="width:18px;height:18px;border-radius:4px;background:#FBFBFD"></i><i style="width:18px;height:18px;border-radius:4px;background:#0071E3"></i><i style="width:18px;height:18px;border-radius:4px;background:#1D1D1F"></i></div>
-            <div style="font-weight:600;font-size:14px;">Aurora <span style="font-size:12px;color:#6A6C75;" data-i18n="thAurora">苹果留白</span></div>
-          </div>
-          <div style="background:#fff;border:1px solid #ECECE6;border-radius:12px;padding:14px 16px;">
-            <div style="display:flex;gap:8px;margin-bottom:8px;"><i style="width:18px;height:18px;border-radius:4px;background:#000000"></i><i style="width:18px;height:18px;border-radius:4px;background:#00FF85"></i><i style="width:18px;height:18px;border-radius:4px;background:#0C1A0E"></i></div>
-            <div style="font-weight:600;font-size:14px;">Matrix <span style="font-size:12px;color:#6A6C75;" data-i18n="thMatrix">磷光</span></div>
-          </div>
-          <div style="background:#fff;border:1px solid #ECECE6;border-radius:12px;padding:14px 16px;">
-            <div style="display:flex;gap:8px;margin-bottom:8px;"><i style="width:18px;height:18px;border-radius:4px;background:#0D0D0D"></i><i style="width:18px;height:18px;border-radius:4px;background:#ECECEC"></i><i style="width:18px;height:18px;border-radius:4px;background:#19C37D"></i></div>
-            <div style="font-weight:600;font-size:14px;">Codex <span style="font-size:12px;color:#6A6C75;" data-i18n="thCodex">极简</span></div>
-          </div>
+      <div style="border:1px solid #E9E9E3;border-radius:16px;background:#F8F8F5;padding:22px;display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div style="border:1px solid #ECECE6;border-radius:12px;overflow:hidden;background:#fff;"><div style="height:62px;display:flex;background:#0A0B0D;"><span style="flex:2;background:#0A0B0D;"></span><span style="flex:1;background:#3DDC97;"></span><span style="flex:1;background:#5B9DFF;"></span></div><div style="padding:9px 11px;font-size:12px;font-weight:600;">Terminal <span style="color:#9A9CA4;font-weight:400;" data-i18n="thTerminal">signal green</span></div></div>
+        <div style="border:1px solid #ECECE6;border-radius:12px;overflow:hidden;background:#fff;"><div style="height:62px;display:flex;"><span style="flex:2;background:#FBFBFD;"></span><span style="flex:1;background:#0071E3;"></span><span style="flex:1;background:#1D1D1F;"></span></div><div style="padding:9px 11px;font-size:12px;font-weight:600;">Aurora <span style="color:#9A9CA4;font-weight:400;" data-i18n="thAurora">apple light</span></div></div>
+        <div style="border:1px solid #ECECE6;border-radius:12px;overflow:hidden;background:#fff;"><div style="height:62px;display:flex;"><span style="flex:2;background:#000;"></span><span style="flex:1;background:#00FF85;"></span><span style="flex:1;background:#0C1A0E;"></span></div><div style="padding:9px 11px;font-size:12px;font-weight:600;">Matrix <span style="color:#9A9CA4;font-weight:400;" data-i18n="thMatrix">phosphor</span></div></div>
+        <div style="border:1px solid #ECECE6;border-radius:12px;overflow:hidden;background:#fff;"><div style="height:62px;display:flex;"><span style="flex:2;background:#0D0D0D;"></span><span style="flex:1;background:#ECECEC;"></span><span style="flex:1;background:#19C37D;"></span></div><div style="padding:9px 11px;font-size:12px;font-weight:600;">Codex <span style="color:#9A9CA4;font-weight:400;" data-i18n="thCodex">minimal</span></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- dark technical band -->
+<section id="hood" style="margin-top:clamp(72px,9vw,128px);background:#0A0B0D;color:#E8EAED;padding:clamp(64px,9vw,120px) 24px;position:relative;">
+  <div style="max-width:1180px;margin:0 auto;">
+    <div data-rx="feat" style="display:grid;grid-template-columns:1fr 1.1fr;gap:clamp(36px,5vw,72px);align-items:center;">
+      <div>
+        <span style="font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:#3DDC97;" data-i18n="hoodEye">Under the hood</span>
+        <h2 style="font-family:'Newsreader',serif;font-weight:400;font-size:clamp(30px,4vw,52px);line-height:1.06;letter-spacing:-.022em;color:#fff;margin:14px 0 0;"><span data-i18n="hoodTitleA">Retrieval,</span> <em data-i18n="hoodTitleB" style="font-style:italic;color:#3DDC97;">not recollection.</em></h2>
+        <p style="font-size:16.5px;line-height:1.65;color:#969CA6;margin:18px 0 0;max-width:48ch;" data-i18n="hoodP">There is no fine-tuning. Robindex distills a persona, retrieves their real words for your exact question, grounds it in live market data, then assembles the answer. Better models and better retrieval make every persona sharper — with no retraining.</p>
+        <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:24px;">
+          <span style="font-family:'Geist Mono',monospace;font-size:11px;color:#969CA6;background:#15181D;border:1px solid #23272F;border-radius:7px;padding:6px 11px;" data-i18n="hoodC1">FTS5 sparse + LLM rerank</span>
+          <span style="font-family:'Geist Mono',monospace;font-size:11px;color:#969CA6;background:#15181D;border:1px solid #23272F;border-radius:7px;padding:6px 11px;" data-i18n="hoodC2">live quotes &amp; kline</span>
+          <span style="font-family:'Geist Mono',monospace;font-size:11px;color:#969CA6;background:#15181D;border:1px solid #23272F;border-radius:7px;padding:6px 11px;" data-i18n="hoodC3">cited, streamed over SSE</span>
+        </div>
+      </div>
+      <div style="border:1px solid #1E222A;border-radius:16px;background:#0D0F12;overflow:hidden;box-shadow:0 30px 70px -20px rgba(0,0,0,.6);">
+        <div style="display:flex;align-items:center;gap:8px;height:38px;padding:0 14px;border-bottom:1px solid #1A1E25;background:#0A0B0D;">
+          <span style="width:10px;height:10px;border-radius:50%;background:#FF5F57;"></span><span style="width:10px;height:10px;border-radius:50%;background:#FEBC2E;"></span><span style="width:10px;height:10px;border-radius:50%;background:#28C840;"></span>
+          <span style="margin-left:6px;font-family:'Geist Mono',monospace;font-size:11px;color:#646A74;">robindex · pipeline</span>
+        </div>
+        <div style="padding:18px 18px;font-family:'Geist Mono',monospace;font-size:12.5px;line-height:2;">
+          <div style="color:#646A74;"># you ask</div>
+          <div style="color:#E8EAED;margin-bottom:10px;">"who benefits from optical interconnect in 2026?"</div>
+          <div><span style="color:#3DDC97;">→</span> <span style="color:#5B9DFF;">planQuery</span><span style="color:#969CA6;">()</span>  <span style="color:#646A74;">instruments · 6 search terms</span></div>
+          <div><span style="color:#3DDC97;">→</span> <span style="color:#5B9DFF;">retrieve</span><span style="color:#969CA6;">()</span>   <span style="color:#646A74;">FTS5 → 41 → rerank → top 3</span></div>
+          <div><span style="color:#3DDC97;">→</span> <span style="color:#5B9DFF;">gatherMarketData</span><span style="color:#969CA6;">()</span> <span style="color:#646A74;">quotes · kline · news</span></div>
+          <div><span style="color:#3DDC97;">→</span> <span style="color:#5B9DFF;">buildMessages</span><span style="color:#969CA6;">()</span>  <span style="color:#646A74;">persona + sources + data</span></div>
+          <div style="margin-top:10px;color:#3DDC97;">✓ answer streamed · 3 citations attached</div>
         </div>
       </div>
     </div>
   </div>
 </section>
 
-<!-- how it works -->
-<section id="hood" style="padding:clamp(64px,9vw,110px) 24px 0;background:#FAFAF8;border-top:1px solid #F0F0EA;margin-top:clamp(64px,9vw,110px);">
-  <div style="max-width:1100px;margin:0 auto;">
-    <div style="text-align:center;max-width:720px;margin:0 auto;">
-      <span style="font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--cobalt);" data-i18n="hoodEye">技术内核</span>
-      <h2 style="font-family:'Newsreader',serif;font-weight:400;font-size:clamp(30px,4.6vw,52px);line-height:1.05;letter-spacing:-.02em;margin:12px 0 0;"><span data-i18n="hoodTitleA">检索，</span><em data-i18n="hoodTitleB" style="font-style:italic;color:var(--cobalt);">而非凭记忆生成。</em></h2>
-      <p style="font-size:16.5px;color:#54565F;margin-top:16px;" data-i18n="hoodP">没有微调。Robindex 先蒸馏出一位分身，再针对你的问题检索 ta 的真实原话，结合实时行情数据，最后组装答案。模型与检索越强，每位分身越敏锐 —— 无需重训。</p>
+<!-- roster -->
+<section id="roster" style="padding:clamp(64px,9vw,128px) 24px;">
+  <div style="max-width:1180px;margin:0 auto;">
+    <div style="text-align:center;max-width:740px;margin:0 auto;">
+      <span style="font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--cobalt);" data-i18n="rosterEye">The roster</span>
+      <h2 style="font-family:'Newsreader',serif;font-weight:400;font-size:clamp(30px,4.6vw,56px);line-height:1.06;letter-spacing:-.022em;color:#14151A;margin:14px 0 0;" data-i18n="rosterTitle">The roster is just getting started.</h2>
+      <p style="font-size:17px;line-height:1.6;color:#54565F;margin:16px auto 0;max-width:54ch;" data-i18n="rosterSub">Today, the people who move markets. Soon, anyone whose thinking you want working for you — new minds added continuously.</p>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px;margin-top:42px;">
-      <div style="background:#fff;border:1px solid #ECECE6;border-radius:14px;padding:22px 20px;">
-        <div style="font-family:'Geist Mono',monospace;font-size:12px;color:#9A9CA4;margin-bottom:10px;">01</div>
-        <div style="font-size:17px;font-weight:600;margin-bottom:8px;" data-i18n="hoodC1">FTS5 稀疏 + LLM 重排</div>
-        <div style="color:#54565F;font-size:14.5px;line-height:1.55;">只检索 ta 真实写过的内容，拒绝幻觉。</div>
-      </div>
-      <div style="background:#fff;border:1px solid #ECECE6;border-radius:14px;padding:22px 20px;">
-        <div style="font-family:'Geist Mono',monospace;font-size:12px;color:#9A9CA4;margin-bottom:10px;">02</div>
-        <div style="font-size:17px;font-weight:600;margin-bottom:8px;" data-i18n="hoodC2">实时报价与 K 线</div>
-        <div style="color:#54565F;font-size:14.5px;line-height:1.55;">行情数据自动注入，让分身能对具体标的做出判断。</div>
-      </div>
-      <div style="background:#fff;border:1px solid #ECECE6;border-radius:14px;padding:22px 20px;">
-        <div style="font-family:'Geist Mono',monospace;font-size:12px;color:#9A9CA4;margin-bottom:10px;">03</div>
-        <div style="font-size:17px;font-weight:600;margin-bottom:8px;" data-i18n="hoodC3">带出处 · SSE 流式</div>
-        <div style="color:#54565F;font-size:14.5px;line-height:1.55;">每句话都可点开原文，流式输出不等待。</div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- personas -->
-<section id="roster" style="padding:clamp(64px,9vw,110px) 24px;">
-  <div style="max-width:1100px;margin:0 auto;">
-    <div style="text-align:center;margin-bottom:32px;">
-      <span style="font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--cobalt);" data-i18n="rosterEye">分身阵容</span>
-      <h2 style="font-family:'Newsreader',serif;font-weight:400;font-size:clamp(30px,4.6vw,52px);line-height:1.05;margin:10px 0 6px;" data-i18n="rosterTitle">阵容，才刚刚开始。</h2>
-      <p style="color:#54565F;font-size:15.5px;max-width:560px;margin:0 auto;" data-i18n="rosterSub">今天，是真正驱动市场的人。很快，是任何你想让其为你工作的思考者 —— 持续接入新的头脑。</p>
-    </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;">
-      <a href="https://app.robindex.ai/?agent=kol&persona=qinbafrank" style="display:flex;gap:16px;align-items:flex-start;background:#fff;border:1px solid #ECECE6;border-radius:14px;padding:18px 18px;text-decoration:none;color:inherit;">
-        <img src="https://unavatar.io/x/qinbafrank" alt="Qinbafrank" width="50" height="50" loading="lazy" style="border-radius:12px;object-fit:cover;" />
-        <div style="flex:1;min-width:0;">
-          <div style="font-size:16px;font-weight:600;">Qinbafrank</div>
-          <div style="font-family:'Geist Mono',monospace;font-size:12px;color:#9A9CA4;">@qinbafrank</div>
-          <div style="margin-top:8px;font-size:14px;color:#3D3F48;line-height:1.5;" data-i18n="p1bio">宏观传导 × AI 周期 × 美股。AI 基础设施重定价、美股调整节奏、加密与 TradFi 融合。</div>
-          <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;">
-            <span style="font-size:12px;background:#F3F3EF;border-radius:999px;padding:2px 9px;color:#3D3F48;" data-i18n="p1t1">宏观</span>
-            <span style="font-size:12px;background:#F3F3EF;border-radius:999px;padding:2px 9px;color:#3D3F48;" data-i18n="p1t2">AI 主线</span>
-            <span style="font-size:12px;background:#F3F3EF;border-radius:999px;padding:2px 9px;color:#3D3F48;" data-i18n="p1t3">美股</span>
-          </div>
+    <div class="lpersonas" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:18px;margin-top:48px;">
+      <a href="https://app.robindex.ai/?agent=kol&amp;persona=qinbafrank" style="border:1px solid #E9E9E3;border-radius:16px;background:#fff;padding:22px;transition:.18s;display:block;">
+        <div style="display:flex;align-items:center;gap:13px;">
+          <img src="https://unavatar.io/x/qinbafrank" alt="Qinbafrank" width="50" height="50" loading="lazy" style="border-radius:12px;object-fit:cover;" />
+          <div style="flex:1;min-width:0;"><div style="font-size:16px;font-weight:600;">Qinbafrank</div><div style="font-family:'Geist Mono',monospace;font-size:11px;color:#9A9CA4;">@qinbafrank</div></div>
+          <div style="text-align:right;"><div style="font-family:'Geist Mono',monospace;font-size:15px;font-weight:600;">284K</div><div style="font-size:10px;color:#9A9CA4;" data-i18n="followers">followers</div></div>
         </div>
-        <div style="font-family:'Geist Mono',monospace;font-size:12px;color:#6A6C75;text-align:right;white-space:nowrap;">284K <span data-i18n="followers">关注</span></div>
+        <p style="font-size:13.5px;line-height:1.6;color:#54565F;margin:15px 0 14px;" data-i18n="p1bio">Macro transmission × AI cycle × US equities. Repricing AI infrastructure, the rhythm of US-market drawdowns, and crypto meeting TradFi.</p>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;">
+          <span style="font-family:'Geist Mono',monospace;font-size:10.5px;color:#5C5E66;background:#F4F4F1;border:1px solid #ECECE6;border-radius:6px;padding:3px 8px;" data-i18n="p1t1">macro</span>
+          <span style="font-family:'Geist Mono',monospace;font-size:10.5px;color:#5C5E66;background:#F4F4F1;border:1px solid #ECECE6;border-radius:6px;padding:3px 8px;" data-i18n="p1t2">AI cycle</span>
+          <span style="font-family:'Geist Mono',monospace;font-size:10.5px;color:#5C5E66;background:#F4F4F1;border:1px solid #ECECE6;border-radius:6px;padding:3px 8px;" data-i18n="p1t3">US equities</span>
+        </div>
       </a>
-      <a href="https://app.robindex.ai/?agent=kol&persona=aleabitoreddit" style="display:flex;gap:16px;align-items:flex-start;background:#fff;border:1px solid #ECECE6;border-radius:14px;padding:18px 18px;text-decoration:none;color:inherit;">
-        <img src="https://pbs.twimg.com/profile_images/1996176688414367744/LXfA_lIx_400x400.jpg" alt="Serenity" width="50" height="50" loading="lazy" style="border-radius:12px;object-fit:cover;" />
-        <div style="flex:1;min-width:0;">
-          <div style="font-size:16px;font-weight:600;">Serenity</div>
-          <div style="font-family:'Geist Mono',monospace;font-size:12px;color:#9A9CA4;">@aleabitoreddit</div>
-          <div style="margin-top:8px;font-size:14px;color:#3D3F48;line-height:1.5;" data-i18n="p2bio">从 hyperscaler capex 往下拆，寻找少数公司绕不过去的 chokepoint。光子 / CPO，高确信小盘清单。</div>
-          <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;">
-            <span style="font-size:12px;background:#F3F3EF;border-radius:999px;padding:2px 9px;color:#3D3F48;" data-i18n="p2t1">供应链</span>
-            <span style="font-size:12px;background:#F3F3EF;border-radius:999px;padding:2px 9px;color:#3D3F48;" data-i18n="p2t2">光子 / CPO</span>
-            <span style="font-size:12px;background:#F3F3EF;border-radius:999px;padding:2px 9px;color:#3D3F48;" data-i18n="p2t3">chokepoint</span>
-          </div>
+      <a href="https://app.robindex.ai/?agent=kol&amp;persona=aleabitoreddit" style="border:1px solid #E9E9E3;border-radius:16px;background:#fff;padding:22px;transition:.18s;display:block;">
+        <div style="display:flex;align-items:center;gap:13px;">
+          <img src="https://pbs.twimg.com/profile_images/1996176688414367744/LXfA_lIx_400x400.jpg" alt="Serenity" width="50" height="50" loading="lazy" style="border-radius:12px;object-fit:cover;" />
+          <div style="flex:1;min-width:0;"><div style="font-size:16px;font-weight:600;">Serenity</div><div style="font-family:'Geist Mono',monospace;font-size:11px;color:#9A9CA4;">@aleabitoreddit</div></div>
+          <div style="text-align:right;"><div style="font-family:'Geist Mono',monospace;font-size:15px;font-weight:600;">96K</div><div style="font-size:10px;color:#9A9CA4;" data-i18n="followers">followers</div></div>
         </div>
-        <div style="font-family:'Geist Mono',monospace;font-size:12px;color:#6A6C75;text-align:right;white-space:nowrap;">96K <span data-i18n="followers">关注</span></div>
+        <p style="font-size:13.5px;line-height:1.6;color:#54565F;margin:15px 0 14px;" data-i18n="p2bio">Works down from hyperscaler capex to find the chokepoints a few companies can't be designed around. Photonics / CPO and a high-conviction small-cap list.</p>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;">
+          <span style="font-family:'Geist Mono',monospace;font-size:10.5px;color:#5C5E66;background:#F4F4F1;border:1px solid #ECECE6;border-radius:6px;padding:3px 8px;" data-i18n="p2t1">supply chain</span>
+          <span style="font-family:'Geist Mono',monospace;font-size:10.5px;color:#5C5E66;background:#F4F4F1;border:1px solid #ECECE6;border-radius:6px;padding:3px 8px;" data-i18n="p2t2">photonics / CPO</span>
+          <span style="font-family:'Geist Mono',monospace;font-size:10.5px;color:#5C5E66;background:#F4F4F1;border:1px solid #ECECE6;border-radius:6px;padding:3px 8px;" data-i18n="p2t3">chokepoint</span>
+        </div>
+      </a>
+      <a href="https://app.robindex.ai/" style="border:1px dashed #C9CBD6;border-radius:16px;background:linear-gradient(180deg,#F7F8FF,#fff);padding:22px;display:flex;flex-direction:column;transition:.18s;">
+        <div style="width:50px;height:50px;border-radius:12px;background:rgba(27,48,224,.08);border:1px solid rgba(27,48,224,.18);display:flex;align-items:center;justify-content:center;color:var(--cobalt);">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        </div>
+        <div style="font-size:16px;font-weight:600;margin-top:15px;" data-i18n="comingTitle">Bring your own mind</div>
+        <span style="font-family:'Geist Mono',monospace;font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--cobalt);background:rgba(27,48,224,.08);border:1px solid rgba(27,48,224,.18);border-radius:20px;padding:2px 8px;align-self:flex-start;margin-top:8px;" data-i18n="soon">Coming soon</span>
+        <p style="font-size:13.5px;line-height:1.6;color:#54565F;margin:14px 0 0;" data-i18n="comingP">Custom personas. Give an AI someone's knowledge and judgment, and summon them to work for you — for any field, not just markets.</p>
       </a>
     </div>
-    <div style="text-align:center;margin-top:32px;font-size:13px;color:#6A6C75;" data-i18n="comingP">自定义分身。把一个人的知识与判断赋予 AI，召唤 ta 为你工作 —— 不只金融，任何领域。</div>
   </div>
 </section>
 
-<!-- vision / cta -->
-<section id="vision" style="padding:clamp(64px,9vw,110px) 24px;background:#15161A;color:#fff;">
-  <div style="max-width:860px;margin:0 auto;text-align:center;">
-    <div style="font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.18em;text-transform:uppercase;opacity:.6;margin-bottom:12px;" data-i18n="visionTitle">想象一个世界</div>
-    <h2 style="font-family:'Newsreader',serif;font-weight:400;font-size:clamp(30px,4.8vw,52px);line-height:1.05;margin:0 0 16px;">你信任的任何一个头脑，都能开口回答你。</h2>
-    <p style="font-size:16.5px;opacity:.85;max-width:560px;margin:0 auto 32px;" data-i18n="visionSub">今天，是真正驱动市场的人。明天，是任何人 —— 把一个人的知识与判断交给 AI，让它为你工作。</p>
-    <a href="https://app.robindex.ai/" style="display:inline-flex;align-items:center;gap:8px;background:#fff;color:#15161A;font-size:15.5px;font-weight:600;padding:14px 28px;border-radius:11px;" data-i18n="ctaPrimary2">免费进入终端
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+</div><!-- /rxContent -->
+
+<!-- vision + footer -->
+<footer id="vision" style="background:var(--cobalt);color:#fff;position:relative;z-index:1;">
+  <div style="max-width:1180px;margin:0 auto;padding:clamp(72px,11vw,150px) 24px clamp(48px,6vw,80px);">
+    <h2 style="font-family:'Newsreader',serif;font-weight:300;font-size:clamp(36px,6.4vw,86px);line-height:1.02;letter-spacing:-.025em;margin:0;max-width:17ch;" data-i18n="visionTitle">Imagine a world where any mind you trust can answer.</h2>
+    <p style="font-size:clamp(16px,1.7vw,20px);line-height:1.55;color:rgba(255,255,255,.78);margin:24px 0 0;max-width:58ch;" data-i18n="visionSub">Today, the people who move markets. Tomorrow, anyone — give an AI someone's knowledge and judgment, and put it to work for you.</p>
+    <a href="https://app.robindex.ai/" style="display:inline-flex;align-items:center;gap:9px;background:#fff;color:var(--cobalt);font-size:16px;font-weight:600;padding:15px 26px;border-radius:12px;margin-top:34px;transition:.15s;" data-i18n="ctaPrimary2">Open the desk — it's free
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
     </a>
-  </div>
-</section>
 
-<footer style="background:#15161A;color:rgba(255,255,255,.82);padding:48px 24px 32px;">
-  <div style="max-width:1100px;margin:0 auto;display:flex;flex-wrap:wrap;gap:42px 60px;">
-    <div style="flex:1;min-width:220px;">
-      <div style="display:flex;align-items:center;gap:9px;margin-bottom:10px;">
-        <span style="width:26px;height:26px;border-radius:7px;background:#fff;display:flex;align-items:center;justify-content:center;flex:none;">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#15161A" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21V4h5.2a4.4 4.4 0 0 1 0 8.8H8"/><path d="M12.4 12.8 17 21"/></svg>
-        </span>
-        <span style="font-size:16px;font-weight:600;color:#fff;">Robindex</span>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:32px;margin-top:clamp(64px,8vw,110px);padding-top:48px;border-top:1px solid rgba(255,255,255,.18);">
+      <div style="min-width:180px;">
+        <a href="#top" style="display:flex;align-items:center;gap:9px;">
+          <span style="width:28px;height:28px;border-radius:8px;background:#fff;display:flex;align-items:center;justify-content:center;flex:none;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M8.4 16.9V7.1h3.8a2.55 2.55 0 0 1 0 5.1H8.4"/><path d="M9.5 12.2 15.1 16.9"/></svg>
+          </span>
+          <span style="font-size:17px;font-weight:600;letter-spacing:-.02em;">Robindex</span>
+        </a>
+        <p style="font-size:13px;line-height:1.6;color:rgba(255,255,255,.7);margin:14px 0 0;max-width:30ch;" data-i18n="footTag">The minds you trust, answering in their own words — every claim sourced.</p>
       </div>
-      <div style="font-size:13.5px;opacity:.7;max-width:28ch;" data-i18n="footTag">你信任的头脑，用 ta 自己的话回答你 —— 每个结论都有出处。</div>
-    </div>
-    <div>
-      <div style="font-family:'Geist Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.6);margin-bottom:14px;" data-i18n="fcProduct">产品</div>
-      <div style="display:flex;flex-direction:column;gap:11px;font-size:14px;color:rgba(255,255,255,.85);">
-        <a href="#roster" data-i18n="navPersonas">分身</a>
-        <a href="#hood" data-i18n="navHow">工作原理</a>
-        <a href="https://app.robindex.ai/" data-i18n="navOpen">进入终端</a>
+      <div>
+        <div style="font-family:'Geist Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.6);margin-bottom:14px;" data-i18n="fcProduct">Product</div>
+        <div style="display:flex;flex-direction:column;gap:11px;font-size:14px;color:rgba(255,255,255,.85);">
+          <a href="#roster" data-i18n="navPersonas">Personas</a>
+          <a href="#hood" data-i18n="navHow">How it works</a>
+          <a href="https://app.robindex.ai/" data-i18n="navOpen">Open the desk</a>
+        </div>
+      </div>
+      <div>
+        <div style="font-family:'Geist Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.6);margin-bottom:14px;" data-i18n="fcCompany">Company</div>
+        <div style="display:flex;flex-direction:column;gap:11px;font-size:14px;color:rgba(255,255,255,.85);">
+          <a href="#" data-i18n="fcAbout">About</a>
+          <a href="#" data-i18n="fcBlog">Blog</a>
+          <a href="#" data-i18n="fcCareers">Careers</a>
+        </div>
+      </div>
+      <div>
+        <div style="font-family:'Geist Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.6);margin-bottom:14px;" data-i18n="fcLegal">Legal</div>
+        <div style="display:flex;flex-direction:column;gap:11px;font-size:14px;color:rgba(255,255,255,.85);">
+          <a href="#" data-i18n="fcTerms">Terms</a>
+          <a href="#" data-i18n="fcPrivacy">Privacy</a>
+          <a href="#" data-i18n="fcRisk">Risk disclosure</a>
+        </div>
       </div>
     </div>
-    <div>
-      <div style="font-family:'Geist Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.6);margin-bottom:14px;" data-i18n="fcCompany">公司</div>
-      <div style="display:flex;flex-direction:column;gap:11px;font-size:14px;color:rgba(255,255,255,.85);">
-        <a href="#" data-i18n="fcAbout">关于</a>
-        <a href="#" data-i18n="fcBlog">博客</a>
-        <a href="#" data-i18n="fcCareers">招聘</a>
-      </div>
-    </div>
-    <div>
-      <div style="font-family:'Geist Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.6);margin-bottom:14px;" data-i18n="fcLegal">条款</div>
-      <div style="display:flex;flex-direction:column;gap:11px;font-size:14px;color:rgba(255,255,255,.85);">
-        <a href="#" data-i18n="fcTerms">服务条款</a>
-        <a href="#" data-i18n="fcPrivacy">隐私政策</a>
-        <a href="#" data-i18n="fcRisk">风险提示</a>
-      </div>
-    </div>
-  </div>
 
-  <div style="margin-top:40px;padding-top:24px;border-top:1px solid rgba(255,255,255,.18);display:flex;flex-wrap:wrap;gap:12px 28px;justify-content:space-between;align-items:center;max-width:1100px;margin-left:auto;margin-right:auto;">
-    <span style="font-size:12.5px;color:rgba(255,255,255,.62);max-width:62ch;" data-i18n="risk">投资有风险。本平台所有内容仅供研究，不构成投资建议。</span>
-    <span style="font-size:12.5px;color:rgba(255,255,255,.62);">© 2026 Robindex · <span data-i18n="operatedBy">由 SYNHEART GROUP LIMITED 运营</span></span>
+    <div style="margin-top:40px;padding-top:24px;border-top:1px solid rgba(255,255,255,.18);display:flex;flex-wrap:wrap;gap:12px 28px;justify-content:space-between;align-items:center;">
+      <span style="font-size:12.5px;color:rgba(255,255,255,.62);max-width:62ch;" data-i18n="risk">Markets carry risk. Everything here is for research only and is not investment advice.</span>
+      <span style="font-size:12.5px;color:rgba(255,255,255,.62);">© 2026 Robindex</span>
+    </div>
   </div>
 </footer>
 
-</div>
-
 <script>
-// Minimal static runtime for bilingual + mobile menu + smooth nav (no heavy runtime dependency)
-// English first (default), Chinese second. Auto-detect + linked with app via cookie + localStorage
-(function(){
-  var zh = {
+(function () {
+  // i18n strings (EN + ZH). EN values live in the HTML as defaults; ZH replaces via data-i18n.
+  const ZH = {
     bannerText: '自定义分身即将上线 —— 很快，你就能召唤任何一个人的思维，为你工作。',
     bannerMore: '了解更多',
-    navProduct: '产品', navPersonas: '分身', navHow: '工作原理', navOpen: '进入终端',
+    navProduct: '产品', navPersonas: '分身', navHow: '工作原理', navPricing: '定价',
+    navOpen: '进入终端', navSignin: '登录',
     heroPill: '已上线 · 交易者真正在读的人',
     h1a: '召唤那些', h1b: '驱动市场的头脑。',
     heroSub: '选一位思考者，问任何问题。Robindex 会用 ta 的判断框架、ta 的口吻作答 —— 而每一个结论都直接链回 ta 本人写下的原话。没有黑箱，只有你信任的那个头脑，随时待命。',
-    ctaPrimary: '免费进入终端', ctaGhost: '看它怎么运作',
+    ctaPrimary: '免费进入终端', ctaPrimary2: '免费进入终端', ctaGhost: '看它怎么运作',
     heroNote: '无需信用卡 · DeepSeek V4 全程可调 · 中英双语',
     demoVia: '第一人称分身 · @qinbafrank',
     demoQ: 'CPO 延期，2026 光互连真正受益的是谁？',
@@ -496,186 +477,145 @@ h1,h2,h3{font-weight:400;}
     f1p: '不是裹着自信的泛泛之谈。每个结论都来自分身本人真正写下的内容 —— 逐句标注 [#] 角标，一点即展开为原始推文。',
     f1l1: '以 KOL 本人的框架，用第一人称作答', f1l2: '稀疏检索 + LLM 重排，覆盖全量语料', f1l3: '判断信心可视化 —— 不确定就说不确定',
     f2eye: '模型由你选择', f2h: '任何模型，包括最前沿的。',
-    f2p: '自动择优，或亲手指定任意模型来驱动一位分身。实时切换、推理强度自由调，或接入你自己的模型 API。',
-    f2models: '选择任意模型', f2max: 'Max 模式', f2auto: '自动择优',
+    f2p: '自动择优，或亲手指定任意模型来驱动一位分身 —— 调来最先进的智能，让它在完全的创造力上为你思考。实时切换、推理强度自由调，或接入你自己的模型 API，用你自己的额度。',
+    f2models: '选择任意模型', f2max: 'Max 模式', f2auto: '自动择优', f2custom: '接入你自己的模型 API',
     f2l1: '任意模型，自动路由或亲手指定', f2l2: '调用最前沿的智能，推理强度自由调', f2l3: '接入自有模型 API —— 用你自己的额度',
     f3eye: '为你的工作方式而生', f3h: '一个终端，四种看法。',
     f3p: '信号绿交易终端、苹果留白、磷光黑客风、极简 Codex —— 一键切换。桌面到手机自适应，添加到主屏即成 App。',
     f3l1: 'Terminal · Aurora · Matrix · Codex 四主题', f3l2: '桌面、平板、手机全自适应', f3l3: 'PWA：添加到主屏，像原生 App 一样用',
     thTerminal: '信号绿', thAurora: '苹果留白', thMatrix: '磷光', thCodex: '极简',
     hoodEye: '技术内核', hoodTitleA: '检索，', hoodTitleB: '而非凭记忆生成。',
-    hoodP: '没有微调。Robindex 先蒸馏出一位分身，再针对你的问题检索 ta 的真实原话，结合实时行情数据，最后组装答案。',
+    hoodP: '没有微调。Robindex 先蒸馏出一位分身，再针对你的问题检索 ta 的真实原话，结合实时行情数据，最后组装答案。模型与检索越强，每位分身越敏锐 —— 无需重训。',
     hoodC1: 'FTS5 稀疏 + LLM 重排', hoodC2: '实时报价与 K 线', hoodC3: '带出处 · SSE 流式',
     rosterEye: '分身阵容', rosterTitle: '阵容，才刚刚开始。',
-    rosterSub: '今天，是真正驱动市场的人。很快，是任何你想让其为你工作的思考者。',
+    rosterSub: '今天，是真正驱动市场的人。很快，是任何你想让其为你工作的思考者 —— 持续接入新的头脑。',
     followers: '关注',
     p1bio: '宏观传导 × AI 周期 × 美股。AI 基础设施重定价、美股调整节奏、加密与 TradFi 融合。',
     p1t1: '宏观', p1t2: 'AI 主线', p1t3: '美股',
     p2bio: '从 hyperscaler capex 往下拆，寻找少数公司绕不过去的 chokepoint。光子 / CPO，高确信小盘清单。',
     p2t1: '供应链', p2t2: '光子 / CPO', p2t3: 'chokepoint',
+    comingTitle: '召唤你想要的任何人', soon: '即将上线',
     comingP: '自定义分身。把一个人的知识与判断赋予 AI，召唤 ta 为你工作 —— 不只金融，任何领域。',
-    visionTitle: '想象一个世界',
+    visionTitle: '想象一个世界：你信任的任何一个头脑，都能开口回答你。',
     visionSub: '今天，是真正驱动市场的人。明天，是任何人 —— 把一个人的知识与判断交给 AI，让它为你工作。',
     footTag: '你信任的头脑，用 ta 自己的话回答你 —— 每个结论都有出处。',
     fcProduct: '产品', fcCompany: '公司', fcLegal: '条款',
     fcAbout: '关于', fcBlog: '博客', fcCareers: '招聘',
     fcTerms: '服务条款', fcPrivacy: '隐私政策', fcRisk: '风险提示',
     risk: '投资有风险。本平台所有内容仅供研究，不构成投资建议。',
-    operatedBy: '由 SYNHEART GROUP LIMITED 运营'
   };
 
-  // English fallbacks (for source that may still have Chinese visible on some data-i18n)
-  var en = {
-    bannerText: 'Custom personas are coming — soon, summon any mind to work for you.',
-    navProduct: 'Product', navPersonas: 'Personas', navHow: 'How it works', navOpen: 'Open the desk',
-    heroPill: 'Live · the minds traders actually read',
-    h1a: 'Summon the minds that', h1b: 'move markets.',
-    ctaPrimary: "Open the desk — it's free", ctaGhost: 'See how it works',
-    heroNote: 'No credit card · DeepSeek V4 fully adjustable · Bilingual',
-    trustLab: 'Grounded in what the sharpest minds actually published', trustModel: 'Any frontier model',
-    deskEye: 'The desk', deskTitleA: "It doesn't sound like AI,", deskTitleB: 'it sounds like them.',
-    f1eye: 'Sourced conviction', f1h: 'Every judgment, traced to the source.',
-    f1p: 'Not a generic answer dressed up in confidence. Each conclusion is pulled from what the persona actually wrote — annotated inline with [#] markers you can open into the original post.',
-    f2eye: 'Choose any model', f2h: 'Any model, including the frontier.',
-    f3eye: 'Built for how you work', f3h: 'One desk. Four views.',
-    hoodEye: 'Technical core', hoodTitleA: 'Retrieval,', hoodTitleB: 'not memorized generation.',
-    rosterEye: 'Persona roster', rosterTitle: 'The roster is just beginning.',
-    visionTitle: 'Imagine a world',
-    footTag: 'The minds you trust, answering in their own words — every conclusion sourced.',
-    fcProduct: 'Product', fcCompany: 'Company', fcLegal: 'Legal',
-    risk: 'Markets carry risk. Everything here is for research only and is not investment advice.',
-    operatedBy: 'Operated by SYNHEART GROUP LIMITED'
-  };
+  // Snapshot EN defaults from the DOM, so the user can flip back from ZH to EN.
+  const en = {};
+  document.querySelectorAll('[data-i18n]').forEach((n) => {
+    const k = n.getAttribute('data-i18n');
+    en[k] = n.innerHTML;
+  });
 
-  function getCookie(name) {
-    const m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
-    return m ? decodeURIComponent(m[1]) : null;
-  }
-  function setCookie(name, val) {
-    try {
-      document.cookie = name + '=' + encodeURIComponent(val) + '; path=/; domain=.robindex.ai; max-age=' + (365*24*3600);
-    } catch(e) {}
+  function applyLang(lang) {
+    document.querySelectorAll('[data-i18n]').forEach((n) => {
+      const k = n.getAttribute('data-i18n');
+      if (lang === 'zh' && ZH[k] != null) n.innerHTML = ZH[k];
+      else if (en[k] != null) n.innerHTML = en[k];
+    });
+    const cur = document.getElementById('rxLangCur');
+    if (cur) cur.textContent = (lang === 'zh') ? '中文' : 'English';
+    const menu = document.getElementById('rxLangMenu');
+    if (menu) menu.querySelectorAll('button[data-lang]').forEach((b) => {
+      const ck = b.querySelector('[data-check]');
+      if (ck) ck.style.visibility = (b.getAttribute('data-lang') === lang) ? 'visible' : 'hidden';
+    });
+    document.documentElement.setAttribute('lang', lang === 'zh' ? 'zh' : 'en');
+    try { localStorage.setItem('rx.lang', lang); } catch (e) {}
   }
 
-  function detectLang() {
-    try {
-      const nav = (navigator.language || navigator.userLanguage || 'en').toLowerCase();
-      if (nav.startsWith('zh')) return 'zh';
-    } catch(e) {}
-    return 'en';
+  // Initial language: localStorage > browser > EN.
+  let initial = 'en';
+  try {
+    const saved = localStorage.getItem('rx.lang');
+    if (saved === 'zh' || saved === 'en') initial = saved;
+    else if ((navigator.language || '').toLowerCase().indexOf('zh') === 0) initial = 'zh';
+  } catch (e) {}
+  applyLang(initial);
+
+  // Language menu wiring.
+  const langBtn = document.getElementById('rxLang');
+  const langMenu = document.getElementById('rxLangMenu');
+  const langWrap = document.getElementById('rxLangWrap');
+  if (langBtn && langMenu) {
+    langBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const open = !langMenu.hidden;
+      langMenu.hidden = open;
+      langBtn.setAttribute('aria-expanded', open ? 'false' : 'true');
+    });
+    langMenu.querySelectorAll('button[data-lang]').forEach((b) => {
+      b.addEventListener('click', () => {
+        if (b.hasAttribute('disabled')) return;
+        applyLang(b.getAttribute('data-lang'));
+        langMenu.hidden = true;
+        langBtn.setAttribute('aria-expanded', 'false');
+      });
+    });
+    document.addEventListener('click', (e) => {
+      if (langWrap && !langWrap.contains(e.target)) langMenu.hidden = true;
+    });
   }
 
-  function getInitialLang() {
-    // URL param highest priority (for linking from homepage)
-    try {
-      const p = new URLSearchParams(location.search).get('lang');
-      if (p === 'en' || p === 'zh') return p;
-    } catch(e) {}
-    // cookie or localStorage (shared key for linkage with app)
-    let v = getCookie('rx.lang') || localStorage.getItem('rx.lang');
-    if (v === 'en' || v === 'zh') return v;
-    return detectLang();
+  // Mobile burger.
+  const burger = document.getElementById('rxBurger');
+  const menu = document.getElementById('rxMobileMenu');
+  if (burger && menu) {
+    burger.addEventListener('click', () => {
+      const open = menu.getAttribute('data-open') === '1';
+      menu.setAttribute('data-open', open ? '0' : '1');
+      menu.style.display = open ? 'none' : 'flex';
+    });
   }
 
-  var lang = getInitialLang();
-
-  function persistLang(l) {
-    try { localStorage.setItem('rx.lang', l); } catch(e){}
-    setCookie('rx.lang', l);
-  }
-
-  function apply(l) {
-    lang = l;
-    persistLang(l);
-    document.querySelectorAll('[data-i18n]').forEach(function(n){
-      var k = n.getAttribute('data-i18n');
-      if (n.dataset.en == null) n.dataset.en = n.innerHTML;
-      if (l === 'zh') {
-        if (zh[k] != null) n.innerHTML = zh[k];
-      } else {
-        // use explicit en map (reliable even if HTML source has zh) then fallback
-        n.innerHTML = (en && en[k]) ? en[k] : n.dataset.en;
+  // Smooth-scroll anchor links.
+  document.querySelectorAll('a[href^="#"]').forEach((a) => {
+    a.addEventListener('click', (e) => {
+      const id = a.getAttribute('href');
+      if (id && id.length > 1) {
+        const t = document.querySelector(id);
+        if (t) {
+          e.preventDefault();
+          window.scrollTo({ top: t.getBoundingClientRect().top + window.scrollY - 72, behavior: 'smooth' });
+          if (menu) { menu.style.display = 'none'; menu.setAttribute('data-open', '0'); }
+        }
       }
     });
-    var cur = document.getElementById('rxLangCur');
-    if (cur) cur.textContent = (l === 'zh') ? '中文' : 'English';
-    var menu = document.getElementById('rxLangMenu');
-    if (menu) menu.querySelectorAll('button[data-lang]').forEach(function(b){
-      var ck = b.querySelector('[data-check]');
-      if (ck) ck.style.visibility = (b.getAttribute('data-lang') === l) ? 'visible' : 'hidden';
-    });
-    document.documentElement.setAttribute('lang', l === 'zh' ? 'zh' : 'en');
-
-    // Link language to app: update all "enter app" links with current lang
-    document.querySelectorAll('a[href*="app.robindex.ai"]').forEach(function(a){
-      try {
-        var u = new URL(a.href, location.origin);
-        if (!u.searchParams.get('lang')) {
-          u.searchParams.set('lang', l);
-          a.href = u.toString();
-        }
-      } catch(e){}
-    });
-  }
-
-  // init
-  document.addEventListener('DOMContentLoaded', function(){
-    apply(lang);  // will persist + set English default + update links
-
-    // lang switcher
-    var langBtn = document.getElementById('rxLang');
-    var langMenu = document.getElementById('rxLangMenu');
-    var langWrap = document.getElementById('rxLangWrap');
-    if (langBtn && langMenu) {
-      langBtn.addEventListener('click', function(e){
-        e.stopPropagation();
-        var open = !langMenu.hidden;
-        langMenu.hidden = open;
-        langBtn.setAttribute('aria-expanded', open ? 'false' : 'true');
-      });
-      langMenu.querySelectorAll('button[data-lang]').forEach(function(b){
-        b.addEventListener('click', function(){
-          if (b.hasAttribute('disabled')) return;
-          apply(b.getAttribute('data-lang'));
-          langMenu.hidden = true;
-          langBtn.setAttribute('aria-expanded', 'false');
-        });
-      });
-      document.addEventListener('click', function(e){
-        if (langWrap && !langWrap.contains(e.target)) langMenu.hidden = true;
-      });
-    }
-
-    // mobile burger
-    var burger = document.getElementById('rxBurger');
-    var menu = document.getElementById('rxMobileMenu');
-    if (burger && menu) {
-      burger.addEventListener('click', function(){
-        var isOpen = menu.style.display === 'flex';
-        menu.style.display = isOpen ? 'none' : 'flex';
-      });
-    }
-
-    // smooth scroll for hash links
-    document.querySelectorAll('a[href^="#"]').forEach(function(a){
-      a.addEventListener('click', function(e){
-        var id = a.getAttribute('href');
-        if (id && id.length > 1) {
-          var t = document.querySelector(id);
-          if (t) {
-            e.preventDefault();
-            var y = t.getBoundingClientRect().top + window.scrollY - 72;
-            window.scrollTo({top: y, behavior: 'smooth'});
-            if (menu) menu.style.display = 'none';
-          }
-        }
-      });
-    });
-
-    // hide banner more on small
-    var more = document.querySelector('[data-rx="bannermore"]');
-    if (more && window.innerWidth < 700) more.style.display = 'none';
   });
+
+  // Scroll-reveal: when the cobalt footer can fit inside the viewport vertically (on desktop),
+  // pin it to the bottom of the viewport and pad the content area by the footer's height. As
+  // the user scrolls, the white content appears to slide up out from behind the cobalt — the
+  // "mask" reveal effect that gives the page its final punchline.
+  const content = document.getElementById('rxContent');
+  const footer = document.getElementById('vision');
+  const setupReveal = () => {
+    if (!content || !footer) return;
+    const fits = window.innerWidth > 900 && footer.scrollHeight <= window.innerHeight + 90;
+    if (fits) {
+      footer.style.position = 'fixed';
+      footer.style.left = '0';
+      footer.style.right = '0';
+      footer.style.bottom = '0';
+      footer.style.zIndex = '1';
+      content.style.marginBottom = footer.scrollHeight + 'px';
+    } else {
+      footer.style.position = 'relative';
+      footer.style.left = '';
+      footer.style.right = '';
+      footer.style.bottom = '';
+      content.style.marginBottom = '0px';
+    }
+  };
+  setupReveal();
+  window.addEventListener('resize', setupReveal);
+  window.addEventListener('load', setupReveal);
+  setTimeout(setupReveal, 500);
 })();
 </script>
 </body>
