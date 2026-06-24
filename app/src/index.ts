@@ -641,6 +641,9 @@ app.post("/api/chat", async (c) => {
               "现在直接输出给用户看的最终分析。严禁输出任何工具调用或 DSL 标签；不要说你要调用工具。\n" +
               "请用中文回答。保持你（博主）一贯的语气、分析框架和表达风格，像在回复读者的提问一样自然地写。\n" +
               "Use prior conversation only to understand follow-ups; the latest USER QUESTION is the task you must answer.\n" +
+              "Only claim to remember or see earlier details if they are actually present in the provided conversation history or summary; otherwise say you cannot see them.\n" +
+              "If the latest question is about whether you can see/remember prior conversation, answer only that memory/access question; do not infer or add a new investment analysis from tickers mentioned in that question.\n" +
+              "If the user explicitly asks to answer only, confirm only, not expand, or not re-analyze, keep the answer concise; do not add market data, citations, headings, or unrelated analysis.\n" +
               "If the user asked for price/action levels, start by answering that request directly before the long reasoning.\n" +
               "引用写成 [1]、[2] 这种纯数字格式。自然地融入原文引用，不要刻意分段或加小标题。\n" +
               "缺数据明说，不要编。",
@@ -719,22 +722,25 @@ app.post("/api/chat", async (c) => {
         }
 
         full = normalizeCitationBrackets(stripToolCallDSL(full)).trim();
-        send("done", {});
-        controller.close();
 
-        // Persist (runs after stream is closed)
-        const usedRefs = new Set(Array.from(full.matchAll(/(?:\[|【)\s*T?(\d+)\s*(?:\]|】)/gi)).map((m) => `T${m[1]}`));
-        const usedCitations = usedRefs.size ? citations.filter((cc) => usedRefs.has(cc.ref)) : [];
-        await c.env.DB.prepare(
-          `INSERT INTO messages (id,conversation_id,role,content,citations,tool_calls) VALUES (?,?,?,?,?,?)`
-        )
-          .bind(crypto.randomUUID(), convId!, "assistant", full, JSON.stringify(usedCitations), toolCalls.length ? JSON.stringify(toolCalls) : null)
-          .run();
-        await c.env.DB.prepare(`UPDATE conversations SET updated_at=datetime('now') WHERE id=?`)
-          .bind(convId!)
-          .run();
-        // Skip summary generation for BYOK models — background tasks shouldn't spend user's API credits.
-        if (!byokCfg) await maybeUpdateSummary(c.env, convId!, model);
+        // Persist before closing the stream. Cloudflare may stop work after controller.close(), which
+        // would leave follow-up turns with only user messages and no memory of the assistant answer.
+        if (full) {
+          const usedRefs = new Set(Array.from(full.matchAll(/(?:\[|【)\s*T?(\d+)\s*(?:\]|】)/gi)).map((m) => `T${m[1]}`));
+          const usedCitations = usedRefs.size ? citations.filter((cc) => usedRefs.has(cc.ref)) : [];
+          await c.env.DB.prepare(
+            `INSERT INTO messages (id,conversation_id,role,content,citations,tool_calls) VALUES (?,?,?,?,?,?)`
+          )
+            .bind(crypto.randomUUID(), convId!, "assistant", full, JSON.stringify(usedCitations), toolCalls.length ? JSON.stringify(toolCalls) : null)
+            .run();
+          await c.env.DB.prepare(`UPDATE conversations SET updated_at=datetime('now') WHERE id=?`)
+            .bind(convId!)
+            .run();
+          // Skip summary generation for BYOK models — background tasks shouldn't spend user's API credits.
+          if (!byokCfg) {
+            c.executionCtx.waitUntil(maybeUpdateSummary(c.env, convId!, model).catch((e) => console.error("summary update failed", e)));
+          }
+        }
 
         // Record a billing consumption row so /api/billing/state surfaces it (with byok flag
         // set when the user used their own key). Token counts are best-effort estimated.
@@ -761,6 +767,8 @@ app.post("/api/chat", async (c) => {
           // Mirror to localStorage so the page instantly reflects the new row.
           send("consumption", { byok: !!byokCfg, free: isFree, points, model: body.model });
         }
+        send("done", {});
+        controller.close();
       } catch (e) {
         send("error", { message: String(e) });
         controller.close();
