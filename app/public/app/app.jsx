@@ -311,6 +311,8 @@ function BootScreen({ label, detail }) {
 function KMessage({ msg, model, onCite, onWriteCode }) {
   const r = msg.resp;
   if (!r) return null;
+  const msgCitations = msg._citations || r.citations || [];
+  const onMessageCite = (ref) => onCite(ref, msgCitations, msg);
   return React.createElement("div", { className: "msg msg-k" },
     React.createElement(Avatar, { kol: msg.kol, size: 30, radius: 8 }),
     React.createElement("div", { className: "stream" },
@@ -322,7 +324,7 @@ function KMessage({ msg, model, onCite, onWriteCode }) {
       React.createElement(ToolGroup, { steps: r.processSteps || [], done: msg.done }),
       msg.done
         ? React.createElement(React.Fragment, null,
-            React.createElement(AnswerBlocks, { md: r.answerMd, onCite }),
+            React.createElement(AnswerBlocks, { md: r.answerMd, onCite: onMessageCite }),
             r.conviction != null && React.createElement(Conviction, { value: r.conviction }),
             msg.bill && window.RXB ? React.createElement("div", { className: "msg-meter" },
               React.createElement(Icon, { name: "gauge", size: 12, color: "var(--faint)" }),
@@ -341,7 +343,7 @@ function KMessage({ msg, model, onCite, onWriteCode }) {
               React.createElement("span", null, msg.error))
           : msg.streamText
             ? React.createElement(React.Fragment, null,
-                React.createElement(AnswerBlocks, { md: msg.streamText, onCite }),
+                React.createElement(AnswerBlocks, { md: msg.streamText, onCite: onMessageCite }),
                 React.createElement("div", { className: "thinking" },
                   React.createElement("span", null, r.phases[msg.phase] ? r.phases[msg.phase].verb : "\u2026"),
                   React.createElement("span", { className: "tdots" }, React.createElement("i"), React.createElement("i"), React.createElement("i"))))
@@ -903,7 +905,8 @@ function App() {
   };
 
   const composerAsk = (question, atts) => { if (curKol) ask(curKol, question); };
-  const onCite = (ref) => {
+  const onCite = (ref, citations) => {
+    if (Array.isArray(citations) && citations.length) setSources(citations);
     setRailTab("sources");
     setHighlight(citeKey(ref));
     setCiteTick((n) => n + 1);
