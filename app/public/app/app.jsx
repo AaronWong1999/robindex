@@ -294,6 +294,15 @@ function normalizeHistoryMsg(m, kolId) {
   }
   return m;
 }
+function normalizeMessages(messages, kolId) {
+  const seen = new Set();
+  return (messages || []).map((m) => normalizeHistoryMsg(m, kolId)).map((m) => {
+    let id = m && m.id ? String(m.id) : uid();
+    if (seen.has(id)) id = uid();
+    seen.add(id);
+    return { ...m, id };
+  });
+}
 
 function BootScreen({ label, detail }) {
   return React.createElement("div", { className: "auth boot" },
@@ -554,7 +563,7 @@ function App() {
     const saved = LS.get("chats", null);
     if (saved && Array.isArray(saved)) {
       return saved
-        .map((c) => ({ ...c, messages: (c.messages || []).map((m) => normalizeHistoryMsg(m, c.kol && c.kol.id)) }))
+        .map((c) => ({ ...c, messages: normalizeMessages(c.messages || [], c.kol && c.kol.id) }))
         .filter((c) => c.messages && c.messages.length > 0);
     }
     try {
@@ -562,7 +571,7 @@ function App() {
       const validPersonas = ["qinbafrank", "aleabitoreddit"];
       return old.filter((c) => validPersonas.includes(c.persona)).map((c) => {
         const kolId = c.persona;
-        const msgs = (c.messages || []).map((m, i) => normalizeHistoryMsg({ ...m, id: "old_" + i }, kolId));
+        const msgs = normalizeMessages((c.messages || []).map((m, i) => ({ ...m, id: "old_" + i })), kolId);
         return {
           id: c.id, kol: { id: kolId, display_name: kolId === "qinbafrank" ? "Qinbafrank" : "Serenity", handle: kolId,
             avatar_url: kolId === "qinbafrank" ? "https://unavatar.io/x/qinbafrank" : "https://pbs.twimg.com/profile_images/1996176688414367744/LXfA_lIx_400x400.jpg",
@@ -626,7 +635,7 @@ function App() {
     return pathMatch ? decodeURIComponent(pathMatch[1]) : url.searchParams.get("chat");
   };
   const showChat = (chat) => {
-    const saved = (chat.messages || []).map((m) => normalizeHistoryMsg(m, chat.kol && chat.kol.id));
+    const saved = normalizeMessages(chat.messages || [], chat.kol && chat.kol.id);
     const normalizedChat = { ...chat, messages: saved };
     setActive(normalizedChat); setView("chat"); setTab("ask"); setMtab("chat");
     setMessages(saved);
@@ -712,7 +721,7 @@ function App() {
       setChats((cur) => {
         const normalizedCloud = cloudChats.map((c) => ({
           ...c,
-          messages: (c.messages || []).map((m) => normalizeHistoryMsg(m, c.kol && c.kol.id)),
+          messages: normalizeMessages(c.messages || [], c.kol && c.kol.id),
         }));
         const localIds = new Set(cur.map((c) => c.id));
         const localKeys = new Set(cur.map((c) => c.kol.id + "::" + c.title));
