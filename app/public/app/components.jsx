@@ -37,7 +37,7 @@ const ICONS = {
   barChart: '<path d="M3 3v18h18M7 16v-5M12 16V8M17 16v-9"/>',
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
   quote: '<path d="M7 7H4a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h2v3a3 3 0 0 1-3 3M17 7h-3a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h2v3a3 3 0 0 1-3 3" stroke="none" fill="none"/><path d="M10 11V7a2 2 0 0 0-2-2H5M20 11V7a2 2 0 0 0-2-2h-3M3 11h7v3a3 3 0 0 1-3 3M13 11h7v3a3 3 0 0 1-3 3"/>',
-  candlestick: '<path d="M9 3v3M9 14v3M15 7v3M15 18v3M3 21h18"/><rect x="6.5" y="6" width="5" height="8" rx="1"/><rect x="12.5" y="10" width="5" height="8" rx="1"/>',
+  candlestick: '<path d="M8 21V4h5.2a4.4 4.4 0 0 1 0 8.8H8"/><path d="M12.4 12.8 17 21"/>',
   xLogo: '<path d="M18.24 2.25h3.31l-7.23 8.26 8.5 11.24H16.2l-5.21-6.82L4.99 21.75H1.68l7.73-8.84L1.25 2.25H8.08l4.71 6.23 5.45-6.23zm-1.16 17.52h1.83L7.08 4.13H5.12l11.96 15.64z" fill="currentColor" stroke="none"/>',
   bot: '<rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 8V4M8 2h8"/><circle cx="9" cy="14" r="1.2" fill="currentColor" stroke="none"/><circle cx="15" cy="14" r="1.2" fill="currentColor" stroke="none"/>',
   swatch: '<circle cx="12" cy="12" r="9"/><circle cx="9.5" cy="9" r="1.3" fill="currentColor" stroke="none"/><circle cx="15" cy="10" r="1.3" fill="currentColor" stroke="none"/><circle cx="15.5" cy="14.5" r="1.3" fill="currentColor" stroke="none"/>',

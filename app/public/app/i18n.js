@@ -213,11 +213,32 @@
       langTitle: "Language", langSoon: "soon",
     },
   };
-  let _lang = "zh";
-  try { const v = localStorage.getItem("rx.lang"); if (v === "en" || v === "zh") _lang = v; } catch (e) {}
+  function getUrlLang() {
+    try {
+      const p = new URLSearchParams(location.search).get('lang');
+      if (p === 'en' || p === 'zh') return p;
+    } catch(e) {}
+    return null;
+  }
+  function getCookieLang() {
+    try {
+      const m = document.cookie.match(/(?:^|; )rx\.lang=([^;]+)/);
+      if (m) return decodeURIComponent(m[1]);
+    } catch(e) {}
+    return null;
+  }
+  function detectLang() {
+    try {
+      const nav = (navigator.language || navigator.userLanguage || 'en').toLowerCase();
+      if (nav.startsWith('zh')) return 'zh';
+    } catch(e) {}
+    return 'en';
+  }
+  let _lang = getUrlLang() || getCookieLang() || localStorage.getItem("rx.lang") || detectLang();
+  if (_lang !== 'en' && _lang !== 'zh') _lang = 'en';
   window.RXLANGS = [
-    { id: "zh", label: "中文", sub: "Chinese", active: true },
     { id: "en", label: "English", sub: "English", active: true },
+    { id: "zh", label: "中文", sub: "Chinese", active: true },
     { id: "ja", label: "日本語", sub: "Japanese", active: false },
     { id: "ko", label: "한국어", sub: "Korean", active: false },
     { id: "vi", label: "Tiếng Việt", sub: "Vietnamese", active: false },
@@ -225,7 +246,14 @@
   ];
   window.RXI = {
     get lang() { return _lang; },
-    set(l) { _lang = l; try { localStorage.setItem("rx.lang", JSON.stringify ? l : l); localStorage.setItem("rx.lang", l); } catch (e) {} },
+    set(l) {
+      _lang = l;
+      try {
+        localStorage.setItem("rx.lang", l);
+        // also set cookie for cross-subdomain linkage with homepage
+        document.cookie = "rx.lang=" + encodeURIComponent(l) + "; path=/; domain=.robindex.ai; max-age=" + (365*24*3600);
+      } catch (e) {}
+    },
     t(key) { const d = I18N[_lang] || I18N.zh; const v = d[key]; return v == null ? key : v; },
   };
 })();

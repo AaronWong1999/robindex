@@ -1,162 +1,213 @@
 <!DOCTYPE html>
-<html lang="zh" data-theme="aurora">
+<html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-<title>Robindex — 金融 KOL 的 AI 分身交易研究终端</title>
-<meta name="description" content="Robindex — 把交易判断交给懂行的 AI 分身。选一位金融 KOL 的 AI 分身，答案逐句标注原文出处，自选模型与推理算力，四种界面风格。" />
-<meta name="keywords" content="Robindex,AI交易,金融KOL,投研助手,AI分身,交易研究,原文出处,DeepSeek" />
-<meta name="theme-color" content="#FBFBFD" />
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Robindex — 召唤驱动市场的头脑 | 金融 KOL 的 AI 分身交易研究终端</title>
+<meta name="description" content="选一位金融 KOL 的 AI 分身，用他们的框架与语气回答你的问题。答案逐句标注原文出处，可自选模型与推理算力。Robindex 把交易判断交给真正懂行的人。" />
+<meta name="keywords" content="Robindex,AI分身,金融KOL,交易研究,投研终端,原文出处,DeepSeek,AI交易助手,金融AI" />
+<meta name="theme-color" content="#ffffff" />
 <link rel="canonical" href="https://robindex.ai/" />
 <link rel="alternate" hreflang="zh" href="https://robindex.ai/" />
-<link rel="alternate" hreflang="en" href="https://robindex.ai/?lang=en" />
+<link rel="alternate" hreflang="en" href="https://robindex.ai/" />
 <link rel="alternate" hreflang="x-default" href="https://robindex.ai/" />
 <meta property="og:type" content="website" />
 <meta property="og:url" content="https://robindex.ai/" />
-<meta property="og:title" content="Robindex — 金融 KOL 的 AI 分身交易研究终端" />
-<meta property="og:description" content="把交易判断交给懂行的 AI 分身。答案逐句标注原文出处，自选模型与推理算力。" />
+<meta property="og:title" content="Robindex — 召唤驱动市场的头脑" />
+<meta property="og:description" content="选一位金融 KOL 的 AI 分身，答案直链原文出处。自选模型与推理算力。四种界面风格。仅供研究。" />
 <meta property="og:site_name" content="Robindex" />
 <meta property="og:locale" content="zh_CN" />
-<meta property="og:locale:alternate" content="en_US" />
 <meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:title" content="Robindex — 金融 KOL 的 AI 分身交易研究终端" />
+<meta name="twitter:title" content="Robindex — 召唤驱动市场的头脑" />
 <meta name="twitter:description" content="把交易判断交给懂行的 AI 分身。答案逐句标注原文出处。" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="/app/themes.css" />
-<link rel="stylesheet" href="/app/landing.css?v=20260622-menu-mobile" />
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,200..500;1,6..72,300..420&family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 <link rel="icon" href="/app/icon.svg" type="image/svg+xml" />
-<style>html{scroll-behavior:smooth;}</style>
-<script>
-try{var _t=localStorage.getItem("rx.theme");if(_t)document.documentElement.setAttribute("data-theme",JSON.parse(_t));}catch(e){}
-</script>
+<style>
+:root{--cobalt:#1B30E0;}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{background:#fff;color:#15161A;font-family:'Geist',system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;overflow-x:hidden;}
+::selection{background:rgba(27,48,224,.14);color:var(--cobalt);}
+a{text-decoration:none;color:inherit;}
+h1,h2,h3{font-weight:400;}
+@keyframes rxrise{from{opacity:0;transform:translateY(16px);}to{opacity:1;transform:none;}}
+@keyframes rxpulse{50%{opacity:.35;}}
+[data-rx="burger"]{display:none;}
+[data-rx="mobile-menu"]{display:none;}
+@media (max-width:900px){
+  [data-rx="nav-links"]{display:none!important;}
+  [data-rx="nav-sec"]{display:none!important;}
+  [data-rx="burger"]{display:flex!important;}
+  [data-rx="feat"]{grid-template-columns:1fr!important;gap:34px!important;}
+  [data-rx="demo"]{grid-template-columns:1fr!important;}
+  [data-rx="demo-rail"]{border-left:none!important;border-top:1px solid #ECECE6!important;}
+  [data-rx="bannermore"]{display:none!important;}
+  /* extra responsive for homepage */
+  header[ id="top"] { padding-top: 40px !important; }
+  section { padding-left: 16px !important; padding-right: 16px !important; }
+  .lpersonas { grid-template-columns: 1fr !important; }
+  footer { padding-left: 16px !important; padding-right: 16px !important; }
+  nav > div { padding-left: 16px; padding-right: 16px; }
+}
+#rxLangMenu button:not([disabled]):hover{background:#F4F4F1;}
+#rxLangMenu button[disabled]{opacity:.42;cursor:default;}
+@media (max-width: 768px) {
+  /* stack all 2-col feature sections */
+  div[style*="grid-template-columns:1fr 1.05fr"],
+  div[style*="grid-template-columns:1.05fr 1fr"] {
+    grid-template-columns: 1fr !important;
+  }
+  /* hero demo mock on mobile */
+  div[style*="min-height:380px"] { min-height: 320px !important; }
+  /* trust strip wrap tighter */
+  section[style*="border-top:1px solid #F0F0EA"] > div { gap: 12px 20px !important; }
+  /* personas cards stack */
+  div[style*="repeat(auto-fit,minmax(320px,1fr)"] { grid-template-columns: 1fr !important; }
+}
+.lfoot a:hover{opacity:.85;}
+</style>
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
-  "name": "Robindex Desk",
+  "name": "Robindex",
   "applicationCategory": "FinanceApplication",
   "operatingSystem": "Web",
-  "url": "https://app.robindex.ai/",
-  "description": "金融 KOL 的 AI 分身交易研究终端。答案带原文出处，仅供研究，非投资建议。",
+  "url": "https://robindex.ai/",
+  "description": "金融 KOL 的 AI 分身交易研究终端。选一位 KOL 分身提问，答案逐句标注原文出处，自选模型与推理算力。",
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
   "inLanguage": ["zh", "en"]
 }
 </script>
 </head>
 <body>
-<div class="lp">
+<div id="rxContent" style="position:relative;z-index:2;background:#fff;">
 
-<nav class="lnav" aria-label="主导航">
-  <a class="lnav-brand" href="#top">
-    <div class="lnav-mark" aria-hidden="true">
-      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--on-accent)" stroke-width="1.8" stroke-linecap="round"><path d="M9 3v3M9 14v3M15 7v3M15 18v3M3 21h18"/><rect x="6.5" y="6" width="5" height="8" rx="1"/><rect x="12.5" y="10" width="5" height="8" rx="1"/></svg>
-    </div>
-    <div class="lnav-name">Robindex <span>Desk</span></div>
-  </a>
-  <div class="lnav-links">
-    <a href="#product" data-i18n="navProduct">产品</a>
-    <a href="#personas" data-i18n="navPersonas">分身</a>
-    <a href="#how" data-i18n="navHow">原理</a>
-    <a href="#pricing" data-i18n="navPricing">定价</a>
-  </div>
-  <div class="lnav-right">
-    <div class="mp lang-mp" id="langMp">
-      <button class="lang-toggle" type="button" id="langToggle" aria-label="语言" aria-expanded="false" aria-haspopup="listbox">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18z"/></svg>
-        <span class="lt-cur" id="langCur">中文</span>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="1.8" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
-      </button>
-      <div class="mp-menu lang-menu" id="langMenu" hidden role="listbox" aria-label="语言">
-        <div class="mp-head" id="langMenuHead">语言</div>
-      </div>
-    </div>
-    <div class="theme-wrap">
-      <button class="theme-btn icon-btn" type="button" aria-label="主题" title="主题">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="9.5" cy="9" r="1.3" fill="currentColor" stroke="none"/><circle cx="15" cy="10" r="1.3" fill="currentColor" stroke="none"/><circle cx="15.5" cy="14.5" r="1.3" fill="currentColor" stroke="none"/></svg>
-      </button>
-      <div class="theme-menu" hidden>
-        <button type="button" data-theme-opt="terminal">Terminal</button>
-        <button type="button" data-theme-opt="aurora" class="on">Aurora</button>
-        <button type="button" data-theme-opt="matrix">Matrix</button>
-        <button type="button" data-theme-opt="codex">Codex</button>
-      </div>
-    </div>
-    <a class="lnav-cta" href="https://app.robindex.ai/" data-i18n="open">进入终端
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+<!-- announcement bar -->
+<div id="rxBanner" style="background:#F3F4FF;border-bottom:1px solid #E4E6FA;text-align:center;font-size:13px;color:#3A3C46;padding:9px 20px;letter-spacing:-.005em;">
+  <span data-i18n="bannerText">Custom personas are coming — soon, summon any mind to work for you.</span>
+  <a href="#vision" data-rx="bannermore" style="color:var(--cobalt);font-weight:500;margin-left:8px;border-bottom:1px solid rgba(27,48,224,.3);" data-i18n="bannerMore">了解更多</a>
+</div>
+
+<!-- nav -->
+<nav style="position:sticky;top:0;z-index:50;background:rgba(255,255,255,.86);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid #EFEFEA;">
+  <div style="max-width:1240px;margin:0 auto;padding:0 24px;height:64px;display:flex;align-items:center;gap:18px;">
+    <a href="#top" style="display:flex;align-items:center;gap:9px;flex:none;">
+      <span style="width:28px;height:28px;border-radius:8px;background:var(--cobalt);display:flex;align-items:center;justify-content:center;flex:none;box-shadow:0 4px 14px rgba(27,48,224,.3);">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21V4h5.2a4.4 4.4 0 0 1 0 8.8H8"/><path d="M12.4 12.8 17 21"/></svg>
+      </span>
+      <span style="font-size:17px;font-weight:600;letter-spacing:-.02em;">Robindex</span>
     </a>
-    <button class="lnav-burger" type="button" aria-label="菜单" aria-expanded="false">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m12 2 9 5-9 5-9-5 9-5zM3 12l9 5 9-5M3 17l9 5 9-5"/></svg>
+    <div data-rx="nav-links" style="display:flex;align-items:center;gap:30px;margin-left:18px;font-size:14.5px;color:#3D3F48;">
+      <a href="#desk" style="transition:.15s;" data-i18n="navProduct">产品</a>
+      <a href="#roster" data-i18n="navPersonas">分身</a>
+      <a href="#hood" data-i18n="navHow">工作原理</a>
+    </div>
+    <div style="flex:1;"></div>
+    <div id="rxLangWrap" style="position:relative;">
+      <button id="rxLang" type="button" aria-haspopup="listbox" aria-expanded="false" aria-label="Language" style="display:flex;align-items:center;gap:6px;background:none;border:none;cursor:pointer;font-family:inherit;font-size:13.5px;color:#6A6C75;padding:6px 8px;border-radius:8px;">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18z"/></svg>
+        <span id="rxLangCur">English</span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+      <div id="rxLangMenu" hidden style="position:absolute;top:calc(100% + 8px);right:0;min-width:200px;background:#fff;border:1px solid #E9E9E3;border-radius:12px;box-shadow:0 16px 44px -12px rgba(20,24,60,.24);padding:6px;z-index:60;">
+        <button data-lang="en" type="button" style="display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:9px 10px;border-radius:8px;font-family:inherit;font-size:13.5px;color:#2B2C33;background:none;border:none;cursor:pointer;"><span style="flex:1;">English</span><span style="font-size:11px;color:#A7A9B0;">English</span><svg data-check width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.4" stroke-linecap="round" style="visibility:visible;"><path d="M20 6 9 17l-5-5"/></svg></button>
+        <button data-lang="zh" type="button" style="display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:9px 10px;border-radius:8px;font-family:inherit;font-size:13.5px;color:#2B2C33;background:none;border:none;cursor:pointer;"><span style="flex:1;">中文</span><span style="font-size:11px;color:#A7A9B0;">Chinese</span><svg data-check width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.4" stroke-linecap="round" style="visibility:hidden;"><path d="M20 6 9 17l-5-5"/></svg></button>
+        <div style="height:1px;background:#F0F0EA;margin:6px 6px;"></div>
+        <div style="font-family:'Geist Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:#B7B9BF;padding:2px 10px 6px;">More coming</div>
+        <button data-lang="ja" type="button" disabled style="display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:8px 10px;border-radius:8px;font-family:inherit;font-size:13.5px;color:#2B2C33;background:none;border:none;"><span style="flex:1;">日本語</span><span style="font-size:10px;color:#B7B9BF;">soon</span></button>
+        <button data-lang="ko" type="button" disabled style="display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:8px 10px;border-radius:8px;font-family:inherit;font-size:13.5px;color:#2B2C33;background:none;border:none;"><span style="flex:1;">한국어</span><span style="font-size:10px;color:#B7B9BF;">soon</span></button>
+        <button data-lang="vi" type="button" disabled style="display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:8px 10px;border-radius:8px;font-family:inherit;font-size:13.5px;color:#2B2C33;background:none;border:none;"><span style="flex:1;">Tiếng Việt</span><span style="font-size:10px;color:#B7B9BF;">soon</span></button>
+        <button data-lang="ru" type="button" disabled style="display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:8px 10px;border-radius:8px;font-family:inherit;font-size:13.5px;color:#2B2C33;background:none;border:none;"><span style="flex:1;">Русский</span><span style="font-size:10px;color:#B7B9BF;">soon</span></button>
+      </div>
+    </div>
+    <a href="https://app.robindex.ai/" style="display:flex;align-items:center;gap:7px;background:#15161A;color:#fff;font-size:14px;font-weight:500;padding:9px 16px;border-radius:9px;transition:.15s;" data-i18n="navOpen">Open the desk
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+    </a>
+    <button id="rxBurger" data-rx="burger" type="button" aria-label="菜单" style="width:40px;height:40px;border-radius:9px;border:1px solid #E6E6E0;background:#fff;align-items:center;justify-content:center;cursor:pointer;color:#15161A;">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
     </button>
+  </div>
+  <div id="rxMobileMenu" data-rx="mobile-menu" data-open="0" style="flex-direction:column;gap:4px;padding:10px 24px 18px;border-top:1px solid #EFEFEA;background:#fff;display:none;">
+    <a href="#desk" style="padding:11px 4px;font-size:16px;border-bottom:1px solid #F2F2EE;" data-i18n="navProduct">产品</a>
+    <a href="#roster" style="padding:11px 4px;font-size:16px;border-bottom:1px solid #F2F2EE;" data-i18n="navPersonas">分身</a>
+    <a href="#hood" style="padding:11px 4px;font-size:16px;border-bottom:1px solid #F2F2EE;" data-i18n="navHow">工作原理</a>
+    <a href="https://app.robindex.ai/" style="margin-top:8px;text-align:center;background:#15161A;color:#fff;font-size:15px;font-weight:500;padding:12px;border-radius:10px;" data-i18n="navOpen">Open the desk</a>
   </div>
 </nav>
 
-<div class="lmobile-menu" hidden>
-  <a href="#product" data-i18n="navProduct">产品</a>
-  <a href="#personas" data-i18n="navPersonas">分身</a>
-  <a href="#how" data-i18n="navHow">原理</a>
-  <a href="#pricing" data-i18n="navPricing">定价</a>
-  <a class="lnav-cta" href="https://app.robindex.ai/" data-i18n="open">进入终端</a>
-</div>
-
-<header class="lhero" id="top">
-  <div class="lhero-mesh" aria-hidden="true"></div>
-  <div class="lhero-grid" aria-hidden="true"></div>
-  <div class="lhero-inner">
-    <p class="lpill rv"><span class="dot"></span><span data-i18n="heroPill">金融版 AI 工作台 · 已接入 2 位 KOL 分身</span></p>
-    <h1 class="rv"><span data-i18n="h1a">把交易判断，</span><em data-i18n="h1b">交给懂行的 AI 分身</em></h1>
-    <p class="sub rv" data-i18n="heroSub">选一位金融 KOL 的 AI 分身，用 ta 的判断框架回答你的每一个问题。答案逐句标注原文出处，可一键展开来源推文。模型、推理算力、界面风格，全都你说了算。</p>
-    <div class="lhero-cta rv">
-      <a class="lbtn lbtn-primary" href="https://app.robindex.ai/" data-i18n="ctaPrimary">免费进入终端
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-      </a>
-      <a class="lbtn lbtn-ghost" href="#how" data-i18n="ctaGhost">看它怎么工作</a>
+<!-- hero -->
+<header id="top" style="position:relative;text-align:center;padding:clamp(56px,9vw,118px) 24px clamp(40px,5vw,64px);">
+  <div style="max-width:920px;margin:0 auto;animation:rxrise .7s cubic-bezier(.2,.7,.2,1) both;">
+    <div style="display:inline-flex;align-items:center;gap:8px;font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--cobalt);background:rgba(27,48,224,.07);border:1px solid rgba(27,48,224,.16);border-radius:30px;padding:6px 13px;margin-bottom:26px;">
+      <span style="width:6px;height:6px;border-radius:50%;background:var(--cobalt);animation:rxpulse 2s ease-in-out infinite;"></span>
+      <span data-i18n="heroPill">Live · the minds traders actually read</span>
     </div>
-    <p class="lhero-note rv" data-i18n="heroNote">无需信用卡 · DeepSeek V4 全程可调 · 中英多语言</p>
+    <h1 style="font-family:'Newsreader',serif;font-weight:400;font-size:clamp(40px,6.6vw,86px);line-height:1.02;letter-spacing:-.025em;color:#14151A;margin:0;">
+      <span data-i18n="h1a">Summon the minds that</span> <em data-i18n="h1b" style="font-style:italic;color:var(--cobalt);">move markets.</em>
+    </h1>
+    <p style="font-size:clamp(16px,1.6vw,20px);line-height:1.55;color:#54565F;max-width:660px;margin:26px auto 0;letter-spacing:-.01em;" data-i18n="heroSub">Pick a thinker. Ask anything. Robindex answers in their framework, in their voice — and every claim links straight back to their own words. No black box. Just the mind you trust, on demand.</p>
+    <div style="display:flex;flex-wrap:wrap;gap:12px;justify-content:center;margin-top:34px;">
+      <a href="https://app.robindex.ai/" style="display:inline-flex;align-items:center;gap:8px;background:#15161A;color:#fff;font-size:15.5px;font-weight:500;padding:14px 24px;border-radius:11px;transition:.15s;" data-i18n="ctaPrimary">Open the desk — it's free
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </a>
+      <a href="#desk" style="display:inline-flex;align-items:center;gap:8px;background:#fff;color:#15161A;font-size:15.5px;font-weight:500;padding:14px 22px;border-radius:11px;border:1px solid #E2E2DC;transition:.15s;" data-i18n="ctaGhost">看它怎么运作</a>
+    </div>
+    <p style="margin-top:14px;font-size:13px;color:#6A6C75;" data-i18n="heroNote">无需信用卡 · DeepSeek V4 全程可调 · 中英双语</p>
   </div>
 
-  <div class="lvisual rv">
-    <div class="lfloat f1">
-      <span class="mp-badge" style="background:#4D6BFE">P4</span>
-      <div><b>DeepSeek V4 Pro</b><div class="s" data-i18n="floatModel">自选模型 · 算力</div></div>
-    </div>
-    <div class="lfloat f2">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.8"><path d="M10 11V7a2 2 0 0 0-2-2H5M20 11V7a2 2 0 0 0-2-2h-3M3 11h7v3a3 3 0 0 1-3 3M13 11h7v3a3 3 0 0 1-3 3"/></svg>
-      <div><b>[1] [2] [3]</b><div class="s" data-i18n="floatCite">原文出处 · 可追溯</div></div>
-    </div>
-    <div class="lvisual-frame">
-      <div class="lvf-bar">
-        <div class="lvf-dots" aria-hidden="true"><i style="background:#FF5F57"></i><i style="background:#FEBC2E"></i><i style="background:#28C840"></i></div>
-        <div class="lvf-title" data-i18n="visTitle">robindex.ai — AI Trader Desk</div>
+  <!-- product demo -->
+  <div style="max-width:980px;margin:clamp(44px,6vw,72px) auto 0;animation:rxrise .9s .12s cubic-bezier(.2,.7,.2,1) both;">
+    <div style="border:1px solid #E7E7E1;border-radius:16px;background:#fff;box-shadow:0 2px 6px rgba(20,20,30,.04),0 40px 80px -28px rgba(20,24,60,.28);overflow:hidden;text-align:left;">
+      <div style="display:flex;align-items:center;gap:8px;height:42px;padding:0 16px;border-bottom:1px solid #F0F0EB;background:#FCFCFB;">
+        <span style="width:11px;height:11px;border-radius:50%;background:#FF5F57;"></span>
+        <span style="width:11px;height:11px;border-radius:50%;background:#FEBC2E;"></span>
+        <span style="width:11px;height:11px;border-radius:50%;background:#28C840;"></span>
+        <span style="margin:0 auto;font-family:'Geist Mono',monospace;font-size:11.5px;color:#A7A9B0;background:#F3F3EF;border:1px solid #ECECE6;border-radius:7px;padding:3px 14px;">app.robindex.ai</span>
       </div>
-      <div class="lvf-body">
-        <div class="lvf-chat">
-          <div class="lvf-q" data-i18n="visQ">你怎么看 CPO 延期，光互连 2026 真正受益的是谁？</div>
-          <div class="lvf-a">
-            <img class="lvf-src-av" src="https://unavatar.io/x/qinbafrank" alt="Qinbafrank" width="26" height="26" loading="lazy" />
-            <div class="lvf-ans">
-              <span data-i18n="visA1">先给结论：</span><b data-i18n="visABold">CPO 是方向，但 2026 不是它的兑现年</b><span class="lvf-cite">1</span><span data-i18n="visA2">。真正兑现业绩的主力，是 1.6T 可插拔 + NPO 近封装</span><span class="lvf-cite">2</span>。
+      <div data-rx="demo" style="display:grid;grid-template-columns:1.5fr 1fr;min-height:380px;">
+        <div style="padding:20px 22px;display:flex;flex-direction:column;gap:16px;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <img src="https://unavatar.io/x/qinbafrank" alt="" width="32" height="32" loading="lazy" style="border-radius:8px;object-fit:cover;" />
+            <div style="min-width:0;">
+              <div style="font-size:14px;font-weight:600;display:flex;align-items:center;gap:7px;">Qinbafrank
+                <span style="font-family:'Geist Mono',monospace;font-size:9px;letter-spacing:.08em;color:var(--cobalt);border:1px solid rgba(27,48,224,.22);border-radius:20px;padding:2px 7px;display:inline-flex;align-items:center;gap:4px;"><span style="width:5px;height:5px;border-radius:50%;background:var(--cobalt);"></span>LIVE</span>
+              </div>
+              <div style="font-family:'Geist Mono',monospace;font-size:10.5px;color:#9A9CA4;" data-i18n="demoVia">first-person persona · @qinbafrank</div>
+            </div>
+          </div>
+          <div style="align-self:flex-end;max-width:84%;background:#F4F4F1;border:1px solid #ECECE6;border-radius:13px 13px 4px 13px;padding:11px 14px;font-size:13.5px;line-height:1.5;color:#27282E;" data-i18n="demoQ">With CPO slipping, who actually benefits from optical interconnect in 2026?</div>
+          <div style="display:flex;gap:11px;">
+            <img src="https://unavatar.io/x/qinbafrank" alt="" width="28" height="28" loading="lazy" style="border-radius:7px;object-fit:cover;flex:none;margin-top:2px;" />
+            <div style="min-width:0;">
+              <div style="font-size:14px;line-height:1.62;color:#2B2C33;" data-i18n="demoA">Bottom line first: <b style="font-weight:600;color:#15161A;">CPO is the direction, but 2026 is not its payoff year</b><sup style="color:var(--cobalt);font-weight:600;background:rgba(27,48,224,.1);border-radius:5px;padding:1px 5px;font-size:10px;margin:0 2px;">1</sup>. The names that actually print in 2026 are 1.6T pluggables and NPO near-packaging<sup style="color:var(--cobalt);font-weight:600;background:rgba(27,48,224,.1);border-radius:5px;padding:1px 5px;font-size:10px;margin:0 2px;">2</sup>.</div>
+              <div style="display:flex;align-items:center;gap:10px;margin-top:14px;">
+                <span style="font-family:'Geist Mono',monospace;font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:#9A9CA4;" data-i18n="demoConv">Conviction</span>
+                <span style="flex:1;max-width:130px;height:5px;border-radius:3px;background:#EDEDE8;overflow:hidden;"><span style="display:block;height:100%;width:78%;border-radius:3px;background:var(--cobalt);"></span></span>
+                <span style="font-family:'Geist Mono',monospace;font-size:11px;color:var(--cobalt);font-weight:600;">78%</span>
+              </div>
             </div>
           </div>
         </div>
-        <div class="lvf-side">
-          <div class="lvf-side-h" data-i18n="visSrcNote">本回答引用 3 条原文</div>
-          <div class="lvf-src">
-            <div class="lvf-src-top">
-              <img class="lvf-src-av" src="https://unavatar.io/x/qinbafrank" alt="" width="26" height="26" loading="lazy" />
-              <div><div class="lvf-src-nm">Qinbafrank</div><div class="lvf-src-h">@qinbafrank</div></div>
-              <span class="lvf-src-ref">1</span>
+        <div data-rx="demo-rail" style="border-left:1px solid #ECECE6;background:#FAFAF8;padding:16px 15px;display:flex;flex-direction:column;gap:11px;">
+          <div style="font-family:'Geist Mono',monospace;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:#9A9CA4;" data-i18n="demoSrcH">3 sources cited</div>
+          <div style="border:1px solid #ECECE6;border-radius:11px;background:#fff;padding:11px 12px;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px;">
+              <img src="https://unavatar.io/x/qinbafrank" alt="" width="22" height="22" loading="lazy" style="border-radius:6px;object-fit:cover;" />
+              <div style="flex:1;min-width:0;"><div style="font-size:12px;font-weight:600;">Qinbafrank</div><div style="font-family:'Geist Mono',monospace;font-size:9.5px;color:#A7A9B0;">@qinbafrank</div></div>
+              <span style="width:18px;height:18px;border-radius:6px;background:rgba(27,48,224,.1);color:var(--cobalt);font-family:'Geist Mono',monospace;font-size:10px;font-weight:600;display:flex;align-items:center;justify-content:center;">1</span>
             </div>
-            <div class="lvf-src-tx" data-i18n="src1">一张图看清 26 年光互连哪些环节真正受益…</div>
+            <div style="font-size:12px;line-height:1.5;color:#5C5E66;" data-i18n="demoSrc1">One chart on which links in the 2026 optical-interconnect chain actually benefit…</div>
           </div>
-          <div class="lvf-src">
-            <div class="lvf-src-top">
-              <img class="lvf-src-av" src="https://unavatar.io/x/qinbafrank" alt="" width="26" height="26" loading="lazy" />
-              <div><div class="lvf-src-nm">Qinbafrank</div><div class="lvf-src-h">@qinbafrank</div></div>
-              <span class="lvf-src-ref">2</span>
+          <div style="border:1px solid #ECECE6;border-radius:11px;background:#fff;padding:11px 12px;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px;">
+              <img src="https://unavatar.io/x/qinbafrank" alt="" width="22" height="22" loading="lazy" style="border-radius:6px;object-fit:cover;" />
+              <div style="flex:1;min-width:0;"><div style="font-size:12px;font-weight:600;">Qinbafrank</div><div style="font-family:'Geist Mono',monospace;font-size:9.5px;color:#A7A9B0;">@qinbafrank</div></div>
+              <span style="width:18px;height:18px;border-radius:6px;background:rgba(27,48,224,.1);color:var(--cobalt);font-family:'Geist Mono',monospace;font-size:10px;font-weight:600;display:flex;align-items:center;justify-content:center;">2</span>
             </div>
-            <div class="lvf-src-tx" data-i18n="src2">CPO 大规模落地推迟到 27-28；26 年主力是 1.6T + NPO…</div>
+            <div style="font-size:12px;line-height:1.5;color:#5C5E66;" data-i18n="demoSrc2">Mass CPO deployment pushes to 27–28; the 2026 workhorse is 1.6T + NPO…</div>
           </div>
         </div>
       </div>
@@ -164,211 +215,468 @@ try{var _t=localStorage.getItem("rx.theme");if(_t)document.documentElement.setAt
   </div>
 </header>
 
-<section class="lstrip rv" aria-label="数据来源">
-  <div class="lstrip-lab" data-i18n="stripLab">数据来自交易者真正在读的人</div>
-  <div class="lstrip-row">
-    <span><img src="https://unavatar.io/x/qinbafrank" alt="" width="24" height="24" loading="lazy" style="border-radius:50%;object-fit:cover" />@qinbafrank</span>
-    <span><img src="https://pbs.twimg.com/profile_images/1996176688414367744/LXfA_lIx_400x400.jpg" alt="" width="24" height="24" loading="lazy" style="border-radius:50%;object-fit:cover" />@aleabitoreddit</span>
-    <span>X / Twitter</span>
-    <span><span class="mp-badge" style="background:#4D6BFE;width:20px;height:20px;font-size:8px;border-radius:5px">V4</span>DeepSeek V4</span>
+<!-- trust strip -->
+<section style="border-top:1px solid #F0F0EA;border-bottom:1px solid #F0F0EA;padding:30px 24px;">
+  <div style="max-width:1100px;margin:0 auto;display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:18px 40px;">
+    <span style="font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#9A9CA4;flex:none;" data-i18n="trustLab">建立在最敏锐的头脑真正写下的内容之上</span>
+    <span style="display:flex;align-items:center;gap:9px;font-size:14px;font-weight:500;color:#3D3F48;"><img src="https://unavatar.io/x/qinbafrank" alt="" width="26" height="26" loading="lazy" style="border-radius:50%;object-fit:cover;" />@qinbafrank</span>
+    <span style="display:flex;align-items:center;gap:9px;font-size:14px;font-weight:500;color:#3D3F48;"><img src="https://pbs.twimg.com/profile_images/1996176688414367744/LXfA_lIx_400x400.jpg" alt="" width="26" height="26" loading="lazy" style="border-radius:50%;object-fit:cover;" />@aleabitoreddit</span>
+    <span style="display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:#3D3F48;"><svg width="17" height="17" viewBox="0 0 24 24" fill="#1D1D1F"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24h-6.66l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>X / Twitter corpus</span>
+    <span style="display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:#3D3F48;"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#3D3F48" stroke-width="1.7" stroke-linejoin="round"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/></svg><span data-i18n="trustModel">任何最先进的模型</span></span>
   </div>
 </section>
 
-<main>
-<section class="lsec" id="product">
-  <div class="lsec-head rv">
-    <span class="lsec-eyebrow" data-i18n="secProductEyebrow">它能做什么</span>
-    <h2 data-i18n="secProductH">一个会用你信任的声音回答的交易台</h2>
-    <p data-i18n="secProductP">三件事，让 Robindex 不只是又一个聊天机器人。</p>
-  </div>
+<!-- the desk / features -->
+<section id="desk" style="padding:clamp(64px,9vw,128px) 24px 0;">
+  <div style="max-width:1180px;margin:0 auto;">
+    <div style="text-align:center;max-width:760px;margin:0 auto;">
+      <span style="font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--cobalt);" data-i18n="deskEye">终端</span>
+      <h2 style="font-family:'Newsreader',serif;font-weight:400;font-size:clamp(30px,4.6vw,56px);line-height:1.06;letter-spacing:-.022em;color:#14151A;margin:14px 0 0;"><span data-i18n="deskTitleA">它听起来不像 AI，</span> <em data-i18n="deskTitleB" style="font-style:italic;color:var(--cobalt);">它就是 ta 本人。</em></h2>
+    </div>
 
-  <div class="lfeat rv">
-    <div class="lfeat-text">
-      <div class="lfeat-num">01 · <span data-i18n="f1eye">对话即研究</span></div>
-      <h3 data-i18n="f1h">向分身提问，得到带出处的判断</h3>
-      <p data-i18n="f1p">不是泛泛的 AI 回答。每个结论都来自 KOL 本人的历史推文，逐句标注 [#]，点开就是原文。</p>
-      <div class="lfeat-list">
-        <div class="lfeat-li"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f1l1">第一人称分身：用 KOL 的框架与语气作答</span></div>
-        <div class="lfeat-li"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f1l2">稀疏检索 + LLM 重排，只引用真实发言</span></div>
-        <div class="lfeat-li"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f1l3">判断信心可视化，不确定就说不确定</span></div>
-      </div>
-    </div>
-    <div class="lfeat-vis">
-      <div class="mock-bar"><i style="background:#FF5F57"></i><i style="background:#FEBC2E"></i><i style="background:#28C840"></i>ask · Qinbafrank</div>
-      <div class="mock-pad">
-        <div class="mock-bar" style="border:1px solid var(--border);border-radius:10px;margin-bottom:12px" data-i18n="mockRetrieval">检索完成 · 4/4 阶段</div>
-        <div class="mock-pipe">
-          <div class="mock-step"><span class="ok">✓</span><span class="fn">plan.expand</span><span class="ar">(检索词)</span></div>
-          <div class="mock-step"><span class="ok">✓</span><span class="fn">corpus.search</span><span class="ar">(FTS5)</span></div>
-          <div class="mock-step"><span class="ok">✓</span><span class="fn">rerank.select</span><span class="ar">(top_k:3)</span></div>
+    <!-- feature 01 -->
+    <div data-rx="feat" style="display:grid;grid-template-columns:1fr 1.05fr;gap:clamp(36px,5vw,72px);align-items:center;margin-top:clamp(48px,6vw,88px);">
+      <div>
+        <div style="font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#9A9CA4;">01 · <span style="color:var(--cobalt);" data-i18n="f1eye">有出处的判断</span></div>
+        <h3 style="font-family:'Newsreader',serif;font-weight:400;font-size:clamp(26px,3vw,38px);line-height:1.12;letter-spacing:-.02em;margin:14px 0 0;color:#15161A;" data-i18n="f1h">每一个判断，都能追溯到原文。</h3>
+        <p style="font-size:16.5px;line-height:1.6;color:#54565F;margin:16px 0 0;max-width:46ch;" data-i18n="f1p">不是裹着自信的泛泛之谈。每个结论都来自分身本人真正写下的内容 —— 逐句标注 [#] 角标，一点即展开为原始推文。</p>
+        <div style="display:flex;flex-direction:column;gap:11px;margin-top:22px;">
+          <div style="display:flex;align-items:flex-start;gap:10px;font-size:14.5px;color:#3D3F48;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.2" style="flex:none;margin-top:2px;"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f1l1">以 KOL 本人的框架，用第一人称作答</span></div>
+          <div style="display:flex;align-items:flex-start;gap:10px;font-size:14.5px;color:#3D3F48;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.2" style="flex:none;margin-top:2px;"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f1l2">稀疏检索 + LLM 重排，覆盖全量语料</span></div>
+          <div style="display:flex;align-items:flex-start;gap:10px;font-size:14.5px;color:#3D3F48;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.2" style="flex:none;margin-top:2px;"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f1l3">判断信心可视化 —— 不确定就说不确定</span></div>
         </div>
-        <div class="lvf-ans" style="margin-top:14px;font-size:13px"><b data-i18n="visABold">CPO 是方向，但 2026 不是它的兑现年</b><span class="lvf-cite">1</span> · <span class="lvf-cite">2</span> · <span class="lvf-cite">3</span></div>
+      </div>
+      <div style="border:1px solid #E9E9E3;border-radius:16px;background:#F8F8F5;padding:22px;">
+        <div style="background:#fff;border:1px solid #ECECE6;border-radius:12px;padding:14px 16px;font-family:'Geist Mono',monospace;font-size:12.5px;line-height:1.9;color:#3D3F48;">
+          <div style="color:#9A9CA4;margin-bottom:8px;">// retrieval pipeline</div>
+          <div><span style="color:#1E9E6A;">✓</span> <span style="color:var(--cobalt);">plan.expand</span>(question) <span style="color:#B7B9BF;">→ 6 terms</span></div>
+          <div><span style="color:#1E9E6A;">✓</span> <span style="color:var(--cobalt);">corpus.search</span>(FTS5) <span style="color:#B7B9BF;">→ 41 hits</span></div>
+          <div><span style="color:#1E9E6A;">✓</span> <span style="color:var(--cobalt);">rerank.select</span>(top_k:3)</div>
+        </div>
+        <div style="margin-top:14px;font-size:14px;line-height:1.6;color:#2B2C33;background:#fff;border:1px solid #ECECE6;border-radius:12px;padding:14px 16px;"><b style="color:#15161A;">CPO 是方向，但 2026 不是它的兑现年</b> <sup style="color:var(--cobalt);font-weight:600;background:rgba(27,48,224,.1);border-radius:5px;padding:1px 5px;font-size:10px;">1</sup><sup style="color:var(--cobalt);font-weight:600;background:rgba(27,48,224,.1);border-radius:5px;padding:1px 5px;font-size:10px;margin-left:3px;">2</sup></div>
       </div>
     </div>
-  </div>
 
-  <div class="lfeat rv rev">
-    <div class="lfeat-text">
-      <div class="lfeat-num">02 · <span data-i18n="f2eye">你掌控算力</span></div>
-      <h3 data-i18n="f2h">自选模型与推理强度</h3>
-      <p data-i18n="f2p">日常追问用 Flash，深度复盘切 Pro，再按需调高推理算力。账单透明，按消耗计费。</p>
-      <div class="lfeat-list">
-        <div class="lfeat-li"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f2l1">DeepSeek V4 Pro / Flash 实时切换</span></div>
-        <div class="lfeat-li"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f2l2">推理强度：低 / 中 / 高 / 超高</span></div>
-        <div class="lfeat-li"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f2l3">用量与额度一目了然</span></div>
+    <!-- feature 02 -->
+    <div data-rx="feat" style="display:grid;grid-template-columns:1.05fr 1fr;gap:clamp(36px,5vw,72px);align-items:center;margin-top:clamp(48px,6vw,88px);">
+      <div style="border:1px solid #E9E9E3;border-radius:16px;background:#F8F8F5;padding:18px;order:2;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+          <span style="font-family:'Geist Mono',monospace;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:#9A9CA4;" data-i18n="f2models">选择任意模型</span>
+          <span style="display:flex;align-items:center;gap:7px;font-family:'Geist Mono',monospace;font-size:10px;color:#9A9CA4;"><span data-i18n="f2max">Max 模式</span><span style="width:30px;height:17px;border-radius:20px;background:var(--cobalt);position:relative;display:inline-block;"><span style="position:absolute;top:2px;right:2px;width:13px;height:13px;border-radius:50%;background:#fff;"></span></span></span>
+        </div>
+        <div style="background:#fff;border:1px solid #ECECE6;border-radius:12px;padding:6px;display:flex;flex-direction:column;gap:2px;">
+          <div style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:9px;background:rgba(27,48,224,.06);border:1px solid rgba(27,48,224,.16);">
+            <span style="width:24px;height:24px;border-radius:7px;background:linear-gradient(135deg,#15161A,#3D3F48);color:#fff;font-family:'Geist Mono',monospace;font-size:10px;font-weight:600;display:flex;align-items:center;justify-content:center;flex:none;">A</span>
+            <span style="font-size:13px;font-weight:600;">Auto</span>
+            <span style="font-family:'Geist Mono',monospace;font-size:9.5px;color:#6A6C75;background:#F4F4F1;border:1px solid #ECECE6;border-radius:6px;padding:2px 6px;">High</span>
+            <span style="flex:1;"></span>
+            <span style="font-family:'Geist Mono',monospace;font-size:10px;color:#9A9CA4;" data-i18n="f2auto">自动择优</span>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.4" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:9px;">
+            <span style="width:24px;height:24px;border-radius:7px;background:#EAEAFE;color:var(--cobalt);font-family:'Geist Mono',monospace;font-size:10px;font-weight:600;display:flex;align-items:center;justify-content:center;flex:none;">M</span>
+            <span style="font-size:13px;font-weight:500;">MiniMax M3</span>
+            <span style="font-family:'Geist Mono',monospace;font-size:9.5px;color:#6A6C75;background:#F4F4F1;border:1px solid #ECECE6;border-radius:6px;padding:2px 6px;">Medium</span>
+            <span style="flex:1;"></span>
+            <span style="font-family:'Geist Mono',monospace;font-size:11px;color:#9A9CA4;">0.25x</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:9px;">
+            <span style="width:24px;height:24px;border-radius:7px;background:#1A1A1A;color:#fff;font-family:'Geist Mono',monospace;font-size:10px;font-weight:600;display:flex;align-items:center;justify-content:center;flex:none;">K</span>
+            <span style="font-size:13px;font-weight:500;">Kimi K2.7</span>
+            <span style="font-family:'Geist Mono',monospace;font-size:9.5px;color:#6A6C75;background:#F4F4F1;border:1px solid #ECECE6;border-radius:6px;padding:2px 6px;">Medium</span>
+            <span style="flex:1;"></span>
+            <span style="font-family:'Geist Mono',monospace;font-size:11px;color:#9A9CA4;">0.76x</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:9px;">
+            <span style="width:24px;height:24px;border-radius:7px;background:#2A2A33;color:#fff;font-family:'Geist Mono',monospace;font-size:10px;font-weight:600;display:flex;align-items:center;justify-content:center;flex:none;">G</span>
+            <span style="font-size:13px;font-weight:500;">GLM-5.2</span>
+            <span style="font-family:'Geist Mono',monospace;font-size:9.5px;color:#6A6C75;background:#F4F4F1;border:1px solid #ECECE6;border-radius:6px;padding:2px 6px;">Medium</span>
+            <span style="flex:1;"></span>
+            <span style="font-family:'Geist Mono',monospace;font-size:11px;color:#9A9CA4;">0.76x</span>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div style="font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#9A9CA4;">02 · <span style="color:var(--cobalt);" data-i18n="f2eye">模型由你选择</span></div>
+        <h3 style="font-family:'Newsreader',serif;font-weight:400;font-size:clamp(26px,3vw,38px);line-height:1.12;letter-spacing:-.02em;margin:14px 0 0;color:#15161A;" data-i18n="f2h">任何模型，包括最前沿的。</h3>
+        <p style="font-size:16.5px;line-height:1.6;color:#54565F;margin:16px 0 0;max-width:46ch;" data-i18n="f2p">自动择优，或亲手指定任意模型来驱动一位分身 —— 调来最先进的智能，让它在完全的创造力上为你思考。实时切换、推理强度自由调，或接入你自己的模型 API，用你自己的额度。</p>
+        <div style="display:flex;flex-direction:column;gap:11px;margin-top:22px;">
+          <div style="display:flex;align-items:flex-start;gap:10px;font-size:14.5px;color:#3D3F48;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.2" style="flex:none;margin-top:2px;"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f2l1">任意模型，自动路由或亲手指定</span></div>
+          <div style="display:flex;align-items:flex-start;gap:10px;font-size:14.5px;color:#3D3F48;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.2" style="flex:none;margin-top:2px;"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f2l2">调用最前沿的智能，推理强度自由调</span></div>
+          <div style="display:flex;align-items:flex-start;gap:10px;font-size:14.5px;color:#3D3F48;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.2" style="flex:none;margin-top:2px;"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f2l3">接入自有模型 API —— 用你自己的额度</span></div>
+        </div>
       </div>
     </div>
-    <div class="lfeat-vis">
-      <div class="mock-models">
-        <div class="mock-model on">
-          <span class="mp-badge" style="background:#4D6BFE">P4</span>
-          <div><div class="mock-mn">DeepSeek V4 Pro</div><div class="mock-ms" data-i18n="mockPro">深度分析 · 多工具</div></div>
-        </div>
-        <div class="mock-model">
-          <span class="mp-badge" style="background:#6E8BFF">F4</span>
-          <div><div class="mock-mn">DeepSeek V4 Flash</div><div class="mock-ms" data-i18n="mockFlash">快速 · 低成本</div></div>
-        </div>
-        <div style="margin-top:4px">
-          <div class="lvf-side-h" style="margin-bottom:8px" data-i18n="mockReasoning">推理强度</div>
-          <div class="mock-eff"><i>低</i><i>中</i><i class="on">高</i><i>超高</i></div>
-        </div>
-      </div>
-    </div>
-  </div>
 
-  <div class="lfeat rv">
-    <div class="lfeat-text">
-      <div class="lfeat-num">03 · <span data-i18n="f3eye">为你而生的界面</span></div>
-      <h3 data-i18n="f3h">四种风格，一个终端</h3>
-      <p data-i18n="f3p">信号绿交易终端、苹果留白、磷光黑客风、极简 Codex——一键切换，PC 与手机自适应，可直接添加到主屏当 App 用。</p>
-      <div class="lfeat-list">
-        <div class="lfeat-li"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f3l1">Terminal / Aurora / Matrix / Codex 四主题</span></div>
-        <div class="lfeat-li"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f3l2">桌面、平板、手机全自适应</span></div>
-        <div class="lfeat-li"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f3l3">PWA：添加到主屏，秒变原生 App</span></div>
+    <!-- feature 03 -->
+    <div data-rx="feat" style="display:grid;grid-template-columns:1fr 1.05fr;gap:clamp(36px,5vw,72px);align-items:center;margin-top:clamp(48px,6vw,88px);">
+      <div>
+        <div style="font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#9A9CA4;">03 · <span style="color:var(--cobalt);" data-i18n="f3eye">为你的工作方式而生</span></div>
+        <h3 style="font-family:'Newsreader',serif;font-weight:400;font-size:clamp(26px,3vw,38px);line-height:1.12;letter-spacing:-.02em;margin:14px 0 0;color:#15161A;" data-i18n="f3h">一个终端，四种看法。</h3>
+        <p style="font-size:16.5px;line-height:1.6;color:#54565F;margin:16px 0 0;max-width:46ch;" data-i18n="f3p">信号绿交易终端、苹果留白、磷光黑客风、极简 Codex —— 一键切换。桌面到手机自适应，添加到主屏即成 App。</p>
+        <div style="display:flex;flex-direction:column;gap:11px;margin-top:22px;">
+          <div style="display:flex;align-items:flex-start;gap:10px;font-size:14.5px;color:#3D3F48;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.2" style="flex:none;margin-top:2px;"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f3l1">Terminal · Aurora · Matrix · Codex 四主题</span></div>
+          <div style="display:flex;align-items:flex-start;gap:10px;font-size:14.5px;color:#3D3F48;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.2" style="flex:none;margin-top:2px;"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f3l2">桌面、平板、手机全自适应</span></div>
+          <div style="display:flex;align-items:flex-start;gap:10px;font-size:14.5px;color:#3D3F48;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cobalt)" stroke-width="2.2" style="flex:none;margin-top:2px;"><path d="M20 6 9 17l-5-5"/></svg><span data-i18n="f3l3">PWA：添加到主屏，像原生 App 一样用</span></div>
+        </div>
       </div>
-    </div>
-    <div class="lfeat-vis">
-      <div class="mock-themes">
-        <div class="mock-theme"><div class="mock-theme-sw"><i style="background:#0A0B0D"></i><i style="background:#3DDC97"></i><i style="background:#5B9DFF"></i></div><div class="mock-theme-lab">Terminal <span data-i18n="themeTerminal">信号绿</span></div></div>
-        <div class="mock-theme"><div class="mock-theme-sw"><i style="background:#FBFBFD"></i><i style="background:#0071E3"></i><i style="background:#1D1D1F"></i></div><div class="mock-theme-lab">Aurora <span data-i18n="themeAurora">苹果留白</span></div></div>
-        <div class="mock-theme"><div class="mock-theme-sw"><i style="background:#000000"></i><i style="background:#00FF85"></i><i style="background:#0C1A0E"></i></div><div class="mock-theme-lab">Matrix <span data-i18n="themeMatrix">磷光黑客</span></div></div>
-        <div class="mock-theme"><div class="mock-theme-sw"><i style="background:#0D0D0D"></i><i style="background:#ECECEC"></i><i style="background:#19C37D"></i></div><div class="mock-theme-lab">Codex <span data-i18n="themeCodex">极简</span></div></div>
+      <div style="border:1px solid #E9E9E3;border-radius:16px;background:#F8F8F5;padding:22px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div style="background:#fff;border:1px solid #ECECE6;border-radius:12px;padding:14px 16px;">
+            <div style="display:flex;gap:8px;margin-bottom:8px;"><i style="width:18px;height:18px;border-radius:4px;background:#0A0B0D"></i><i style="width:18px;height:18px;border-radius:4px;background:#3DDC97"></i><i style="width:18px;height:18px;border-radius:4px;background:#5B9DFF"></i></div>
+            <div style="font-weight:600;font-size:14px;">Terminal <span style="font-size:12px;color:#6A6C75;" data-i18n="thTerminal">信号绿</span></div>
+          </div>
+          <div style="background:#fff;border:1px solid #ECECE6;border-radius:12px;padding:14px 16px;">
+            <div style="display:flex;gap:8px;margin-bottom:8px;"><i style="width:18px;height:18px;border-radius:4px;background:#FBFBFD"></i><i style="width:18px;height:18px;border-radius:4px;background:#0071E3"></i><i style="width:18px;height:18px;border-radius:4px;background:#1D1D1F"></i></div>
+            <div style="font-weight:600;font-size:14px;">Aurora <span style="font-size:12px;color:#6A6C75;" data-i18n="thAurora">苹果留白</span></div>
+          </div>
+          <div style="background:#fff;border:1px solid #ECECE6;border-radius:12px;padding:14px 16px;">
+            <div style="display:flex;gap:8px;margin-bottom:8px;"><i style="width:18px;height:18px;border-radius:4px;background:#000000"></i><i style="width:18px;height:18px;border-radius:4px;background:#00FF85"></i><i style="width:18px;height:18px;border-radius:4px;background:#0C1A0E"></i></div>
+            <div style="font-weight:600;font-size:14px;">Matrix <span style="font-size:12px;color:#6A6C75;" data-i18n="thMatrix">磷光</span></div>
+          </div>
+          <div style="background:#fff;border:1px solid #ECECE6;border-radius:12px;padding:14px 16px;">
+            <div style="display:flex;gap:8px;margin-bottom:8px;"><i style="width:18px;height:18px;border-radius:4px;background:#0D0D0D"></i><i style="width:18px;height:18px;border-radius:4px;background:#ECECEC"></i><i style="width:18px;height:18px;border-radius:4px;background:#19C37D"></i></div>
+            <div style="font-weight:600;font-size:14px;">Codex <span style="font-size:12px;color:#6A6C75;" data-i18n="thCodex">极简</span></div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
 </section>
 
-<section class="lsec" id="how">
-  <div class="lsec-head rv">
-    <span class="lsec-eyebrow" data-i18n="howEye">两步上手</span>
-    <h2 data-i18n="howH">从提问到可执行策略</h2>
-    <p data-i18n="howSub">今天先让分身解答你的问题；很快，让分身把判断写成可回测的策略代码。</p>
-  </div>
-  <div class="lsteps">
-    <div class="lstep rv"><div class="lstep-n">1</div><h4 data-i18n="s1h">选择分身</h4><p data-i18n="s1p">从金融 KOL 的 AI 分身中挑一位，ta 的全量推文已被索引为云端知识库。</p></div>
-    <div class="lstep rv"><div class="lstep-n">2</div><h4 data-i18n="s2h">提问并追问</h4><p data-i18n="s2p">用自然语言提问，分身以第一人称作答，逐句给出原文出处，可继续深挖。</p></div>
-    <div class="lstep rv"><div class="lstep-n">3</div><h4><span data-i18n="s3h">生成策略代码</span> <span class="soon-tag-sm" data-i18n="soon">即将上线</span></h4><p data-i18n="s3p">一键把判断变成可回测的策略代码，绑定券商沙盒验证。即将上线。</p></div>
+<!-- how it works -->
+<section id="hood" style="padding:clamp(64px,9vw,110px) 24px 0;background:#FAFAF8;border-top:1px solid #F0F0EA;margin-top:clamp(64px,9vw,110px);">
+  <div style="max-width:1100px;margin:0 auto;">
+    <div style="text-align:center;max-width:720px;margin:0 auto;">
+      <span style="font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--cobalt);" data-i18n="hoodEye">技术内核</span>
+      <h2 style="font-family:'Newsreader',serif;font-weight:400;font-size:clamp(30px,4.6vw,52px);line-height:1.05;letter-spacing:-.02em;margin:12px 0 0;"><span data-i18n="hoodTitleA">检索，</span><em data-i18n="hoodTitleB" style="font-style:italic;color:var(--cobalt);">而非凭记忆生成。</em></h2>
+      <p style="font-size:16.5px;color:#54565F;margin-top:16px;" data-i18n="hoodP">没有微调。Robindex 先蒸馏出一位分身，再针对你的问题检索 ta 的真实原话，结合实时行情数据，最后组装答案。模型与检索越强，每位分身越敏锐 —— 无需重训。</p>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px;margin-top:42px;">
+      <div style="background:#fff;border:1px solid #ECECE6;border-radius:14px;padding:22px 20px;">
+        <div style="font-family:'Geist Mono',monospace;font-size:12px;color:#9A9CA4;margin-bottom:10px;">01</div>
+        <div style="font-size:17px;font-weight:600;margin-bottom:8px;" data-i18n="hoodC1">FTS5 稀疏 + LLM 重排</div>
+        <div style="color:#54565F;font-size:14.5px;line-height:1.55;">只检索 ta 真实写过的内容，拒绝幻觉。</div>
+      </div>
+      <div style="background:#fff;border:1px solid #ECECE6;border-radius:14px;padding:22px 20px;">
+        <div style="font-family:'Geist Mono',monospace;font-size:12px;color:#9A9CA4;margin-bottom:10px;">02</div>
+        <div style="font-size:17px;font-weight:600;margin-bottom:8px;" data-i18n="hoodC2">实时报价与 K 线</div>
+        <div style="color:#54565F;font-size:14.5px;line-height:1.55;">行情数据自动注入，让分身能对具体标的做出判断。</div>
+      </div>
+      <div style="background:#fff;border:1px solid #ECECE6;border-radius:14px;padding:22px 20px;">
+        <div style="font-family:'Geist Mono',monospace;font-size:12px;color:#9A9CA4;margin-bottom:10px;">03</div>
+        <div style="font-size:17px;font-weight:600;margin-bottom:8px;" data-i18n="hoodC3">带出处 · SSE 流式</div>
+        <div style="color:#54565F;font-size:14.5px;line-height:1.55;">每句话都可点开原文，流式输出不等待。</div>
+      </div>
+    </div>
   </div>
 </section>
 
-<section class="lsec" id="personas">
-  <div class="lsec-head rv">
-    <span class="lsec-eyebrow" data-i18n="personasEye">已上线分身</span>
-    <h2 data-i18n="personasH">都是交易者真正在追的人</h2>
-  </div>
-  <div class="lpersonas">
-    <a class="lpcard rv" href="https://app.robindex.ai/?agent=kol&amp;persona=qinbafrank">
-      <img src="https://unavatar.io/x/qinbafrank" alt="Qinbafrank" width="54" height="54" loading="lazy" />
-      <div style="flex:1;min-width:0">
-        <div class="lpcard-nm">Qinbafrank</div>
-        <div class="lpcard-h">@qinbafrank</div>
-        <div class="lpcard-bio" data-i18n="p1bio">宏观×产业×行情的判断链。AI 基础设施重定价、美股调整规律、加密与 TradFi 融合。</div>
-        <div class="lpcard-tags"><span>宏观传导</span><span>AI 主线</span><span>美股节奏</span></div>
-      </div>
-      <div class="lpcard-stat"><div class="v">284K</div><div class="k" data-i18n="followers">关注</div></div>
-    </a>
-    <a class="lpcard rv" href="https://app.robindex.ai/?agent=kol&amp;persona=aleabitoreddit">
-      <img src="https://pbs.twimg.com/profile_images/1996176688414367744/LXfA_lIx_400x400.jpg" alt="Serenity" width="54" height="54" loading="lazy" />
-      <div style="flex:1;min-width:0">
-        <div class="lpcard-nm">Serenity</div>
-        <div class="lpcard-h">@aleabitoreddit</div>
-        <div class="lpcard-bio" data-i18n="p2bio">从 hyperscaler capex 往下拆，寻找少数公司绕不过去的 chokepoint。光子/CPO、small-cap 高确信清单。</div>
-        <div class="lpcard-tags"><span>供应链</span><span>光子/CPO</span><span>chokepoint</span></div>
-      </div>
-      <div class="lpcard-stat"><div class="v">96K</div><div class="k" data-i18n="followers">关注</div></div>
-    </a>
-  </div>
-</section>
-
-<section class="lcta" id="pricing">
-  <div class="lcta-inner rv">
-    <div class="lcta-mesh" aria-hidden="true"></div>
-    <h2 data-i18n="ctaH">现在就让懂行的人回答你</h2>
-    <p data-i18n="ctaP">免费进入，选一位分身开始提问。</p>
-    <div class="lhero-cta">
-      <a class="lbtn lbtn-primary" href="https://app.robindex.ai/" data-i18n="ctaPrimary">免费进入终端
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+<!-- personas -->
+<section id="roster" style="padding:clamp(64px,9vw,110px) 24px;">
+  <div style="max-width:1100px;margin:0 auto;">
+    <div style="text-align:center;margin-bottom:32px;">
+      <span style="font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--cobalt);" data-i18n="rosterEye">分身阵容</span>
+      <h2 style="font-family:'Newsreader',serif;font-weight:400;font-size:clamp(30px,4.6vw,52px);line-height:1.05;margin:10px 0 6px;" data-i18n="rosterTitle">阵容，才刚刚开始。</h2>
+      <p style="color:#54565F;font-size:15.5px;max-width:560px;margin:0 auto;" data-i18n="rosterSub">今天，是真正驱动市场的人。很快，是任何你想让其为你工作的思考者 —— 持续接入新的头脑。</p>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;">
+      <a href="https://app.robindex.ai/?agent=kol&persona=qinbafrank" style="display:flex;gap:16px;align-items:flex-start;background:#fff;border:1px solid #ECECE6;border-radius:14px;padding:18px 18px;text-decoration:none;color:inherit;">
+        <img src="https://unavatar.io/x/qinbafrank" alt="Qinbafrank" width="50" height="50" loading="lazy" style="border-radius:12px;object-fit:cover;" />
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:16px;font-weight:600;">Qinbafrank</div>
+          <div style="font-family:'Geist Mono',monospace;font-size:12px;color:#9A9CA4;">@qinbafrank</div>
+          <div style="margin-top:8px;font-size:14px;color:#3D3F48;line-height:1.5;" data-i18n="p1bio">宏观传导 × AI 周期 × 美股。AI 基础设施重定价、美股调整节奏、加密与 TradFi 融合。</div>
+          <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;">
+            <span style="font-size:12px;background:#F3F3EF;border-radius:999px;padding:2px 9px;color:#3D3F48;" data-i18n="p1t1">宏观</span>
+            <span style="font-size:12px;background:#F3F3EF;border-radius:999px;padding:2px 9px;color:#3D3F48;" data-i18n="p1t2">AI 主线</span>
+            <span style="font-size:12px;background:#F3F3EF;border-radius:999px;padding:2px 9px;color:#3D3F48;" data-i18n="p1t3">美股</span>
+          </div>
+        </div>
+        <div style="font-family:'Geist Mono',monospace;font-size:12px;color:#6A6C75;text-align:right;white-space:nowrap;">284K <span data-i18n="followers">关注</span></div>
+      </a>
+      <a href="https://app.robindex.ai/?agent=kol&persona=aleabitoreddit" style="display:flex;gap:16px;align-items:flex-start;background:#fff;border:1px solid #ECECE6;border-radius:14px;padding:18px 18px;text-decoration:none;color:inherit;">
+        <img src="https://pbs.twimg.com/profile_images/1996176688414367744/LXfA_lIx_400x400.jpg" alt="Serenity" width="50" height="50" loading="lazy" style="border-radius:12px;object-fit:cover;" />
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:16px;font-weight:600;">Serenity</div>
+          <div style="font-family:'Geist Mono',monospace;font-size:12px;color:#9A9CA4;">@aleabitoreddit</div>
+          <div style="margin-top:8px;font-size:14px;color:#3D3F48;line-height:1.5;" data-i18n="p2bio">从 hyperscaler capex 往下拆，寻找少数公司绕不过去的 chokepoint。光子 / CPO，高确信小盘清单。</div>
+          <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;">
+            <span style="font-size:12px;background:#F3F3EF;border-radius:999px;padding:2px 9px;color:#3D3F48;" data-i18n="p2t1">供应链</span>
+            <span style="font-size:12px;background:#F3F3EF;border-radius:999px;padding:2px 9px;color:#3D3F48;" data-i18n="p2t2">光子 / CPO</span>
+            <span style="font-size:12px;background:#F3F3EF;border-radius:999px;padding:2px 9px;color:#3D3F48;" data-i18n="p2t3">chokepoint</span>
+          </div>
+        </div>
+        <div style="font-family:'Geist Mono',monospace;font-size:12px;color:#6A6C75;text-align:right;white-space:nowrap;">96K <span data-i18n="followers">关注</span></div>
       </a>
     </div>
+    <div style="text-align:center;margin-top:32px;font-size:13px;color:#6A6C75;" data-i18n="comingP">自定义分身。把一个人的知识与判断赋予 AI，召唤 ta 为你工作 —— 不只金融，任何领域。</div>
   </div>
 </section>
-</main>
 
-<footer class="lfoot">
-  <div class="lfoot-inner">
-    <div class="lfoot-brand">
-      <a class="lnav-brand" href="#top">
-        <div class="lnav-mark" aria-hidden="true">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--on-accent)" stroke-width="1.8" stroke-linecap="round"><path d="M9 3v3M9 14v3M15 7v3M15 18v3M3 21h18"/><rect x="6.5" y="6" width="5" height="8" rx="1"/><rect x="12.5" y="10" width="5" height="8" rx="1"/></svg>
-        </div>
-        <div class="lnav-name">Robindex <span>Desk</span></div>
-      </a>
-      <p data-i18n="footTag">金融 KOL 的 AI 分身交易研究终端。答案带原文出处，仅供研究，非投资建议。</p>
-    </div>
-    <div class="lfoot-cols">
-      <div class="lfoot-col">
-        <h5 data-i18n="fcProduct">产品</h5>
-        <a href="#personas" data-i18n="fcPersonas">分身</a>
-        <a href="#how" data-i18n="fcHow">原理</a>
-        <a href="#pricing" data-i18n="fcPricing">定价</a>
-        <a href="https://app.robindex.ai/" data-i18n="fcApp">进入终端</a>
+<!-- vision / cta -->
+<section id="vision" style="padding:clamp(64px,9vw,110px) 24px;background:#15161A;color:#fff;">
+  <div style="max-width:860px;margin:0 auto;text-align:center;">
+    <div style="font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.18em;text-transform:uppercase;opacity:.6;margin-bottom:12px;" data-i18n="visionTitle">想象一个世界</div>
+    <h2 style="font-family:'Newsreader',serif;font-weight:400;font-size:clamp(30px,4.8vw,52px);line-height:1.05;margin:0 0 16px;">你信任的任何一个头脑，都能开口回答你。</h2>
+    <p style="font-size:16.5px;opacity:.85;max-width:560px;margin:0 auto 32px;" data-i18n="visionSub">今天，是真正驱动市场的人。明天，是任何人 —— 把一个人的知识与判断交给 AI，让它为你工作。</p>
+    <a href="https://app.robindex.ai/" style="display:inline-flex;align-items:center;gap:8px;background:#fff;color:#15161A;font-size:15.5px;font-weight:600;padding:14px 28px;border-radius:11px;" data-i18n="ctaPrimary2">免费进入终端
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+    </a>
+  </div>
+</section>
+
+<footer style="background:#15161A;color:rgba(255,255,255,.82);padding:48px 24px 32px;">
+  <div style="max-width:1100px;margin:0 auto;display:flex;flex-wrap:wrap;gap:42px 60px;">
+    <div style="flex:1;min-width:220px;">
+      <div style="display:flex;align-items:center;gap:9px;margin-bottom:10px;">
+        <span style="width:26px;height:26px;border-radius:7px;background:#fff;display:flex;align-items:center;justify-content:center;flex:none;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#15161A" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21V4h5.2a4.4 4.4 0 0 1 0 8.8H8"/><path d="M12.4 12.8 17 21"/></svg>
+        </span>
+        <span style="font-size:16px;font-weight:600;color:#fff;">Robindex</span>
       </div>
-      <div class="lfoot-col">
-        <h5 data-i18n="fcCompany">公司</h5>
+      <div style="font-size:13.5px;opacity:.7;max-width:28ch;" data-i18n="footTag">你信任的头脑，用 ta 自己的话回答你 —— 每个结论都有出处。</div>
+    </div>
+    <div>
+      <div style="font-family:'Geist Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.6);margin-bottom:14px;" data-i18n="fcProduct">产品</div>
+      <div style="display:flex;flex-direction:column;gap:11px;font-size:14px;color:rgba(255,255,255,.85);">
+        <a href="#roster" data-i18n="navPersonas">分身</a>
+        <a href="#hood" data-i18n="navHow">工作原理</a>
+        <a href="https://app.robindex.ai/" data-i18n="navOpen">进入终端</a>
+      </div>
+    </div>
+    <div>
+      <div style="font-family:'Geist Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.6);margin-bottom:14px;" data-i18n="fcCompany">公司</div>
+      <div style="display:flex;flex-direction:column;gap:11px;font-size:14px;color:rgba(255,255,255,.85);">
         <a href="#" data-i18n="fcAbout">关于</a>
         <a href="#" data-i18n="fcBlog">博客</a>
         <a href="#" data-i18n="fcCareers">招聘</a>
       </div>
-      <div class="lfoot-col">
-        <h5 data-i18n="fcLegal">条款</h5>
+    </div>
+    <div>
+      <div style="font-family:'Geist Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.6);margin-bottom:14px;" data-i18n="fcLegal">条款</div>
+      <div style="display:flex;flex-direction:column;gap:11px;font-size:14px;color:rgba(255,255,255,.85);">
         <a href="#" data-i18n="fcTerms">服务条款</a>
         <a href="#" data-i18n="fcPrivacy">隐私政策</a>
         <a href="#" data-i18n="fcRisk">风险提示</a>
       </div>
     </div>
   </div>
-  <div class="lfoot-base">
-    <span class="risk" data-i18n="risk">投资有风险，本平台内容仅供研究，不构成投资建议。</span>
-    <span>© 2026 Robindex · <span data-i18n="operatedBy">由 SYNHEART GROUP LIMITED 运营</span> · <span data-i18n="rights">保留所有权利。</span></span>
+
+  <div style="margin-top:40px;padding-top:24px;border-top:1px solid rgba(255,255,255,.18);display:flex;flex-wrap:wrap;gap:12px 28px;justify-content:space-between;align-items:center;max-width:1100px;margin-left:auto;margin-right:auto;">
+    <span style="font-size:12.5px;color:rgba(255,255,255,.62);max-width:62ch;" data-i18n="risk">投资有风险。本平台所有内容仅供研究，不构成投资建议。</span>
+    <span style="font-size:12.5px;color:rgba(255,255,255,.62);">© 2026 Robindex · <span data-i18n="operatedBy">由 SYNHEART GROUP LIMITED 运营</span></span>
   </div>
 </footer>
 
 </div>
 
-<style>
-.lang-mp{position:relative;}
-.lang-menu[hidden]{display:none!important;}
-.theme-wrap{position:relative;}
-.theme-menu{position:absolute;top:calc(100% + 6px);right:0;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:6px;min-width:120px;box-shadow:var(--sh-lg);z-index:60;flex-direction:column;gap:2px;}
-.theme-menu[hidden]{display:none!important;}
-.theme-menu:not([hidden]){display:flex;}
-.theme-menu button{padding:8px 12px;border-radius:7px;font-size:13px;text-align:left;color:var(--dim);transition:.12s;}
-.theme-menu button:hover,.theme-menu button.on{background:var(--panel-2);color:var(--text);}
-.icon-btn{width:36px;height:36px;border-radius:9px;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--text);transition:.13s;}
-.icon-btn:hover{background:var(--panel);}
-.soon-tag-sm{font-family:var(--mono);font-size:9px;font-weight:600;color:var(--accent);background:var(--accent-ghost);border:1px solid var(--accent-dim);border-radius:5px;padding:2px 6px;vertical-align:middle;}
-</style>
-<script src="/app/i18n.js"></script>
-<script src="/landing-static.js" defer></script>
+<script>
+// Minimal static runtime for bilingual + mobile menu + smooth nav (no heavy runtime dependency)
+// English first (default), Chinese second. Auto-detect + linked with app via cookie + localStorage
+(function(){
+  var zh = {
+    bannerText: '自定义分身即将上线 —— 很快，你就能召唤任何一个人的思维，为你工作。',
+    bannerMore: '了解更多',
+    navProduct: '产品', navPersonas: '分身', navHow: '工作原理', navOpen: '进入终端',
+    heroPill: '已上线 · 交易者真正在读的人',
+    h1a: '召唤那些', h1b: '驱动市场的头脑。',
+    heroSub: '选一位思考者，问任何问题。Robindex 会用 ta 的判断框架、ta 的口吻作答 —— 而每一个结论都直接链回 ta 本人写下的原话。没有黑箱，只有你信任的那个头脑，随时待命。',
+    ctaPrimary: '免费进入终端', ctaGhost: '看它怎么运作',
+    heroNote: '无需信用卡 · DeepSeek V4 全程可调 · 中英双语',
+    demoVia: '第一人称分身 · @qinbafrank',
+    demoQ: 'CPO 延期，2026 光互连真正受益的是谁？',
+    demoA: '先给结论：<b style="font-weight:600;color:#15161A;">CPO 是方向，但 2026 不是它的兑现年</b><sup style="color:var(--cobalt);font-weight:600;background:rgba(27,48,224,.1);border-radius:5px;padding:1px 5px;font-size:10px;margin:0 2px;">1</sup>。真正在 2026 兑现业绩的，是 1.6T 可插拔与 NPO 近封装<sup style="color:var(--cobalt);font-weight:600;background:rgba(27,48,224,.1);border-radius:5px;padding:1px 5px;font-size:10px;margin:0 2px;">2</sup>。',
+    demoConv: '判断信心', demoSrcH: '本回答引用 3 条原文',
+    demoSrc1: '一张图看清 26 年光互连哪些环节真正受益……',
+    demoSrc2: 'CPO 大规模落地推迟到 27–28；26 年主力是 1.6T + NPO……',
+    trustLab: '建立在最敏锐的头脑真正写下的内容之上', trustModel: '任何最先进的模型',
+    deskEye: '终端', deskTitleA: '它听起来不像 AI，', deskTitleB: '它就是 ta 本人。',
+    f1eye: '有出处的判断', f1h: '每一个判断，都能追溯到原文。',
+    f1p: '不是裹着自信的泛泛之谈。每个结论都来自分身本人真正写下的内容 —— 逐句标注 [#] 角标，一点即展开为原始推文。',
+    f1l1: '以 KOL 本人的框架，用第一人称作答', f1l2: '稀疏检索 + LLM 重排，覆盖全量语料', f1l3: '判断信心可视化 —— 不确定就说不确定',
+    f2eye: '模型由你选择', f2h: '任何模型，包括最前沿的。',
+    f2p: '自动择优，或亲手指定任意模型来驱动一位分身。实时切换、推理强度自由调，或接入你自己的模型 API。',
+    f2models: '选择任意模型', f2max: 'Max 模式', f2auto: '自动择优',
+    f2l1: '任意模型，自动路由或亲手指定', f2l2: '调用最前沿的智能，推理强度自由调', f2l3: '接入自有模型 API —— 用你自己的额度',
+    f3eye: '为你的工作方式而生', f3h: '一个终端，四种看法。',
+    f3p: '信号绿交易终端、苹果留白、磷光黑客风、极简 Codex —— 一键切换。桌面到手机自适应，添加到主屏即成 App。',
+    f3l1: 'Terminal · Aurora · Matrix · Codex 四主题', f3l2: '桌面、平板、手机全自适应', f3l3: 'PWA：添加到主屏，像原生 App 一样用',
+    thTerminal: '信号绿', thAurora: '苹果留白', thMatrix: '磷光', thCodex: '极简',
+    hoodEye: '技术内核', hoodTitleA: '检索，', hoodTitleB: '而非凭记忆生成。',
+    hoodP: '没有微调。Robindex 先蒸馏出一位分身，再针对你的问题检索 ta 的真实原话，结合实时行情数据，最后组装答案。',
+    hoodC1: 'FTS5 稀疏 + LLM 重排', hoodC2: '实时报价与 K 线', hoodC3: '带出处 · SSE 流式',
+    rosterEye: '分身阵容', rosterTitle: '阵容，才刚刚开始。',
+    rosterSub: '今天，是真正驱动市场的人。很快，是任何你想让其为你工作的思考者。',
+    followers: '关注',
+    p1bio: '宏观传导 × AI 周期 × 美股。AI 基础设施重定价、美股调整节奏、加密与 TradFi 融合。',
+    p1t1: '宏观', p1t2: 'AI 主线', p1t3: '美股',
+    p2bio: '从 hyperscaler capex 往下拆，寻找少数公司绕不过去的 chokepoint。光子 / CPO，高确信小盘清单。',
+    p2t1: '供应链', p2t2: '光子 / CPO', p2t3: 'chokepoint',
+    comingP: '自定义分身。把一个人的知识与判断赋予 AI，召唤 ta 为你工作 —— 不只金融，任何领域。',
+    visionTitle: '想象一个世界',
+    visionSub: '今天，是真正驱动市场的人。明天，是任何人 —— 把一个人的知识与判断交给 AI，让它为你工作。',
+    footTag: '你信任的头脑，用 ta 自己的话回答你 —— 每个结论都有出处。',
+    fcProduct: '产品', fcCompany: '公司', fcLegal: '条款',
+    fcAbout: '关于', fcBlog: '博客', fcCareers: '招聘',
+    fcTerms: '服务条款', fcPrivacy: '隐私政策', fcRisk: '风险提示',
+    risk: '投资有风险。本平台所有内容仅供研究，不构成投资建议。',
+    operatedBy: '由 SYNHEART GROUP LIMITED 运营'
+  };
+
+  // English fallbacks (for source that may still have Chinese visible on some data-i18n)
+  var en = {
+    bannerText: 'Custom personas are coming — soon, summon any mind to work for you.',
+    navProduct: 'Product', navPersonas: 'Personas', navHow: 'How it works', navOpen: 'Open the desk',
+    heroPill: 'Live · the minds traders actually read',
+    h1a: 'Summon the minds that', h1b: 'move markets.',
+    ctaPrimary: "Open the desk — it's free", ctaGhost: 'See how it works',
+    heroNote: 'No credit card · DeepSeek V4 fully adjustable · Bilingual',
+    trustLab: 'Grounded in what the sharpest minds actually published', trustModel: 'Any frontier model',
+    deskEye: 'The desk', deskTitleA: "It doesn't sound like AI,", deskTitleB: 'it sounds like them.',
+    f1eye: 'Sourced conviction', f1h: 'Every judgment, traced to the source.',
+    f1p: 'Not a generic answer dressed up in confidence. Each conclusion is pulled from what the persona actually wrote — annotated inline with [#] markers you can open into the original post.',
+    f2eye: 'Choose any model', f2h: 'Any model, including the frontier.',
+    f3eye: 'Built for how you work', f3h: 'One desk. Four views.',
+    hoodEye: 'Technical core', hoodTitleA: 'Retrieval,', hoodTitleB: 'not memorized generation.',
+    rosterEye: 'Persona roster', rosterTitle: 'The roster is just beginning.',
+    visionTitle: 'Imagine a world',
+    footTag: 'The minds you trust, answering in their own words — every conclusion sourced.',
+    fcProduct: 'Product', fcCompany: 'Company', fcLegal: 'Legal',
+    risk: 'Markets carry risk. Everything here is for research only and is not investment advice.',
+    operatedBy: 'Operated by SYNHEART GROUP LIMITED'
+  };
+
+  function getCookie(name) {
+    const m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+  function setCookie(name, val) {
+    try {
+      document.cookie = name + '=' + encodeURIComponent(val) + '; path=/; domain=.robindex.ai; max-age=' + (365*24*3600);
+    } catch(e) {}
+  }
+
+  function detectLang() {
+    try {
+      const nav = (navigator.language || navigator.userLanguage || 'en').toLowerCase();
+      if (nav.startsWith('zh')) return 'zh';
+    } catch(e) {}
+    return 'en';
+  }
+
+  function getInitialLang() {
+    // URL param highest priority (for linking from homepage)
+    try {
+      const p = new URLSearchParams(location.search).get('lang');
+      if (p === 'en' || p === 'zh') return p;
+    } catch(e) {}
+    // cookie or localStorage (shared key for linkage with app)
+    let v = getCookie('rx.lang') || localStorage.getItem('rx.lang');
+    if (v === 'en' || v === 'zh') return v;
+    return detectLang();
+  }
+
+  var lang = getInitialLang();
+
+  function persistLang(l) {
+    try { localStorage.setItem('rx.lang', l); } catch(e){}
+    setCookie('rx.lang', l);
+  }
+
+  function apply(l) {
+    lang = l;
+    persistLang(l);
+    document.querySelectorAll('[data-i18n]').forEach(function(n){
+      var k = n.getAttribute('data-i18n');
+      if (n.dataset.en == null) n.dataset.en = n.innerHTML;
+      if (l === 'zh') {
+        if (zh[k] != null) n.innerHTML = zh[k];
+      } else {
+        // use explicit en map (reliable even if HTML source has zh) then fallback
+        n.innerHTML = (en && en[k]) ? en[k] : n.dataset.en;
+      }
+    });
+    var cur = document.getElementById('rxLangCur');
+    if (cur) cur.textContent = (l === 'zh') ? '中文' : 'English';
+    var menu = document.getElementById('rxLangMenu');
+    if (menu) menu.querySelectorAll('button[data-lang]').forEach(function(b){
+      var ck = b.querySelector('[data-check]');
+      if (ck) ck.style.visibility = (b.getAttribute('data-lang') === l) ? 'visible' : 'hidden';
+    });
+    document.documentElement.setAttribute('lang', l === 'zh' ? 'zh' : 'en');
+
+    // Link language to app: update all "enter app" links with current lang
+    document.querySelectorAll('a[href*="app.robindex.ai"]').forEach(function(a){
+      try {
+        var u = new URL(a.href, location.origin);
+        if (!u.searchParams.get('lang')) {
+          u.searchParams.set('lang', l);
+          a.href = u.toString();
+        }
+      } catch(e){}
+    });
+  }
+
+  // init
+  document.addEventListener('DOMContentLoaded', function(){
+    apply(lang);  // will persist + set English default + update links
+
+    // lang switcher
+    var langBtn = document.getElementById('rxLang');
+    var langMenu = document.getElementById('rxLangMenu');
+    var langWrap = document.getElementById('rxLangWrap');
+    if (langBtn && langMenu) {
+      langBtn.addEventListener('click', function(e){
+        e.stopPropagation();
+        var open = !langMenu.hidden;
+        langMenu.hidden = open;
+        langBtn.setAttribute('aria-expanded', open ? 'false' : 'true');
+      });
+      langMenu.querySelectorAll('button[data-lang]').forEach(function(b){
+        b.addEventListener('click', function(){
+          if (b.hasAttribute('disabled')) return;
+          apply(b.getAttribute('data-lang'));
+          langMenu.hidden = true;
+          langBtn.setAttribute('aria-expanded', 'false');
+        });
+      });
+      document.addEventListener('click', function(e){
+        if (langWrap && !langWrap.contains(e.target)) langMenu.hidden = true;
+      });
+    }
+
+    // mobile burger
+    var burger = document.getElementById('rxBurger');
+    var menu = document.getElementById('rxMobileMenu');
+    if (burger && menu) {
+      burger.addEventListener('click', function(){
+        var isOpen = menu.style.display === 'flex';
+        menu.style.display = isOpen ? 'none' : 'flex';
+      });
+    }
+
+    // smooth scroll for hash links
+    document.querySelectorAll('a[href^="#"]').forEach(function(a){
+      a.addEventListener('click', function(e){
+        var id = a.getAttribute('href');
+        if (id && id.length > 1) {
+          var t = document.querySelector(id);
+          if (t) {
+            e.preventDefault();
+            var y = t.getBoundingClientRect().top + window.scrollY - 72;
+            window.scrollTo({top: y, behavior: 'smooth'});
+            if (menu) menu.style.display = 'none';
+          }
+        }
+      });
+    });
+
+    // hide banner more on small
+    var more = document.querySelector('[data-rx="bannermore"]');
+    if (more && window.innerWidth < 700) more.style.display = 'none';
+  });
+})();
+</script>
 </body>
 </html>
