@@ -564,6 +564,7 @@ app.post("/api/chat", async (c) => {
             content:
               "现在直接输出给用户看的最终分析。严禁输出任何工具调用或 DSL 标签；不要说你要调用工具。\n" +
               "请用中文回答。保持你（博主）一贯的语气、分析框架和表达风格，像在回复读者的提问一样自然地写。\n" +
+              "If the user asked for price/action levels, start by answering that request directly before the long reasoning.\n" +
               "引用写成 [1]、[2] 这种纯数字格式。自然地融入原文引用，不要刻意分段或加小标题。\n" +
               "缺数据明说，不要编。",
           },
