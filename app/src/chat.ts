@@ -228,7 +228,7 @@ export function buildMessages(opts: {
   const toolMemoryBlock = toolMemory ? `=== PREVIOUS TOOL CALLS (avoid repeating same queries) ===\n${toolMemory}\n\n` : "";
 
   const messages: { role: string; content: string }[] = [{ role: "system", content: system }];
-  for (const h of history.slice(-6)) messages.push({ role: h.role, content: h.content });
+  for (const h of history.slice(-10)) messages.push({ role: h.role, content: h.content });
   messages.push({
     role: "user",
     content: `${summaryBlock}${toolMemoryBlock}${knowledgeBlock}${tweetsBlock}\n\n${dataBlock}${newsBlock}\n\n=== USER QUESTION ===\n${userMessage}`,
@@ -262,12 +262,12 @@ export async function maybeUpdateSummary(env: Env, convId: string, model: string
     .bind(convId)
     .all();
   const all = (rows.results || []) as { role: string; content: string }[];
-  const older = all.slice(0, -6); // keep the last 6 raw; summarize the rest
+  const older = all.slice(0, -10); // keep the last 10 raw; summarize the rest
   if (older.length < 6) return { synced: needsSync };
 
   const convo = older.map((m) => `${m.role}: ${m.content}`).join("\n").slice(0, 8000);
   const sys =
-    "You compress a finance chat into a factual third-person memo (<=180 words). Capture: the user's situation, tickers/instruments discussed, the persona's stated views/calls and their rationale, and any open threads. No fluff.";
+    "You compress a finance chat into a factual third-person memo (<=300 words). Capture: the user's situation, tickers/instruments discussed, the persona's stated views/calls and their rationale, concrete price/action levels already discussed, and any open threads. No fluff.";
   const usr = (conv?.summary ? `Previous summary:\n${conv.summary}\n\n` : "") + `Conversation:\n${convo}`;
   const summary = await completeChat(env, model, [
     { role: "system", content: sys },

@@ -782,13 +782,14 @@ function App() {
     setChats((c) => [chat, ...c]);
     setActive(chat); setView("chat"); setTab("ask"); setMtab("chat");
     setMessages([]); setSources([]); setHighlight(null); setRailTab("persona");
-    setTimeout(() => ask(kol, firstQuestion), 60);
+    setTimeout(() => ask(kol, firstQuestion, chat.id), 60);
   };
   const openExisting = (chat) => {
     showChat(chat);
   };
 
-  const ask = (kol, question) => {
+  const ask = (kol, question, conversationIdOverride) => {
+    const conversationId = conversationIdOverride || active?.id;
     const userMsg = { id: uid(), role: "u", text: question };
     const lang_ = window.RXI.lang;
     const ph = RX.phases(lang_);
@@ -798,7 +799,12 @@ function App() {
     const toolCalls = [];
 
     if (RX.isBackendReady()) {
-      RX.streamChat(kol.id, question, model, {
+      RX.streamChat(kol.id, question, model, conversationId, {
+        onConversationId: (serverConversationId) => {
+          if (!serverConversationId || serverConversationId === conversationId) return;
+          setActive((cur) => cur && cur.id === conversationId ? { ...cur, id: serverConversationId } : cur);
+          setChats((prev) => prev.map((c) => c.id === conversationId ? { ...c, id: serverConversationId } : c));
+        },
         onPhase: (idx, text, phaseKey) => {
           const key = phaseKey || `phase-${idx}`;
           setMessages((m) => m.map((x) => {

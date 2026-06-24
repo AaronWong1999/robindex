@@ -56,6 +56,62 @@ const PROFILE_INTENT = /(估值|财务|基本面|pe|pb|peg|roe|margin|revenue|pr
 const INTRADAY_OR_TECH_INTENT = /(盘中|分钟|分时|日内|技术位|支撑|压力|k线|k-line|intraday|minute|technical|support|resistance)/i;
 const CURRENT_MARKET_INTENT = /(现在|今天|今日|当前|能不能买|可以买|该不该买|要不要买|买入|卖出|加仓|减仓|仓位|now|today|buy|sell|position)/i;
 
+function sqliteDateFromOffset(offsetSeconds: number): string {
+  return new Date(Date.now() + offsetSeconds * 1000).toISOString().slice(0, 19).replace("T", " ");
+}
+
+function frontendMessageContent(m: any): string {
+  if (!m || typeof m !== "object") return "";
+  if (m.role === "u") return String(m.text || "").trim();
+  if (m.role === "k") {
+    if (m.error) return "";
+    return String(m.resp?.answerMd || m.streamText || m.text || "").trim();
+  }
+  return "";
+}
+
+async function bootstrapConversationFromChatHistory(env: Env, convId: string, userId: string, kolId: string): Promise<number> {
+  const count = await env.DB.prepare(`SELECT COUNT(*) c FROM messages WHERE conversation_id=?`)
+    .bind(convId)
+    .first<{ c: number }>();
+  if ((count?.c ?? 0) > 0) return 0;
+
+  const row = await env.DB.prepare(
+    `SELECT kol_id, messages_json FROM chat_history WHERE id=? AND user_id=?`
+  )
+    .bind(convId, userId)
+    .first<{ kol_id: string; messages_json: string }>();
+  if (!row || row.kol_id !== kolId) return 0;
+
+  let parsed: any[] = [];
+  try {
+    const v = JSON.parse(row.messages_json || "[]");
+    if (Array.isArray(v)) parsed = v;
+  } catch {
+    return 0;
+  }
+
+  const converted = parsed
+    .map((m) => ({
+      role: m?.role === "u" ? "user" : m?.role === "k" ? "assistant" : "",
+      content: frontendMessageContent(m),
+    }))
+    .filter((m) => (m.role === "user" || m.role === "assistant") && m.content)
+    .slice(-20);
+  if (!converted.length) return 0;
+
+  for (let i = 0; i < converted.length; i++) {
+    const m = converted[i];
+    const createdAt = sqliteDateFromOffset(-(converted.length - i + 2));
+    await env.DB.prepare(
+      `INSERT INTO messages (id,conversation_id,role,content,created_at) VALUES (?,?,?,?,?)`
+    )
+      .bind(crypto.randomUUID(), convId, m.role, m.content, createdAt)
+      .run();
+  }
+  return converted.length;
+}
+
 export function shouldRunToolPhase(plan: QueryPlan, market: MarketData, message: string, plannedInstruments: string[]): boolean {
   if (!plan.needs_tools) return false;
 
@@ -416,18 +472,38 @@ app.post("/api/chat", async (c) => {
     }
   }
 
-  // Conversation (bound to one KOL).
-  let convId = body.conversation_id;
-  if (!convId) {
+  // Conversation (bound to one KOL and, when authenticated, one user).
+  const requestedConvId = String(body.conversation_id || "").trim();
+  let convId = requestedConvId || crypto.randomUUID();
+  let convRow = requestedConvId
+    ? await c.env.DB.prepare(`SELECT id,kol_id,user_id FROM conversations WHERE id=?`)
+        .bind(requestedConvId)
+        .first<{ id: string; kol_id: string; user_id: string | null }>()
+    : null;
+
+  const ownerMismatch = convRow?.user_id && (!auth || convRow.user_id !== auth.userId);
+  if (convRow && (convRow.kol_id !== kol.id || ownerMismatch)) {
     convId = crypto.randomUUID();
+    convRow = null;
+  }
+
+  if (!convRow) {
     await c.env.DB.prepare(
-      `INSERT INTO conversations (id,kol_id,model,title) VALUES (?,?,?,?)`
+      `INSERT OR IGNORE INTO conversations (id,kol_id,user_id,model,title) VALUES (?,?,?,?,?)`
     )
-      .bind(convId, kol.id, model, body.message.slice(0, 60))
+      .bind(convId, kol.id, auth?.userId || null, model, body.message.slice(0, 60))
+      .run();
+  } else if (auth && !convRow.user_id) {
+    await c.env.DB.prepare(`UPDATE conversations SET user_id=?, updated_at=datetime('now') WHERE id=?`)
+      .bind(auth.userId, convId)
       .run();
   }
 
-  // History (bounded) — take last 6 raw + check for tool call memory.
+  if (requestedConvId && auth && convId === requestedConvId) {
+    await bootstrapConversationFromChatHistory(c.env, convId, auth.userId, kol.id);
+  }
+
+  // History (bounded) — take recent raw turns + check for tool call memory.
   const hist = await c.env.DB.prepare(
     `SELECT role,content,tool_calls FROM messages WHERE conversation_id=? ORDER BY created_at DESC LIMIT 20`
   )
@@ -564,6 +640,7 @@ app.post("/api/chat", async (c) => {
             content:
               "现在直接输出给用户看的最终分析。严禁输出任何工具调用或 DSL 标签；不要说你要调用工具。\n" +
               "请用中文回答。保持你（博主）一贯的语气、分析框架和表达风格，像在回复读者的提问一样自然地写。\n" +
+              "Use prior conversation only to understand follow-ups; the latest USER QUESTION is the task you must answer.\n" +
               "If the user asked for price/action levels, start by answering that request directly before the long reasoning.\n" +
               "引用写成 [1]、[2] 这种纯数字格式。自然地融入原文引用，不要刻意分段或加小标题。\n" +
               "缺数据明说，不要编。",

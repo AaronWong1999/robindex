@@ -49,12 +49,14 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_kol ON knowledge_chunks(kol_id);
 CREATE TABLE IF NOT EXISTS conversations (
   id            TEXT PRIMARY KEY,
   kol_id        TEXT NOT NULL,             -- a thread is bound to exactly one KOL
+  user_id       TEXT,                      -- authenticated owner when available
   model         TEXT,
   title         TEXT,
   summary       TEXT,                      -- rolling summary for bounded long-term memory
   created_at    TEXT DEFAULT (datetime('now')),
   updated_at    TEXT DEFAULT (datetime('now'))
 );
+CREATE INDEX IF NOT EXISTS idx_conv_user ON conversations(user_id, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS messages (
   id            TEXT PRIMARY KEY,
@@ -67,6 +69,17 @@ CREATE TABLE IF NOT EXISTS messages (
   FOREIGN KEY (conversation_id) REFERENCES conversations(id)
 );
 CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, created_at);
+
+CREATE TABLE IF NOT EXISTS chat_history (
+  id              TEXT PRIMARY KEY,         -- same as conversations.id when linked
+  user_id         TEXT NOT NULL,
+  kol_id          TEXT NOT NULL,
+  title           TEXT,
+  messages_json   TEXT NOT NULL DEFAULT '[]', -- full frontend messages array as JSON
+  created_at      TEXT DEFAULT (datetime('now')),
+  updated_at      TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_chat_history_user ON chat_history(user_id, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS sync_state (
   kol_id        TEXT PRIMARY KEY,

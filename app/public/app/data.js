@@ -167,7 +167,11 @@
 
   function isBackendReady() { return _backendReady; }
 
-  async function streamChat(kolId, question, model, callbacks) {
+  async function streamChat(kolId, question, model, conversationId, callbacks) {
+    if (typeof conversationId === "object" && !callbacks) {
+      callbacks = conversationId;
+      conversationId = null;
+    }
     const { onPhase, onMeta, onToolCall, onDelta, onDone, onError } = callbacks;
     try {
       // Include auth token when available (needed for BYOK model routing and credit checks).
@@ -179,7 +183,7 @@
       const res = await fetch("/api/chat", {
         method: "POST",
         headers,
-        body: JSON.stringify({ kol_id: kolId, model, message: question }),
+        body: JSON.stringify({ kol_id: kolId, model, message: question, conversation_id: conversationId || undefined }),
       });
       if (!res.ok) {
         // Try to read JSON error body for user-friendly messages (e.g. credit exhaustion).
@@ -191,6 +195,8 @@
         }
         return;
       }
+      const returnedConversationId = res.headers.get("X-Conversation-Id");
+      if (returnedConversationId && callbacks.onConversationId) callbacks.onConversationId(returnedConversationId);
       const reader = res.body.getReader();
       const dec = new TextDecoder();
       let buf = "";
