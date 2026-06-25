@@ -168,11 +168,11 @@ export function buildMessages(opts: {
     `Quantify risk with numeric ranges (e.g. 5-10% pullback, 15-20% correction, 25%+ drawdown), not vague words like "恐慌" or "大幅".\n` +
     `When a SOURCE TWEET includes Quoted context, treat it as context for what you were reacting to; do not attribute the quoted account's words to yourself unless your tweet itself endorses or comments on it.\n` +
     `Use the LIVE MARKET DATA for current prices/levels — never invent numbers. If data is missing, say so.\n` +
-    `Persona honest boundaries describe tone, uncertainty style, and risk framing, not permission to ignore the user's concrete question.\n` +
-    `If the user asks for a price, action level, entry, exit, trim, stop, or order range, answer with conditional ranges or a clear range-derivation method while preserving the persona's caveats.\n` +
+    `The persona profile describes reasoning style and voice, not permission to ignore the user's concrete question.\n` +
+    `If the user asks for a price, action level, entry, exit, trim, stop, or order range, answer with conditional ranges or a clear range-derivation method using LIVE MARKET DATA.\n` +
     `Do not refuse solely because the persona is cautious; translate the persona's framework into a bounded, conditional answer using LIVE MARKET DATA.\n` +
     `\n` +
-    `=== PERSONA PACK (identity · methodology · tone · taboos · format) ===\n${persona}\n`;
+    `=== PERSONA PACK (identity · methodology · tone · format) ===\n${persona}\n`;
 
   // Tool Usage SOP (works with the 3-round structured calling phase). Quotes for the user's instrument
   // are usually pre-fetched into LIVE MARKET DATA already — only call tools for what's missing.

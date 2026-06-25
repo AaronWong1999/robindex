@@ -19,6 +19,8 @@ import {
   type PersonaJson, buildMarkdown, extractPersonaJson, validatePersona, logPersonaExperiment,
 } from "./persona-gen";
 
+const DISTILL_PROMPT_VERSION = "uncertainty-style-empty-v1";
+
 // ---------- LLM primitive (sets the gateway long-timeout header; reads non-chunked JSON) ----------
 
 async function llmJson(
@@ -150,10 +152,10 @@ function chunkTweets(tweets: Tw[], maxChunks?: number): Chunk[] {
   return chunks;
 }
 
-// FNV-1a hash of the corpus identity (tweet count + first/last id) — invalidates stored chunks when the
-// corpus changes so a re-run re-maps rather than reusing stale partials.
+// FNV-1a hash of the corpus identity + distillation prompt contract. Including the prompt version prevents
+// stale partials from an older schema/rule set being reused after prompt-only distillation changes.
 function corpusHash(tweets: Tw[]): string {
-  const sig = `${tweets.length}:${tweets[0]?.id || ""}:${tweets[tweets.length - 1]?.id || ""}`;
+  const sig = `${DISTILL_PROMPT_VERSION}:${tweets.length}:${tweets[0]?.id || ""}:${tweets[tweets.length - 1]?.id || ""}`;
   return fnv1a(sig);
 }
 
@@ -205,12 +207,19 @@ Schema:
 { "mental_models":[{"name":"","description":"","evidence":["verbatim quote"],"limitation":""}],
   "decision_heuristics":[{"rule":"if X then Y","example":"verbatim or paraphrase"}],
   "expression_dna":{"sentence_style":"","vocabulary":[""],"humor":"","certainty":"","opening_pattern":""},
-  "values":[""],"anti_patterns":[""],"tensions":[""],"honest_boundaries":[""],
+  "values":[""],"anti_patterns":[""],"tensions":[""],"uncertainty_style":[],
   "track_record":[{"date":"YYYY-MM-DD","call":"","outcome":""}],
   "counter_views":[""],"sector_focus":[""],"signature_examples":["verbatim short quote"] }
 
 Limits: ≤5 mental_models (≤2 evidence each, each ≤200 chars), ≤6 decision_heuristics, ≤4 track_record
-(only dated calls actually in the batch), ≤4 sector_focus, ≤3 signature_examples. Keep it compact.`;
+(only dated calls actually in the batch), ≤4 sector_focus, ≤3 signature_examples. Keep it compact.
+
+uncertainty_style is intentionally disabled for now: always return [].
+Do NOT collect, summarize, paraphrase, transform, or relocate:
+- refusal/prohibition statements ("I don't do/provide/touch/recommend X", "我不提供/不碰/不做/不建议 X")
+- investment disclaimers ("not investment advice", "不构成/不作为/非投资建议")
+- risk warnings, uncertainty wording, time-horizon caveats, could-be-wrong language, or "走一步看一步/定性不定量" style
+Do not move these items into values, anti_patterns, tensions, counter_views, or decision_heuristics.`;
 
 const REDUCE_SYSTEM = `You MERGE several PARTIAL persona JSONs — each distilled from a different time-slice
 of ONE finance KOL's tweets — into a single consolidated persona JSON. Output ONLY valid JSON (no fences).
@@ -223,15 +232,17 @@ Rules:
   (exclusive=false for generic market truisms).
 - decision_heuristics: dedupe, keep 6-12.
 - expression_dna: synthesize the single best-supported profile.
-- values / anti_patterns / tensions / honest_boundaries / counter_views / sector_focus: union, dedupe,
+- values / anti_patterns / tensions / counter_views / sector_focus: union, dedupe,
   keep the ~8 most representative each.
+- uncertainty_style: always return []. If older partials contain honest_boundaries or uncertainty_style,
+  drop them. Do NOT paraphrase them into softer style rules or move them to another field.
 - track_record: union, dedupe by date+call, newest first, keep up to 10.
 - signature_examples: union, keep up to 6.
 - CRITICAL: never fabricate or alter evidence/quotes. Only carry forward strings that appear in the
   inputs, verbatim.
 
 Output schema = a full persona JSON: mental_models (with verification), decision_heuristics,
-expression_dna, values, anti_patterns, tensions, honest_boundaries, track_record, counter_views,
+expression_dna, values, anti_patterns, tensions, uncertainty_style, track_record, counter_views,
 sector_focus, signature_examples.`;
 
 // ---------- Map ----------

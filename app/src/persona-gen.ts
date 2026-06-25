@@ -218,7 +218,8 @@ export interface PersonaJson {
   values: string[];
   anti_patterns: string[];
   tensions: string[];
-  honest_boundaries: string[];
+  honest_boundaries?: string[];      // legacy: no longer rendered or collected by new distillation prompts
+  uncertainty_style?: string[];      // reserved; new distillation intentionally returns [] for now
   track_record?: TrackRecordItem[];   // C1: dated calls + outcomes
   counter_views?: string[];           // C1: blind spots / what critics would say
   sector_focus?: string[];            // C1: sectors/tickers this KOL covers most
@@ -266,7 +267,7 @@ Output JSON schema:
   "values": ["core value1","value2"],
   "anti_patterns": ["what this person explicitly opposes"],
   "tensions": ["value A vs value B internal contradiction"],
-  "honest_boundaries": ["limitation of this methodology"],
+  "uncertainty_style": [],
   "track_record": [ { "date": "YYYY-MM-DD", "call": "what they predicted", "outcome": "what happened / TBD" } ],
   "counter_views": ["blind spot or what a smart critic would say against this persona"],
   "sector_focus": ["sectors/tickers/themes this KOL covers most"],
@@ -284,6 +285,7 @@ Rules:
 - track_record: 3-8 dated calls actually found in the tweets (with outcome if determinable, else "TBD").
 - signature_examples: 3-6 verbatim short quotes copied from the tweets (do not paraphrase).
 - analytical_exemplars: 2-4 complete analytical paragraphs where the KOL applies their framework to a specific instrument or question. Copy VERBATIM (3-8 sentences each). Pick ones that show the KOL's reasoning chain: how they use data, how they weigh evidence, how they reach conclusions. These teach the answer model HOW to analyze, not just what methodology to use.
+- uncertainty_style: always return [] for now. Do not collect, summarize, paraphrase, or transform refusal/prohibition statements, investment disclaimers, risk warnings, uncertainty/time-horizon/could-be-wrong style, or "I don't do/provide/touch/recommend X" statements. Do not move them into other fields.
 - All evidence/examples must come from the provided tweets. Do not fabricate.`;
 
 // CoT-suppressing variant used by the retry path. deepseek-v4-pro is a reasoning model: CoT
@@ -294,9 +296,9 @@ Rules:
 const DISTILL_SYSTEM_DIRECT = `You are a financial KOL analyst. Output ONLY valid JSON (no markdown fences, no preamble, no chain-of-thought, no explanation). Begin your response with the character "{" and end with "}". Do not think step by step; emit the JSON object directly.
 
 Schema (same as standard distillation):
-{ "mental_models": [{ "name": "", "description": "", "evidence": [], "limitation": "", "verification": { "cross_domain_topics": [], "generative_test": "", "exclusive": true } }], "decision_heuristics": [{ "rule": "", "example": "" }], "expression_dna": { "sentence_style": "", "vocabulary": [], "humor": "", "certainty": "", "opening_pattern": "" }, "values": [], "anti_patterns": [], "tensions": [], "honest_boundaries": [], "track_record": [{ "date": "YYYY-MM-DD", "call": "", "outcome": "" }], "counter_views": [], "sector_focus": [], "signature_examples": [], "analytical_exemplars": [] }
+{ "mental_models": [{ "name": "", "description": "", "evidence": [], "limitation": "", "verification": { "cross_domain_topics": [], "generative_test": "", "exclusive": true } }], "decision_heuristics": [{ "rule": "", "example": "" }], "expression_dna": { "sentence_style": "", "vocabulary": [], "humor": "", "certainty": "", "opening_pattern": "" }, "values": [], "anti_patterns": [], "tensions": [], "uncertainty_style": [], "track_record": [{ "date": "YYYY-MM-DD", "call": "", "outcome": "" }], "counter_views": [], "sector_focus": [], "signature_examples": [], "analytical_exemplars": [] }
 
-Produce 5-8 mental_models (fill verification honestly: cross_domain_topics ≥2, exclusive=false for generic truisms), 5-10 decision_heuristics, ≥2 tensions, 3-8 track_record items, 3-6 verbatim signature_examples, 2-4 verbatim analytical_exemplars (3-8 sentences each). All evidence/examples MUST come from the provided tweets — do not fabricate. Keep the JSON as compact as the schema allows.`;
+Produce 5-8 mental_models (fill verification honestly: cross_domain_topics ≥2, exclusive=false for generic truisms), 5-10 decision_heuristics, ≥2 tensions, 3-8 track_record items, 3-6 verbatim signature_examples, 2-4 verbatim analytical_exemplars (3-8 sentences each). uncertainty_style must be []. All evidence/examples MUST come from the provided tweets — do not fabricate. Keep the JSON as compact as the schema allows.`;
 
 const EVOLUTION_SYSTEM = `You are a financial KOL analyst performing incremental persona evolution.
 Compare NEW tweets against the EXISTING persona pack. Output ONLY valid JSON (no markdown fences).
@@ -592,9 +594,9 @@ export function buildMarkdown(kol: any, pj: PersonaJson | null): string {
     });
   }
 
-  if (pj?.honest_boundaries?.length) {
-    lines.push(`## Honest Boundaries`);
-    pj.honest_boundaries.forEach((b) => lines.push(`- ${b}`));
+  if (pj?.uncertainty_style?.length) {
+    lines.push(`## Uncertainty Style`);
+    pj.uncertainty_style.forEach((b) => lines.push(`- ${b}`));
     lines.push("");
   }
 
