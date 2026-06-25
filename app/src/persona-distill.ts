@@ -10,16 +10,18 @@
 //      it came from and DROP unverifiable evidence (and any model left with none).
 //   2. After reduce, we re-verify every carried-forward quote against the FULL corpus.
 //   3. analytical_exemplars are not generated at all — they are VERBATIM tweets selected in code, so
-//      they cannot be fabricated.
+//      the model selects by tweet id when possible; code validates ids and falls back to verbatim tweets,
+//      so exemplars cannot be fabricated.
 //
 // The merged facts are persisted (persona_facts) so the weekly refresh is INCREMENTAL: map only the new
 // tweets and reduce them into the stored facts — no re-reading history, no fragile text-append drift.
 import type { Env } from "./env";
 import {
   type PersonaJson, buildMarkdown, extractPersonaJson, validatePersona, logPersonaExperiment,
+  rankMentalModels,
 } from "./persona-gen";
 
-const DISTILL_PROMPT_VERSION = "uncertainty-style-empty-v1";
+const DISTILL_PROMPT_VERSION = "representative-selection-v1";
 
 // ---------- LLM primitive (sets the gateway long-timeout header; reads non-chunked JSON) ----------
 
@@ -101,7 +103,7 @@ async function loadAllTweets(env: Env, kolId: string): Promise<Tw[]> {
   return all;
 }
 
-const fmtTweet = (t: Tw) => `[${(t.created_at_iso || "").slice(0, 10)}] ❤${t.likes} RT${t.retweets} ${t.text}`;
+const fmtTweet = (t: Tw) => `[${(t.created_at_iso || "").slice(0, 10)}] id=${t.id} ❤${t.likes} RT${t.retweets} ${t.text}`;
 
 interface Chunk { idx: number; tweets: Tw[]; corpus: string; dateMin: string; dateMax: string; }
 
@@ -209,10 +211,24 @@ Schema:
   "expression_dna":{"sentence_style":"","vocabulary":[""],"humor":"","certainty":"","opening_pattern":""},
   "values":[""],"anti_patterns":[""],"tensions":[""],"uncertainty_style":[],
   "track_record":[{"date":"YYYY-MM-DD","call":"","outcome":""}],
-  "counter_views":[""],"sector_focus":[""],"signature_examples":["verbatim short quote"] }
+  "counter_views":[""],"sector_focus":[""],
+  "research_routine":[{"trigger":"","needs":[""],"reason":""}],
+  "signature_examples":["verbatim short quote"],"signature_example_ids":["tweet id"],
+  "analytical_exemplar_ids":["tweet id"] }
 
 Limits: ≤5 mental_models (≤2 evidence each, each ≤200 chars), ≤6 decision_heuristics, ≤4 track_record
-(only dated calls actually in the batch), ≤4 sector_focus, ≤3 signature_examples. Keep it compact.
+(only dated calls actually in the batch), ≤4 sector_focus, ≤3 signature_examples, ≤4 research_routine,
+≤4 analytical_exemplar_ids. Keep it compact.
+
+For mental_models, add quality when supported:
+{"recurrence":0..1,"distinctiveness":0..1,"actionability":0..1,"evidence_strength":0..1}
+These are scoring hints, not evidence. Be honest: generic or weakly evidenced models should score lower.
+
+analytical_exemplar_ids: select tweet ids from THIS batch that best show the KOL's reasoning chain,
+data use, evidence weighing, and conclusion style. Prefer complete analytical tweets over high likes.
+signature_example_ids: select tweet ids from THIS batch that best capture voice/phrasing. Prefer vivid,
+representative language over generic disclaimers.
+research_routine: positive data-gathering habits implied by the KOL's reasoning; never write prohibitions.
 
 uncertainty_style is intentionally disabled for now: always return [].
 Do NOT collect, summarize, paraphrase, transform, or relocate:
@@ -238,6 +254,10 @@ Rules:
   drop them. Do NOT paraphrase them into softer style rules or move them to another field.
 - track_record: union, dedupe by date+call, newest first, keep up to 10.
 - signature_examples: union, keep up to 6.
+- analytical_exemplar_ids: union and rank by representativeness, keep up to 8 ids.
+- signature_example_ids: union and rank by voice representativeness, keep up to 10 ids.
+- research_routine: merge into 3-6 concrete positive routines. These should describe what data/events
+  the assistant should check for a type of question, not what it refuses to do.
 - CRITICAL: never fabricate or alter evidence/quotes. Only carry forward strings that appear in the
   inputs, verbatim.
 
@@ -341,17 +361,44 @@ function selectExemplars(tweets: Tw[], count = 5): string[] {
   return out;
 }
 
-// ---------- Triple-verification gate (same policy as persona-gen) ----------
+function normalizeId(id: unknown): string {
+  return String(id || "").trim();
+}
 
-function applyTripleGate(pj: PersonaJson): void {
-  if (!pj.mental_models?.length) return;
-  const passed = pj.mental_models.filter((m) => {
-    const v = m.verification;
-    if (!v) return true;
-    const cross = Array.isArray(v.cross_domain_topics) && v.cross_domain_topics.length >= 2;
-    return cross && v.exclusive !== false;
-  });
-  if (passed.length >= 3) pj.mental_models = passed.slice(0, 8);
+function materializeByIds(tweets: Tw[], ids: unknown, count: number, opts: { minLen?: number; maxLen?: number } = {}): string[] {
+  const wanted = Array.isArray(ids) ? ids.map(normalizeId).filter(Boolean) : [];
+  if (!wanted.length) return [];
+  const byId = new Map(tweets.map((t) => [String(t.id), t]));
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const id of wanted) {
+    const t = byId.get(id);
+    if (!t?.text) continue;
+    const text = String(t.text).trim();
+    if (opts.minLen && text.length < opts.minLen) continue;
+    if (opts.maxLen && text.length > opts.maxLen) continue;
+    const key = text.slice(0, 80);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+    if (out.length >= count) break;
+  }
+  return out;
+}
+
+function materializeRepresentativeExamples(pj: PersonaJson, tweets: Tw[], analyticCount = 5, signatureCount = 6): void {
+  const analytic = materializeByIds(tweets, (pj as any).analytical_exemplar_ids, analyticCount, { minLen: 160, maxLen: 2600 });
+  pj.analytical_exemplars = analytic.length >= Math.min(3, analyticCount)
+    ? analytic
+    : selectExemplars(tweets, analyticCount);
+
+  const sig = materializeByIds(tweets, (pj as any).signature_example_ids, signatureCount, { minLen: 12, maxLen: 180 });
+  if (sig.length >= 3) pj.signature_examples = sig;
+}
+
+function finalizePersonaJson(pj: PersonaJson, tweets: Tw[]): void {
+  materializeRepresentativeExamples(pj, tweets, 5, 6);
+  rankMentalModels(pj, 8);
 }
 
 // ---------- persona_facts persistence ----------
@@ -384,20 +431,20 @@ export async function refineVoice(env: Env, kolId: string): Promise<DistillResul
 
   // Vivid sample: recent + most-engaged tweets (the voice that resonates).
   const [recentR, topR] = await Promise.all([
-    env.DB.prepare(`SELECT text,likes,retweets FROM tweets WHERE kol_id=? AND is_retweet=0 AND length(text)>=12 ORDER BY created_at_ts DESC LIMIT 200`).bind(kolId).all(),
-    env.DB.prepare(`SELECT text,likes,retweets FROM tweets WHERE kol_id=? AND is_retweet=0 AND length(text)>=12 ORDER BY (likes+retweets*2) DESC LIMIT 200`).bind(kolId).all(),
+    env.DB.prepare(`SELECT id,text,created_at_iso,created_at_ts,likes,retweets FROM tweets WHERE kol_id=? AND is_retweet=0 AND length(text)>=12 ORDER BY created_at_ts DESC LIMIT 200`).bind(kolId).all(),
+    env.DB.prepare(`SELECT id,text,created_at_iso,created_at_ts,likes,retweets FROM tweets WHERE kol_id=? AND is_retweet=0 AND length(text)>=12 ORDER BY (likes+retweets*2) DESC LIMIT 200`).bind(kolId).all(),
   ]);
   const seen = new Set<string>();
-  const sample: any[] = [];
+  const sample: Tw[] = [];
   for (const t of [...(recentR.results || []), ...(topR.results || [])] as any[]) {
     const k = String(t.text || "").slice(0, 60);
-    if (!seen.has(k)) { seen.add(k); sample.push(t); }
+    if (!seen.has(k)) { seen.add(k); sample.push(t as Tw); }
   }
-  const voiceCorpus = sample.map((t) => t.text).join("\n").slice(0, 30000);
+  const voiceCorpus = sample.map(fmtTweet).join("\n").slice(0, 30000);
 
   // Re-derive Expression DNA from the vivid sample (flash).
   const dnaRaw = await llmJson(env, env.MODEL_FLASH, [
-    { role: "system", content: `Extract this finance KOL's VOICE fingerprint from their tweets. Output ONLY JSON: {"sentence_style":"short/long/mixed (with nuance)","vocabulary":["8-16 signature recurring words/phrases VERBATIM"],"humor":"","certainty":"","opening_pattern":""}. Be specific and vivid — capture what makes them sound like THEM.` },
+    { role: "system", content: `Extract this finance KOL's VOICE fingerprint from their tweets. Output ONLY JSON: {"sentence_style":"short/long/mixed (with nuance)","vocabulary":["8-16 signature recurring words/phrases VERBATIM"],"humor":"","certainty":"","opening_pattern":"","signature_example_ids":["tweet id"]}. Be specific and vivid — capture what makes them sound like THEM. Select signature_example_ids that best represent voice/phrasing; avoid generic disclaimers.` },
     { role: "user", content: voiceCorpus },
   ], { maxTokens: 800, timeoutMs: 120000, temperature: 0.2 });
   let dnaObj: any = null;
@@ -405,15 +452,20 @@ export async function refineVoice(env: Env, kolId: string): Promise<DistillResul
   catch { const m = dnaRaw.match(/\{[\s\S]*\}/); if (m) { try { dnaObj = JSON.parse(m[0]); } catch {} } }
   if (dnaObj?.sentence_style) merged.expression_dna = dnaObj;
 
-  // Signature 金句: verbatim short punchy high-engagement tweets (zero hallucination).
-  const sigs = sample
-    .filter((t) => { const L = (t.text || "").length; return L >= 12 && L <= 140; })
-    .map((t) => ({ t, s: Math.log10(2 + (t.likes || 0) + (t.retweets || 0) * 2) }))
-    .sort((a, b) => b.s - a.s)
-    .map((x) => String(x.t.text).replace(/\s+/g, " ").trim());
-  const uniqSigs: string[] = [];
-  for (const s of sigs) { if (!uniqSigs.some((u) => u.slice(0, 20) === s.slice(0, 20))) uniqSigs.push(s); if (uniqSigs.length >= 6) break; }
-  if (uniqSigs.length >= 3) merged.signature_examples = uniqSigs;
+  const modelSigs = materializeByIds(sample, dnaObj?.signature_example_ids, 6, { minLen: 12, maxLen: 180 });
+  if (modelSigs.length >= 3) {
+    merged.signature_examples = modelSigs;
+  } else {
+    // Fallback: verbatim short punchy high-engagement tweets (zero hallucination).
+    const sigs = sample
+      .filter((t) => { const L = (t.text || "").length; return L >= 12 && L <= 140; })
+      .map((t) => ({ t, s: Math.log10(2 + (t.likes || 0) + (t.retweets || 0) * 2) }))
+      .sort((a, b) => b.s - a.s)
+      .map((x) => String(x.t.text).replace(/\s+/g, " ").trim());
+    const uniqSigs: string[] = [];
+    for (const s of sigs) { if (!uniqSigs.some((u) => u.slice(0, 20) === s.slice(0, 20))) uniqSigs.push(s); if (uniqSigs.length >= 6) break; }
+    if (uniqSigs.length >= 3) merged.signature_examples = uniqSigs;
+  }
 
   await saveMerged(env, kolId, merged, sample as Tw[]);
   const pack = buildMarkdown(kol, merged);
@@ -545,8 +597,7 @@ export async function reduceFinal(env: Env, kolId: string): Promise<DistillResul
 
   const normFull = normWs(tweets.map((t) => t.text).join("\n"));
   merged = verifyPartial(merged, normFull);
-  merged.analytical_exemplars = selectExemplars(tweets, 5);
-  applyTripleGate(merged);
+  finalizePersonaJson(merged, tweets);
   await saveMerged(env, kolId, merged, tweets);
 
   // Cheap, no-LLM validation: keeps reduceFinal comfortably under the ~100s worker limit (the LLM
@@ -615,8 +666,7 @@ export async function finalizeMerged(env: Env, kolId: string): Promise<DistillRe
   const tweets = await loadAllTweets(env, kolId);
   const normFull = normWs(tweets.map((t) => t.text).join("\n"));
   merged = verifyPartial(merged, normFull);
-  merged.analytical_exemplars = selectExemplars(tweets, 5);
-  applyTripleGate(merged);
+  finalizePersonaJson(merged, tweets);
   await saveMerged(env, kolId, merged, tweets);
 
   const pack = buildMarkdown(kol, merged);
@@ -642,8 +692,7 @@ export async function reduceStage(env: Env, kolId: string): Promise<DistillResul
   if (!merged) throw new Error(`Reduce stage failed for ${kolId}`);
   const normFull = normWs(tweets.map((t) => t.text).join("\n"));
   merged = verifyPartial(merged, normFull);
-  merged.analytical_exemplars = selectExemplars(tweets, 5);
-  applyTripleGate(merged);
+  finalizePersonaJson(merged, tweets);
   await saveMerged(env, kolId, merged, tweets);
   const pack = buildMarkdown(kol, merged);
   const validation = await validatePersona(env, kol, merged, tweets);
@@ -697,7 +746,7 @@ export async function distillPersonaIncremental(
   merged = verifyPartial(merged, normFresh.length > 200 ? normFresh + normWs(JSON.stringify(prior)) : normWs(JSON.stringify(prior)));
   const freshExemplars = selectExemplars(fresh, 2);
   merged.analytical_exemplars = Array.from(new Set([...freshExemplars, ...(prior.analytical_exemplars || [])])).slice(0, 5);
-  applyTripleGate(merged);
+  rankMentalModels(merged, 8);
 
   // Persist the consolidated persona with full-corpus metadata. The incremental merge only maps the
   // fresh tweets, but the merged JSON still represents prior facts + fresh partials, so auditing fields

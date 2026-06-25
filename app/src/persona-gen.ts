@@ -187,12 +187,19 @@ interface ModelVerification {
   generative_test: string;       // a fresh stance this model lets us predict
   exclusive: boolean;            // true = specific to this KOL, false = generic truism
 }
+interface ModelQuality {
+  recurrence?: number;            // 0..1, how often this model recurs across the corpus
+  distinctiveness?: number;       // 0..1, how specific this model is to this KOL
+  actionability?: number;         // 0..1, whether it changes an answer/trade framing
+  evidence_strength?: number;     // 0..1, how well the selected quotes support it
+}
 interface MentalModel {
   name: string;
   description: string;
   evidence: string[];
   limitation: string;
   verification?: ModelVerification;
+  quality?: ModelQuality;
 }
 interface DecisionHeuristic {
   rule: string;
@@ -225,6 +232,9 @@ export interface PersonaJson {
   sector_focus?: string[];            // C1: sectors/tickers this KOL covers most
   signature_examples?: string[];      // C1: representative quotes / 金句 (voice exemplars)
   analytical_exemplars?: string[];    // C2: full analytical paragraphs where the KOL applies their framework to a specific instrument
+  analytical_exemplar_ids?: string[];  // model-selected tweet ids; materialized to verbatim text in code
+  signature_example_ids?: string[];    // model-selected tweet ids; materialized to verbatim text in code
+  research_routine?: { trigger: string; needs: string[]; reason: string }[]; // model-derived tool/data SOP
 }
 
 interface EvolutionResult {
@@ -271,8 +281,13 @@ Output JSON schema:
   "track_record": [ { "date": "YYYY-MM-DD", "call": "what they predicted", "outcome": "what happened / TBD" } ],
   "counter_views": ["blind spot or what a smart critic would say against this persona"],
   "sector_focus": ["sectors/tickers/themes this KOL covers most"],
+  "research_routine": [
+    { "trigger": "when user asks about X", "needs": ["data/news/source type"], "reason": "why this KOL would check it" }
+  ],
   "signature_examples": ["a verbatim representative quote / 金句 that captures their voice"],
-  "analytical_exemplars": ["a complete analytical paragraph (3-8 sentences) where the KOL applies their framework to a specific instrument — showing reasoning chain, data usage, and conclusion style. Copy verbatim from tweets, do not summarize."]
+  "analytical_exemplars": ["a complete analytical paragraph (3-8 sentences) where the KOL applies their framework to a specific instrument — showing reasoning chain, data usage, and conclusion style. Copy verbatim from tweets, do not summarize."],
+  "analytical_exemplar_ids": [],
+  "signature_example_ids": []
 }
 
 Rules:
@@ -283,8 +298,10 @@ Rules:
 - decision_heuristics: 5-10 rules grounded in actual tweets.
 - tensions: at least 2 pairs of internal contradictions.
 - track_record: 3-8 dated calls actually found in the tweets (with outcome if determinable, else "TBD").
+- research_routine: 3-6 practical data-gathering routines this KOL's reasoning implies. This is a positive SOP, not a refusal/guardrail list.
 - signature_examples: 3-6 verbatim short quotes copied from the tweets (do not paraphrase).
 - analytical_exemplars: 2-4 complete analytical paragraphs where the KOL applies their framework to a specific instrument or question. Copy VERBATIM (3-8 sentences each). Pick ones that show the KOL's reasoning chain: how they use data, how they weigh evidence, how they reach conclusions. These teach the answer model HOW to analyze, not just what methodology to use.
+- analytical_exemplar_ids/signature_example_ids: return [] unless tweet ids are explicitly present in the input.
 - uncertainty_style: always return [] for now. Do not collect, summarize, paraphrase, or transform refusal/prohibition statements, investment disclaimers, risk warnings, uncertainty/time-horizon/could-be-wrong style, or "I don't do/provide/touch/recommend X" statements. Do not move them into other fields.
 - All evidence/examples must come from the provided tweets. Do not fabricate.`;
 
@@ -296,7 +313,7 @@ Rules:
 const DISTILL_SYSTEM_DIRECT = `You are a financial KOL analyst. Output ONLY valid JSON (no markdown fences, no preamble, no chain-of-thought, no explanation). Begin your response with the character "{" and end with "}". Do not think step by step; emit the JSON object directly.
 
 Schema (same as standard distillation):
-{ "mental_models": [{ "name": "", "description": "", "evidence": [], "limitation": "", "verification": { "cross_domain_topics": [], "generative_test": "", "exclusive": true } }], "decision_heuristics": [{ "rule": "", "example": "" }], "expression_dna": { "sentence_style": "", "vocabulary": [], "humor": "", "certainty": "", "opening_pattern": "" }, "values": [], "anti_patterns": [], "tensions": [], "uncertainty_style": [], "track_record": [{ "date": "YYYY-MM-DD", "call": "", "outcome": "" }], "counter_views": [], "sector_focus": [], "signature_examples": [], "analytical_exemplars": [] }
+{ "mental_models": [{ "name": "", "description": "", "evidence": [], "limitation": "", "verification": { "cross_domain_topics": [], "generative_test": "", "exclusive": true }, "quality": { "recurrence": 0.0, "distinctiveness": 0.0, "actionability": 0.0, "evidence_strength": 0.0 } }], "decision_heuristics": [{ "rule": "", "example": "" }], "expression_dna": { "sentence_style": "", "vocabulary": [], "humor": "", "certainty": "", "opening_pattern": "" }, "values": [], "anti_patterns": [], "tensions": [], "uncertainty_style": [], "track_record": [{ "date": "YYYY-MM-DD", "call": "", "outcome": "" }], "counter_views": [], "sector_focus": [], "research_routine": [], "signature_examples": [], "analytical_exemplars": [], "analytical_exemplar_ids": [], "signature_example_ids": [] }
 
 Produce 5-8 mental_models (fill verification honestly: cross_domain_topics ≥2, exclusive=false for generic truisms), 5-10 decision_heuristics, ≥2 tensions, 3-8 track_record items, 3-6 verbatim signature_examples, 2-4 verbatim analytical_exemplars (3-8 sentences each). uncertainty_style must be []. All evidence/examples MUST come from the provided tweets — do not fabricate. Keep the JSON as compact as the schema allows.`;
 
@@ -482,20 +499,7 @@ export async function generatePersonaPack(
     }
   }
 
-  // 4b. Mechanical triple-verification gate (Plan §6c C2): enforce the gate in code, not just the
-  // prompt. Drop candidates that recur in <2 topics or are flagged non-exclusive (generic truisms).
-  // Models without a verification block are kept (we don't punish the model for omitting it), but if
-  // gating would wipe everything we fall back to the raw candidates to avoid an empty pack.
-  if (pj?.mental_models?.length) {
-    const passed = pj.mental_models.filter((m) => {
-      const v = m.verification;
-      if (!v) return true;
-      const crossDomain = Array.isArray(v.cross_domain_topics) && v.cross_domain_topics.length >= 2;
-      const exclusive = v.exclusive !== false;
-      return crossDomain && exclusive;
-    });
-    if (passed.length >= 3) pj.mental_models = passed.slice(0, 7);
-  }
+  rankMentalModels(pj, 7);
 
   // 5. Build Markdown persona_pack
   const pack = buildMarkdown(kol, pj);
@@ -600,16 +604,45 @@ export function buildMarkdown(kol: any, pj: PersonaJson | null): string {
     lines.push("");
   }
 
-  // Auto-generated Agentic Protocol (serenity-style, derived from mental_models)
-  lines.push(`## Agentic Protocol（工具调用 SOP）`);
-  const dims = deriveAgenticDimensions(pj);
-  dims.forEach((d, i) => {
-    lines.push(`${i + 1}. **${d.dimension}**: ${d.rationale}`);
-    lines.push(`   Tools: ${d.tools.join(" → ")}`);
-  });
+  const routine = (pj?.research_routine || []).filter((r) => r?.trigger && r?.needs?.length);
+  if (routine.length) {
+    lines.push(`## Research Routine（研究流程 / 数据需求）`);
+    routine.slice(0, 6).forEach((r, i) => {
+      lines.push(`${i + 1}. **${r.trigger}**: 需要 ${r.needs.join(" → ")}。原因：${r.reason || "贴合该 KOL 的判断框架"}`);
+    });
+  } else {
+    // Backward-compatible fallback for old persona JSONs that predate research_routine.
+    lines.push(`## Agentic Protocol（工具调用 SOP）`);
+    const dims = deriveAgenticDimensions(pj);
+    dims.forEach((d, i) => {
+      lines.push(`${i + 1}. **${d.dimension}**: ${d.rationale}`);
+      lines.push(`   Tools: ${d.tools.join(" → ")}`);
+    });
+  }
   lines.push("");
 
   return lines.join("\n");
+}
+
+export function rankMentalModels(pj: PersonaJson | null, limit = 8): void {
+  if (!pj?.mental_models?.length) return;
+  const score = (m: MentalModel): number => {
+    const q = m.quality || {};
+    const qVals = [q.recurrence, q.distinctiveness, q.actionability, q.evidence_strength]
+      .map((x) => typeof x === "number" && Number.isFinite(x) ? Math.max(0, Math.min(1, x)) : null)
+      .filter((x): x is number => x !== null);
+    if (qVals.length) return qVals.reduce((a, b) => a + b, 0) / qVals.length;
+
+    const v = m.verification;
+    const cross = Array.isArray(v?.cross_domain_topics) ? Math.min(1, v!.cross_domain_topics.length / 3) : 0.45;
+    const exclusive = v ? (v.exclusive === false ? 0 : 1) : 0.55;
+    const generative = v?.generative_test ? 1 : 0.35;
+    const evidence = Math.min(1, (m.evidence?.length || 0) / 3);
+    return cross * 0.3 + exclusive * 0.25 + generative * 0.2 + evidence * 0.25;
+  };
+  pj.mental_models = [...pj.mental_models]
+    .sort((a, b) => score(b) - score(a))
+    .slice(0, limit);
 }
 
 // ---------- Agentic Protocol auto-derivation ----------

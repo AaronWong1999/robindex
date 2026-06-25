@@ -242,18 +242,19 @@ interface EvalSummary {
 export async function runEval(
   env: Env,
   kolId: string,
-  opts: { limit?: number } = {},
+  opts: { limit?: number; personaPack?: string; personaVersion?: string } = {},
 ): Promise<EvalSummary> {
   const limit = Math.min(opts.limit ?? 12, 40);
   const kol = await env.DB.prepare(`SELECT * FROM kols WHERE id=?`).bind(kolId).first<KolRow>();
   if (!kol) throw new Error(`KOL not found: ${kolId}`);
-  if (!kol.persona_pack) throw new Error(`No persona_pack for ${kolId} — nothing to eval`);
+  const personaPack = opts.personaPack || kol.persona_pack;
+  if (!personaPack) throw new Error(`No persona_pack for ${kolId} — nothing to eval`);
 
-  const personaVersion = kol.persona_version || "unknown";
+  const personaVersion = opts.personaVersion || kol.persona_version || "unknown";
   // Generate eval responses with flash — it is the production chat default AND fast enough that a batch
   // of cases fits the worker's ~100s execution limit (pro would blow it on the first few cases).
   const modelVersion = env.MODEL_FLASH;
-  const dna = extractExpressionDna(kol.persona_pack);
+  const dna = extractExpressionDna(personaPack);
   const mode = (kol.retrieval_mode === "tagged" ? "tagged" : "query_side") as "tagged" | "query_side";
   const scope = kol.corpus_id || kol.id;
 
@@ -299,7 +300,7 @@ export async function runEval(
       env, kolId, kol.handle, question, [], undefined, env.MODEL_FLASH, mode, scope,
     );
     const messages = buildMessages({
-      kol, persona: kol.persona_pack, knowledge, citations,
+      kol, persona: personaPack, knowledge, citations,
       market: EMPTY_MARKET, history: [], userMessage: question,
     });
     const response = await completeChat(env, modelVersion, messages, { maxTokens: 700, temperature: 0.3 });

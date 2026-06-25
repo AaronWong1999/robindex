@@ -1749,6 +1749,48 @@ async function runDistillStep(
       const result = await finalizeMerged(env, kolId);
       if (result.persona_pack.length >= 500) {
         const version = `v2-mapreduce-${new Date().toISOString().slice(0, 10)}`;
+        const candidateVersion = `${version}-candidate-${Date.now()}`;
+        const cnt = await env.DB.prepare(`SELECT COUNT(*) n FROM eval_cases WHERE kol_id=?`).bind(kolId).first<{ n: number }>();
+        let publish = true;
+        let gateNote = "no eval set; publish without candidate gate";
+        if (cnt?.n) {
+          const baseline = await env.DB.prepare(
+            `SELECT persona_version, AVG(score_citation) c, AVG(score_voice) v, AVG(score_stance) s, COUNT(*) n
+             FROM eval_results
+             WHERE kol_id=? AND score_citation IS NOT NULL
+               AND persona_version NOT LIKE '%candidate%'
+             GROUP BY persona_version
+             HAVING n >= 6
+             ORDER BY MAX(created_at) DESC
+             LIMIT 1`
+          ).bind(kolId).first<any>();
+          const cand = await runEval(env, kolId, {
+            limit: 1,
+            personaPack: result.persona_pack,
+            personaVersion: candidateVersion,
+          });
+          const baseParts = baseline
+            ? [baseline.c, baseline.v, ...(baseline.s !== null ? [baseline.s] : [])].filter((x) => x !== null)
+            : [];
+          const baselineComposite = baseParts.length
+            ? baseParts.reduce((a: number, b: number) => a + b, 0) / baseParts.length
+            : null;
+          publish =
+            cand.processed > 0 &&
+            cand.avg_citation >= 0.55 &&
+            cand.avg_voice >= 0.25 &&
+            (baselineComposite === null || cand.composite >= baselineComposite - 0.08);
+          gateNote =
+            `candidate_gate baseline=${baselineComposite?.toFixed(3) ?? "none"} base_ver=${baseline?.persona_version || "none"} ` +
+            `cand=${cand.composite.toFixed(3)} cite=${cand.avg_citation.toFixed(3)} voice=${cand.avg_voice.toFixed(3)} ` +
+            `processed=${cand.processed} publish=${publish}`;
+        }
+        await log(gateNote);
+        if (!publish) {
+          await log(`finalize candidate rejected; live pack preserved`);
+          await env.CACHE.delete(stepKey);
+          return { next: null, extra: "" };
+        }
         await publishDistilledPack(env, kolId, result.persona_pack, version);
         await log(`finalize published ${version}: models=${result.stats.models} exemplars=${result.stats.exemplars} len=${result.persona_pack.length}`);
         return { next: "eval", extra: "" };
