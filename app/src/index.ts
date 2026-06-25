@@ -1592,6 +1592,26 @@ app.get("/api/admin/eval-preview", async (c) => {
   }
 });
 
+app.post("/api/admin/eval-preview", async (c) => {
+  if (!adminOk(c)) return c.json({ error: "unauthorized" }, 401);
+  const body = await c.req.json<{ kol_id?: string; limit?: number; candidate?: string; questions?: string[] }>().catch(() => ({} as any));
+  const kolId = body.kol_id || c.req.query("kol_id");
+  if (!kolId) return c.json({ error: "kol_id required" }, 400);
+  const limit = body.limit || parseInt(c.req.query("limit") || "3", 10);
+  const candidate = body.candidate || c.req.query("candidate") || "merged";
+  try {
+    let candidatePack: string | undefined;
+    if (candidate === "merged") {
+      const rendered = await renderMergedPack(c.env, kolId);
+      candidatePack = rendered.persona_pack;
+    }
+    const summary = await runEvalPreview(c.env, kolId, { limit, candidatePack, questions: body.questions || [] });
+    return c.json({ ok: true, ...summary });
+  } catch (e: any) {
+    return c.json({ error: e.message || String(e) }, 500);
+  }
+});
+
 // Manually roll a KOL's persona back to its last backup/snapshot. Query: ?kol_id=X
 app.post("/api/admin/eval-rollback", async (c) => {
   if (!adminOk(c)) return c.json({ error: "unauthorized" }, 401);

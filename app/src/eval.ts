@@ -263,7 +263,7 @@ async function evalAnswerDraft(
     kol, persona: personaPack, knowledge, citations,
     market: EMPTY_MARKET, history: [], userMessage: question,
   });
-  const response = await completeChat(env, env.MODEL_FLASH, messages, { maxTokens: 700, temperature: 0.3 });
+  const response = await completeChat(env, env.MODEL_FLASH, messages, { maxTokens: 1600, temperature: 0.3 });
   return {
     ec: null,
     response,
@@ -276,13 +276,20 @@ async function evalAnswerDraft(
 export async function runEvalPreview(
   env: Env,
   kolId: string,
-  opts: { limit?: number; candidatePack?: string; caseIds?: string[] } = {},
+  opts: { limit?: number; candidatePack?: string; caseIds?: string[]; questions?: string[] } = {},
 ): Promise<{ kol_id: string; cases: any[]; live_version: string; candidate: boolean }> {
   const limit = Math.min(Math.max(opts.limit ?? 3, 1), 6);
   const kol = await env.DB.prepare(`SELECT * FROM kols WHERE id=?`).bind(kolId).first<KolRow>();
   if (!kol) throw new Error(`KOL not found: ${kolId}`);
   if (!kol.persona_pack) throw new Error(`No persona_pack for ${kolId}`);
-  const caseRows = opts.caseIds?.length
+  const customQuestions = (opts.questions || []).map((q) => String(q || "").trim()).filter((q) => q.length >= 3);
+  const caseRows = customQuestions.length
+    ? customQuestions.slice(0, limit).map((question, i) => ({
+        id: `${kolId}:custom:${i}`,
+        question,
+        expected_stance: null,
+      }))
+    : opts.caseIds?.length
     ? ((await env.DB.prepare(
         `SELECT id, question, expected_stance FROM eval_cases WHERE kol_id=? AND id IN (${opts.caseIds.map(() => "?").join(",")}) ORDER BY id`
       ).bind(kolId, ...opts.caseIds).all()).results || []) as any[]
