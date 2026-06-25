@@ -711,6 +711,52 @@ export async function distillPersonaFull(
   return reduceStage(env, kolId);
 }
 
+function sampleTweetsForDistill(tweets: Tw[], maxTweets: number): Tw[] {
+  const byId = new Map<string, Tw>();
+  const add = (arr: Tw[]) => {
+    for (const t of arr) if (t?.id && !byId.has(t.id)) byId.set(t.id, t);
+  };
+  const n = Math.max(40, maxTweets);
+  add(tweets.slice(-Math.ceil(n * 0.35)));
+  add([...tweets].sort((a, b) => (b.likes + b.retweets * 2) - (a.likes + a.retweets * 2)).slice(0, Math.ceil(n * 0.35)));
+  add(tweets.filter((t) => ANALYTIC_RE.test(t.text || "")).sort((a, b) => (b.text.length + b.likes) - (a.text.length + a.likes)).slice(0, Math.ceil(n * 0.45)));
+  return [...byId.values()]
+    .sort((a, b) => a.created_at_ts - b.created_at_ts)
+    .slice(-n);
+}
+
+// Cheap prompt/dev loop: run the full distillation shape over a representative slice, without touching
+// persona_facts or kols. Use this before burning a full-corpus map/reduce.
+export async function distillPersonaSample(
+  env: Env,
+  kolId: string,
+  opts: { maxTweets?: number; maxChunks?: number } = {},
+): Promise<DistillResult> {
+  const kol = await env.DB.prepare(`SELECT id,display_name,handle,tagline FROM kols WHERE id=?`).bind(kolId).first<any>();
+  if (!kol) throw new Error(`KOL not found: ${kolId}`);
+  const all = await loadAllTweets(env, kolId);
+  const sample = sampleTweetsForDistill(all, Math.min(Math.max(opts.maxTweets ?? 360, 80), 1200));
+  if (sample.length < 20) throw new Error(`Not enough sampled tweets (${sample.length}) for ${kolId}`);
+  const chunks = chunkTweets(sample, Math.min(Math.max(opts.maxChunks ?? 4, 1), 8));
+  const partials = (await pool(chunks, 4, (chunk) => mapChunk(env, chunk))).filter(Boolean) as PersonaJson[];
+  if (!partials.length) throw new Error(`Sample map produced no partials for ${kolId}`);
+  let merged = await reducePartials(env, partials, 6000, false, true);
+  if (!merged) throw new Error(`Sample reduce failed for ${kolId}`);
+  merged = verifyPartial(merged, normWs(sample.map((t) => t.text).join("\n")));
+  finalizePersonaJson(merged, sample);
+  const pack = buildMarkdown(kol, merged);
+  const validation = [
+    `INFO: sample distill over ${sample.length}/${all.length} tweets in ${chunks.length} chunk(s); does not publish`,
+    `INFO: ${merged.mental_models?.length || 0} mental models, ${merged.analytical_exemplars?.length || 0} exemplars`,
+  ];
+  return {
+    persona_pack: pack,
+    persona_json: merged,
+    validation,
+    stats: { tweets: sample.length, chunks: chunks.length, mapped_ok: partials.length, models: merged.mental_models?.length || 0, exemplars: merged.analytical_exemplars?.length || 0 },
+  };
+}
+
 // ---------- Public: incremental weekly refresh ----------
 
 // Map only NEW tweets since `sinceTs`, reduce them INTO the stored merged facts, re-render. Falls back to

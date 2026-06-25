@@ -8,8 +8,8 @@ import { gatherMarketData, buildMessages, maybeUpdateSummary, resolveToolPhase, 
 import { getStockNews, getMarketNews } from "./marketdata";
 import { runDailyIngest, runWeeklyPersonaRefresh } from "./ingest";
 import { generatePersonaPack, evolvePersona, diagnosePersonaGeneration, logPersonaExperiment } from "./persona-gen";
-import { buildEvalSet, runEval, autoRollback, evalAndMaybeRollback } from "./eval";
-import { distillPersonaFull, distillPersonaIncremental, mapStage, reduceStage, reduceGroup, reduceFinal, reduceFinalDraft, finalizeMerged, renderMergedPack, refineVoice } from "./persona-distill";
+import { buildEvalSet, runEval, runEvalPreview, autoRollback, evalAndMaybeRollback } from "./eval";
+import { distillPersonaFull, distillPersonaIncremental, distillPersonaSample, mapStage, reduceStage, reduceGroup, reduceFinal, reduceFinalDraft, finalizeMerged, renderMergedPack, refineVoice } from "./persona-distill";
 import {
   getSectorBlocks, getFundFlowMinute, getDragonTiger, getLockupExpiry,
   getIndustryRanking, getMarginTrading, getStockInfo, getResearchReports,
@@ -1573,6 +1573,25 @@ app.post("/api/admin/eval-run", async (c) => {
   }
 });
 
+app.get("/api/admin/eval-preview", async (c) => {
+  if (!adminOk(c)) return c.json({ error: "unauthorized" }, 401);
+  const kolId = c.req.query("kol_id");
+  if (!kolId) return c.json({ error: "kol_id required" }, 400);
+  const limit = parseInt(c.req.query("limit") || "2", 10);
+  const candidate = c.req.query("candidate") || "merged";
+  try {
+    let candidatePack: string | undefined;
+    if (candidate === "merged") {
+      const rendered = await renderMergedPack(c.env, kolId);
+      candidatePack = rendered.persona_pack;
+    }
+    const summary = await runEvalPreview(c.env, kolId, { limit, candidatePack });
+    return c.json({ ok: true, ...summary });
+  } catch (e: any) {
+    return c.json({ error: e.message || String(e) }, 500);
+  }
+});
+
 // Manually roll a KOL's persona back to its last backup/snapshot. Query: ?kol_id=X
 app.post("/api/admin/eval-rollback", async (c) => {
   if (!adminOk(c)) return c.json({ error: "unauthorized" }, 401);
@@ -1611,6 +1630,29 @@ app.post("/api/admin/persona-distill", async (c) => {
   const mode = c.req.query("mode") || "full";
   const days = Math.max(1, parseInt(c.req.query("days") || "7", 10));
   try {
+    if (mode === "sample") {
+      const maxTweets = parseInt(c.req.query("max_tweets") || "360", 10);
+      const maxChunks = parseInt(c.req.query("max_chunks") || "4", 10);
+      const result = await distillPersonaSample(c.env, kolId, { maxTweets, maxChunks });
+      let evalSummary: any = null;
+      if (c.req.query("eval") === "1") {
+        evalSummary = await runEval(c.env, kolId, {
+          limit: Math.min(Math.max(parseInt(c.req.query("eval_limit") || "2", 10), 1), 6),
+          personaPack: result.persona_pack,
+          personaVersion: `sample-${Date.now()}`,
+        });
+      }
+      return c.json({
+        ok: true,
+        mode,
+        published: false,
+        validation: result.validation,
+        pack_length: result.persona_pack.length,
+        stats: result.stats,
+        eval: evalSummary,
+        persona_json: c.req.query("json") === "1" ? result.persona_json : undefined,
+      });
+    }
     // Resumable map stage: call repeatedly until remaining===0 (stays under the edge timeout). Does not
     // touch the live pack — only fills the chunk fact store.
     if (mode === "map") {

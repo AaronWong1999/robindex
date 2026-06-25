@@ -239,6 +239,97 @@ interface EvalSummary {
   remaining: number;     // cases still un-scored for this version (0 = complete)
 }
 
+function citationScore(response: string, citations: { ref: string }[]): number {
+  const validRefs = new Set(citations.map((c) => c.ref));
+  const cited = new Set(Array.from(response.matchAll(CITE_RE)).map((m) => m[1]));
+  return cited.size === 0
+    ? (validRefs.size === 0 ? 1 : 0)
+    : Array.from(cited).filter((r) => validRefs.has(r)).length / cited.size;
+}
+
+async function evalAnswerDraft(
+  env: Env,
+  kol: KolRow,
+  kolId: string,
+  question: string,
+  personaPack: string,
+): Promise<EvalDraft & { citations: any[]; knowledge_count: number }> {
+  const mode = (kol.retrieval_mode === "tagged" ? "tagged" : "query_side") as "tagged" | "query_side";
+  const scope = kol.corpus_id || kol.id;
+  const { citations, knowledge } = await retrieve(
+    env, kolId, kol.handle, question, [], undefined, env.MODEL_FLASH, mode, scope,
+  );
+  const messages = buildMessages({
+    kol, persona: personaPack, knowledge, citations,
+    market: EMPTY_MARKET, history: [], userMessage: question,
+  });
+  const response = await completeChat(env, env.MODEL_FLASH, messages, { maxTokens: 700, temperature: 0.3 });
+  return {
+    ec: null,
+    response,
+    scoreCitation: citationScore(response, citations),
+    citations,
+    knowledge_count: knowledge.length,
+  };
+}
+
+export async function runEvalPreview(
+  env: Env,
+  kolId: string,
+  opts: { limit?: number; candidatePack?: string; caseIds?: string[] } = {},
+): Promise<{ kol_id: string; cases: any[]; live_version: string; candidate: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? 3, 1), 6);
+  const kol = await env.DB.prepare(`SELECT * FROM kols WHERE id=?`).bind(kolId).first<KolRow>();
+  if (!kol) throw new Error(`KOL not found: ${kolId}`);
+  if (!kol.persona_pack) throw new Error(`No persona_pack for ${kolId}`);
+  const caseRows = opts.caseIds?.length
+    ? ((await env.DB.prepare(
+        `SELECT id, question, expected_stance FROM eval_cases WHERE kol_id=? AND id IN (${opts.caseIds.map(() => "?").join(",")}) ORDER BY id`
+      ).bind(kolId, ...opts.caseIds).all()).results || []) as any[]
+    : ((await env.DB.prepare(
+        `SELECT id, question, expected_stance FROM eval_cases WHERE kol_id=? ORDER BY id LIMIT ?`
+      ).bind(kolId, limit).all()).results || []) as any[];
+  if (!caseRows.length) throw new Error(`No eval cases for ${kolId}`);
+
+  const out: any[] = [];
+  for (const ec of caseRows.slice(0, limit)) {
+    const live = await evalAnswerDraft(env, kol, kolId, String(ec.question), kol.persona_pack,);
+    const drafts: EvalDraft[] = [{ ec: { id: `${ec.id}:live`, expected_stance: ec.expected_stance }, response: live.response, scoreCitation: live.scoreCitation }];
+    let cand: Awaited<ReturnType<typeof evalAnswerDraft>> | null = null;
+    if (opts.candidatePack) {
+      cand = await evalAnswerDraft(env, kol, kolId, String(ec.question), opts.candidatePack);
+      drafts.push({ ec: { id: `${ec.id}:candidate`, expected_stance: ec.expected_stance }, response: cand.response, scoreCitation: cand.scoreCitation });
+    }
+    const liveDna = extractExpressionDna(kol.persona_pack);
+    const candDna = extractExpressionDna(opts.candidatePack || kol.persona_pack);
+    const liveVoice = await judgeVoiceBatch(env, liveDna, [drafts[0]]);
+    const candVoice = cand ? await judgeVoiceBatch(env, candDna, [drafts[1]]) : {};
+    const stance = await judgeStanceBatch(env, drafts);
+    out.push({
+      id: ec.id,
+      question: ec.question,
+      expected_stance: ec.expected_stance,
+      live: {
+        answer: live.response,
+        citations: live.citations,
+        knowledge_count: live.knowledge_count,
+        score_citation: live.scoreCitation,
+        score_voice: liveVoice[`${ec.id}:live`] ?? 0,
+        score_stance: stance[`${ec.id}:live`] ?? null,
+      },
+      candidate: cand ? {
+        answer: cand.response,
+        citations: cand.citations,
+        knowledge_count: cand.knowledge_count,
+        score_citation: cand.scoreCitation,
+        score_voice: candVoice[`${ec.id}:candidate`] ?? 0,
+        score_stance: stance[`${ec.id}:candidate`] ?? null,
+      } : null,
+    });
+  }
+  return { kol_id: kolId, live_version: kol.persona_version || "unknown", candidate: !!opts.candidatePack, cases: out };
+}
+
 export async function runEval(
   env: Env,
   kolId: string,
@@ -306,11 +397,7 @@ export async function runEval(
     const response = await completeChat(env, modelVersion, messages, { maxTokens: 700, temperature: 0.3 });
 
     // 1) Citation accuracy — fraction of cited [T#] that resolve to a retrieved source tweet.
-    const validRefs = new Set(citations.map((c) => c.ref));
-    const cited = new Set(Array.from(response.matchAll(CITE_RE)).map((m) => m[1]));
-    const scoreCitation = cited.size === 0
-      ? (validRefs.size === 0 ? 1 : 0)               // nothing to cite → fine; sources existed but none cited → 0
-      : Array.from(cited).filter((r) => validRefs.has(r)).length / cited.size;
+    const scoreCitation = citationScore(response, citations);
 
     drafts.push({ ec, response, scoreCitation });
   }
