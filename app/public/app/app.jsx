@@ -303,6 +303,17 @@ function normalizeMessages(messages, kolId) {
     return { ...m, id };
   });
 }
+function messagesHaveKolMismatch(messages, kolId) {
+  if (!kolId) return false;
+  return (messages || []).some((m) => m && m.role === "k" && m.kol && m.kol.id && m.kol.id !== kolId);
+}
+function normalizeChat(chat) {
+  const messages = normalizeMessages(chat && chat.messages || [], chat && chat.kol && chat.kol.id);
+  return { ...chat, messages, _kolMismatch: messagesHaveKolMismatch(messages, chat && chat.kol && chat.kol.id) };
+}
+function chatHasValidMessages(chat) {
+  return !messagesHaveKolMismatch(chat && chat.messages, chat && chat.kol && chat.kol.id);
+}
 
 function BootScreen({ label, detail }) {
   return React.createElement("div", { className: "auth boot" },
@@ -563,7 +574,7 @@ function App() {
     const saved = LS.get("chats", null);
     if (saved && Array.isArray(saved)) {
       return saved
-        .map((c) => ({ ...c, messages: normalizeMessages(c.messages || [], c.kol && c.kol.id) }))
+        .map((c) => normalizeChat(c))
         .filter((c) => c.messages && c.messages.length > 0);
     }
     try {
@@ -594,6 +605,8 @@ function App() {
   const [sources, setSources] = uS([]);
   const [highlight, setHighlight] = uS(null);
   const [citeTick, setCiteTick] = uS(0);
+  const activeIdRef = uR(null);
+  const messagesChatIdRef = uR(null);
   const [mtab, setMtab] = uS("home");
   const [paywall, setPaywall] = uS(null);
   const [checkout, setCheckout] = uS(null);
@@ -634,12 +647,21 @@ function App() {
     const pathMatch = url.pathname.match(/^\/chat\/([^/]+)\/?$/);
     return pathMatch ? decodeURIComponent(pathMatch[1]) : url.searchParams.get("chat");
   };
+  const bindMessagesToChat = (chatId) => {
+    activeIdRef.current = chatId || null;
+    messagesChatIdRef.current = chatId || null;
+  };
+  const isBoundToChat = (chatId) => activeIdRef.current === chatId && messagesChatIdRef.current === chatId;
   const showChat = (chat) => {
+    bindMessagesToChat(chat.id);
     const saved = normalizeMessages(chat.messages || [], chat.kol && chat.kol.id);
-    const normalizedChat = { ...chat, messages: saved };
+    const safeSaved = messagesHaveKolMismatch(saved, chat.kol && chat.kol.id) ? [] : saved;
+    if (saved.length && !safeSaved.length) console.warn("[Desk] skipped mismatched chat messages", chat.id, chat.kol && chat.kol.id);
+    const normalizedChat = { ...chat, messages: safeSaved };
     setActive(normalizedChat); setView("chat"); setTab("ask"); setMtab("chat");
-    setMessages(saved);
-    const lastK = saved.filter((m) => m.role === "k" && m.done);
+    setMessages(safeSaved);
+    setHighlight(null);
+    const lastK = safeSaved.filter((m) => m.role === "k" && m.done);
     if (!lastK.length) { setSources([]); setRailTab("persona"); return; }
     const last = lastK[lastK.length - 1];
     const cites = last._citations || (last.resp && last.resp.citations) || [];
@@ -647,6 +669,7 @@ function App() {
     setSources(cites);
     setRailTab("sources");
     RX.hydrateCitations(chat.kol.id, cites, chat.kol.handle).then((hydrated) => {
+      if (!isBoundToChat(chat.id)) return;
       setSources(hydrated);
       setMessages((msgs) => msgs.map((m) => m.id === last.id ? {
         ...m,
@@ -659,7 +682,8 @@ function App() {
   uE(() => { document.documentElement.setAttribute("data-theme", theme); LS.set("theme", theme); }, [theme]);
   uE(() => { LS.set("model", model); }, [model]);
   uE(() => { LS.set("effort", effort); }, [effort]);
-  uE(() => { const saved = chats.filter((c) => !isEmptyChat(c)); if (saved.length) LS.set("chats", saved); }, [chats]);
+  uE(() => { const saved = chats.filter((c) => !isEmptyChat(c) && chatHasValidMessages(c)); if (saved.length) LS.set("chats", saved); }, [chats]);
+  uE(() => { activeIdRef.current = active ? active.id : null; }, [active && active.id]);
   uE(() => {
     if (!active && requestedChatId() && !historyLoadDone) return;
     if (active) {
@@ -675,7 +699,7 @@ function App() {
     }
   }, [active, historyLoadDone]);
   uE(() => {
-    if (active && messages.length) {
+    if (active && messages.length && isBoundToChat(active.id) && !messagesHaveKolMismatch(messages, active.kol && active.kol.id)) {
       setChats((prev) => {
         const idx = prev.findIndex((c) => c.id === active.id);
         const firstUser = messages.find((m) => m.role === "u");
@@ -700,7 +724,7 @@ function App() {
       setInitDone(true);
       const validIds = new Set(RX.kols(window.RXI.lang).map((k) => k.id));
       setChats((prev) => {
-        const filtered = prev.filter((c) => validIds.has(c.kol.id) && !isEmptyChat(c));
+        const filtered = prev.filter((c) => validIds.has(c.kol.id) && !isEmptyChat(c) && chatHasValidMessages(c));
         filtered.forEach((chat) => RX.saveChat(chat, userId));
         const chatParam = requestedChatId();
         if (chatParam) { const match = filtered.find((c) => c.id === chatParam); if (match) showChat(match); }
@@ -719,20 +743,23 @@ function App() {
     RX.loadHistory(userId).then((cloudChats) => {
       if (!cloudChats.length) return;
       setChats((cur) => {
-        const normalizedCloud = cloudChats.map((c) => ({
-          ...c,
-          messages: normalizeMessages(c.messages || [], c.kol && c.kol.id),
-        }));
-        const localIds = new Set(cur.map((c) => c.id));
-        const localKeys = new Set(cur.map((c) => c.kol.id + "::" + c.title));
+        const normalizedCloud = cloudChats.map((c) => normalizeChat(c));
+        const cloudById = new Map(normalizedCloud.map((c) => [c.id, c]));
+        const curWithReplacements = cur.map((c) => {
+          const cloud = cloudById.get(c.id);
+          if (cloud && !chatHasValidMessages(c) && chatHasValidMessages(cloud)) return cloud;
+          return c;
+        });
+        const localIds = new Set(curWithReplacements.map((c) => c.id));
+        const localKeys = new Set(curWithReplacements.map((c) => c.kol.id + "::" + c.title));
         const newCloud = normalizedCloud.filter((c) => !isEmptyChat(c) && !localIds.has(c.id) && !localKeys.has(c.kol.id + "::" + c.title) && validIds.has(c.kol.id));
         if (newCloud.length) {
-          const merged = [...newCloud, ...cur];
+          const merged = [...newCloud, ...curWithReplacements];
           const chatParam = requestedChatId();
           if (chatParam) { const match = merged.find((c) => c.id === chatParam); if (match) showChat(match); }
           return merged;
         }
-        return cur;
+        return curWithReplacements;
       });
     }).catch(() => {}).finally(() => setHistoryLoadDone(true));
   }, [initDone, userId]);
@@ -743,7 +770,7 @@ function App() {
     if (loggedIn && pid) {
       const timer = setTimeout(() => {
         setChats((prev) => {
-          prev.forEach((c) => { if (!isEmptyChat(c)) RX.saveChat(c, pid); });
+          prev.forEach((c) => { if (!isEmptyChat(c) && chatHasValidMessages(c)) RX.saveChat(c, pid); });
           return prev;
         });
       }, 120);
@@ -776,6 +803,7 @@ function App() {
   const setLang = (l) => { window.RXI.set(l); setLangState(l); document.documentElement.setAttribute("lang", l === "en" ? "en" : "zh"); };
 
   const openChatView = (chat) => {
+    bindMessagesToChat(chat.id);
     setActive(chat); setView("chat"); setTab("ask"); setMtab("chat");
     setMessages(chat.messages || []); setSources([]); setHighlight(null); setRailTab("persona");
   };
@@ -791,6 +819,7 @@ function App() {
     if (!firstQuestion) { switchKol(kol); return; }
     const chat = { id: chatId(), kol, title: firstQuestion.slice(0, 22), messages: [], ts: Date.now() };
     setChats((c) => [chat, ...c]);
+    bindMessagesToChat(chat.id);
     setActive(chat); setView("chat"); setTab("ask"); setMtab("chat");
     setMessages([]); setSources([]); setHighlight(null); setRailTab("persona");
     setTimeout(() => ask(kol, firstQuestion, chat.id), 60);
@@ -801,6 +830,9 @@ function App() {
 
   const ask = (kol, question, conversationIdOverride) => {
     const conversationId = conversationIdOverride || active?.id;
+    let requestChatId = conversationId;
+    bindMessagesToChat(conversationId);
+    const isCurrentRequest = () => isBoundToChat(requestChatId);
     const userMsg = { id: uid(), role: "u", text: question };
     const lang_ = window.RXI.lang;
     const ph = RX.phases(lang_);
@@ -813,10 +845,15 @@ function App() {
       RX.streamChat(kol.id, question, model, conversationId, {
         onConversationId: (serverConversationId) => {
           if (!serverConversationId || serverConversationId === conversationId) return;
+          if (isCurrentRequest()) {
+            requestChatId = serverConversationId;
+            bindMessagesToChat(serverConversationId);
+          }
           setActive((cur) => cur && cur.id === conversationId ? { ...cur, id: serverConversationId } : cur);
           setChats((prev) => prev.map((c) => c.id === conversationId ? { ...c, id: serverConversationId } : c));
         },
         onPhase: (idx, text, phaseKey) => {
+          if (!isCurrentRequest()) return;
           const key = phaseKey || `phase-${idx}`;
           setMessages((m) => m.map((x) => {
             if (x.id !== kMsg.id) return x;
@@ -832,6 +869,7 @@ function App() {
           }));
         },
         onMeta: (meta) => {
+          if (!isCurrentRequest()) return;
           const cites = (meta.citations || []).map((c, i) => ({
             ref: c.ref || ("T" + (i + 1)),
             tweet_id: c.tweet_id || c.id || "",
@@ -858,6 +896,7 @@ function App() {
           }));
         },
         onToolCall: (tc) => {
+          if (!isCurrentRequest()) return;
           const displayArgs = typeof tc.args === "string" ? tc.args : JSON.stringify(tc.args || {});
           toolCalls.push({ name: tc.name || "tool", args: displayArgs, result: {} });
           setMessages((m) => m.map((x) => {
@@ -873,6 +912,7 @@ function App() {
           }));
         },
         onDelta: (fullText) => {
+          if (!isCurrentRequest()) return;
           setMessages((m) => m.map((x) => {
             if (x.id !== kMsg.id) return x;
             const current = (x.resp.processSteps || []).map((s) => s.state === "run" ? { ...s, state: "done" } : s);
@@ -881,6 +921,7 @@ function App() {
           }));
         },
         onDone: (fullText, meta) => {
+          if (!isCurrentRequest()) return;
           const conviction = 60 + Math.floor(Math.random() * 25);
           setMessages((m) => m.map((x) => {
             if (x.id !== kMsg.id) return x;
@@ -890,6 +931,7 @@ function App() {
               resp: { ...x.resp, answerMd: fullText, conviction, toolCalls: toolCalls, citations: cites, processSteps } };
           }));
           RX.fetchSuggestions(kol.id, question, fullText).then((suggs) => {
+            if (!isCurrentRequest()) return;
             if (suggs.length) {
               setMessages((m) => m.map((x) => x.id === kMsg.id ? {
                 ...x, resp: { ...x.resp, suggestions: suggs },
@@ -898,6 +940,7 @@ function App() {
           });
         },
         onError: (err) => {
+          if (!isCurrentRequest()) return;
           setMessages((m) => m.map((x) => {
             if (x.id !== kMsg.id) return x;
             const processSteps = (x.resp.processSteps || []).map((s) => s.state === "run" ? { ...s, state: "error" } : s);
