@@ -556,8 +556,13 @@ app.post("/api/chat", async (c) => {
         // Candidates to price-check: the planner's explicit instruments FIRST, then its exact_entities as
         // fallback. flash is often unsure whether a name is tradable (e.g. a just-IPO'd SpaceX→SPCX), so
         // we let the LIVE FEED decide — gatherMarketData keeps only those that return a real quote.
+        const rawTickerCandidates = Array.from(
+          body.message.matchAll(/(?:\$|\b)([A-Z]{2,6})(?=\b)/g),
+          (m) => m[1],
+        );
         const plannedInstruments = Array.from(new Set([
           ...plan.instruments.map((i) => i.ticker || i.name).filter(Boolean),
+          ...rawTickerCandidates,
           ...plan.exact_entities,
         ]));
 
@@ -633,18 +638,22 @@ app.post("/api/chat", async (c) => {
           toolCalls = toolPhase.toolCalls;
         }
 
+        const latestQuestionLanguage = /[\u3400-\u9fff]/.test(body.message) ? "Chinese" : "English";
         const finalMessages = [
           ...toolMsgs,
           {
             role: "user",
             content:
               "现在直接输出给用户看的最终分析。严禁输出任何工具调用或 DSL 标签；不要说你要调用工具。\n" +
-              "请用中文回答。保持你（博主）一贯的语气、分析框架和表达风格，像在回复读者的提问一样自然地写。\n" +
+              `The latest user question language is ${latestQuestionLanguage}. Answer in ${latestQuestionLanguage}; do not follow the corpus/persona language for output language. 保持你（博主）一贯的语气、分析框架和表达风格，像在回复读者的提问一样自然地写。\n` +
               "Use prior conversation only to understand follow-ups; the latest USER QUESTION is the task you must answer.\n" +
               "Only claim to remember or see earlier details if they are actually present in the provided conversation history or summary; otherwise say you cannot see them.\n" +
               "If the latest question is about whether you can see/remember prior conversation, answer only that memory/access question; do not infer or add a new investment analysis from tickers mentioned in that question.\n" +
               "If the user explicitly asks to answer only, confirm only, not expand, or not re-analyze, keep the answer concise; do not add market data, citations, headings, or unrelated analysis.\n" +
-              "If the user asked for price/action levels, start by answering that request directly before the long reasoning.\n" +
+              "If the user asks for price/action levels, answer the requested action first in the persona's natural style.\n" +
+              "The answer must include, when applicable: current decision, conditional buy/add range, conditional sell/trim range, and invalidation/risk condition.\n" +
+              "Do not use a rigid template unless it fits the persona's style.\n" +
+              "Do not stop at principles or say only that the persona avoids exact points.\n" +
               "引用写成 [1]、[2] 这种纯数字格式。自然地融入原文引用，不要刻意分段或加小标题。\n" +
               "缺数据明说，不要编。",
           },

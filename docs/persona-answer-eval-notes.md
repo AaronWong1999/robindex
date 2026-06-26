@@ -2,6 +2,88 @@
 
 This file tracks qualitative comparisons between Robindex KOL personas and competitor answers. The goal is to identify repeatable product and algorithm changes, not to tune against a single prompt.
 
+## 2026-06-26 Decision: Keep Current Production Persona, Freeze New Distill Candidate
+
+The latest full-corpus persona distillation experiment should be treated as **failed for production replacement** for now.
+
+What happened:
+
+- A new full-corpus `persona_facts:merged` candidate was generated for `qinbafrank` and `aleabitoreddit`.
+- The candidate improved some "direct answer / price range" behavior on DRAM-style questions.
+- But it failed badly on CRCL-style questions:
+  - one answer had ticker/entity confusion;
+  - one answer leaked tool-call JSON/DSL in the draft preview path;
+  - Serenity's candidate also showed language drift because much of the persona pack is English.
+- The eval gate rejected the candidate; the live `kols.persona_pack` was not overwritten.
+
+Conclusion:
+
+- Do **not** publish the new candidate persona pack without another round of design and user review.
+- Keep the current production `v2-mapreduce` persona packs.
+- Future distillation changes must be compared side-by-side on real user questions before publication.
+- Candidate improvements can still inform prompt/runtime changes, but should not replace the old persona globally.
+
+Important nuance:
+
+- The new candidate is not necessarily shorter because it skipped data. Full-corpus chunk/reduce records exist.
+- It is shorter/cleaner partly because the new distill prompt intentionally removed `honest_boundaries`, `uncertainty_style`, disclaimers, and prohibition-style items.
+- That cleanup is directionally right, but the whole candidate still regressed on robustness.
+
+## Minimal Fix Direction For Current Production Persona
+
+We should **not** solve the price-answering issue by replacing the persona pack yet. The smallest useful fix is in the inference/final-answer contract.
+
+Observed production issue:
+
+- Existing persona packs can contain cautious style, old "Agentic Protocol" text, or examples where the KOL avoids exact point prediction.
+- When the user asks "今天该不该买 / 什么价格挂单 / 什么价格卖", the model sometimes over-respects that cautious style and answers with principles instead of usable conditional ranges.
+
+Minimal production fix:
+
+1. Keep current live `persona_pack`.
+2. Do not add a new product mode.
+3. Do not change distillation output yet.
+4. Strengthen the final prompt only when the latest user question asks for price/action levels.
+5. Use already-fetched live quote/kline/news/profile data.
+6. Require conditional ranges, not fake precision.
+
+Recommended final-prompt rule:
+
+```text
+If the latest user question asks for a price, action level, entry, exit, trim, add, stop, order, buy zone, or sell zone, answer that request directly first.
+Do not stop at principles or say only that the persona does not provide exact points.
+Translate the persona's framework into bounded conditional ranges using LIVE MARKET DATA.
+Use ranges and conditions, not a single fake-precise number.
+If data is missing, say what is missing and give a range-derivation method instead of refusing.
+```
+
+Expected answer shape:
+
+```text
+先给结论：
+- 今天：买 / 不买 / 等财报后 / 只适合小仓试。
+- 买入：第一档 X-Y；更深一档 A-B；如果跌破 B 且基本面变量变坏，就不要接。
+- 卖出/减仓：反弹到 M-N 可以减；突破并站稳 P 再看新高。
+- 打脸条件：...
+
+然后再展开 KOL 风格的逻辑、引用和风险。
+```
+
+Why this is the right first step:
+
+- It directly addresses the user experience gap.
+- It does not risk persona regression.
+- It does not add a new route/mode.
+- It can be A/B tested against the same DRAM/CRCL questions.
+- It preserves KOL caution by making ranges conditional instead of pretending to give guaranteed signals.
+
+What not to do yet:
+
+- Do not publish the new distill candidate.
+- Do not add a separate `trade_decision` mode.
+- Do not introduce more hard-coded ticker-specific logic.
+- Do not rely on persona cleanup alone to fix answer actionability.
+
 ## Current Hypothesis: Actionable Trading Questions
 
 Observed issue: Robindex personas are usually stronger on KOL logic, evidence, and voice, but can under-answer users who ask for immediate execution guidance such as "should I buy today?", "what price should I bid?", "how much position?", or "can it return to the high?"
