@@ -2,6 +2,7 @@ import type { Env } from "./env";
 import { completeChat } from "./chat";
 import type { QueryPlan } from "./query-plan";
 import { EMPTY_PLAN } from "./query-plan";
+import { getEtfHoldings } from "./etf";
 
 export interface QuotedTweet {
   id: string;
@@ -63,6 +64,48 @@ function tokenize(text: string): string[] {
     }
   }
   return Array.from(tokens).slice(0, 80);
+}
+
+const RAW_QUERY_NOISE = new Set([
+  "etf", "stock", "stocks", "fund", "个股", "股票", "基金", "行业", "周期",
+  "现在", "当前", "买入", "值得", "判断", "如何", "怎么", "请区分", "认为",
+]);
+const INSTRUMENT_ANCHOR_NOISE = new Set([
+  ...RAW_QUERY_NOISE,
+  "ai", "科技", "技术", "半导体", "芯片", "市场", "宏观", "流动性", "估值", "风险",
+  "technology", "semiconductor", "market", "macro", "liquidity", "valuation", "risk",
+]);
+
+function deterministicRawAnchors(query: string): string[] {
+  const noisyFragment = /(?:你|我|认为|如何|怎么|现在|当前|是否|值得|买入|能买吗|能买|判断|请|区分|个股|股票|基金|行业|周期)/;
+  const anchors = tokenize(query).filter((term) => {
+    const normalized = term.toLowerCase().replace(/^\$/, "");
+    if (RAW_QUERY_NOISE.has(normalized)) return false;
+    if (/^[a-z]/.test(normalized)) return !["the", "and", "with"].includes(normalized);
+    return !noisyFragment.test(normalized);
+  });
+  return anchors.length ? anchors : tokenize(query);
+}
+
+function explicitTickerTerms(query: string): string[] {
+  return Array.from(query.matchAll(/(?:\$|\b)([A-Z][A-Z0-9.-]{1,8})(?=\b)/g))
+    .map((match) => match[1].toUpperCase())
+    .filter((term) => !["ETF", "FOMC", "PE", "PB", "EPS", "AI"].includes(term));
+}
+
+function instrumentEvidenceTerms(plan: QueryPlan, tickers: string[], query: string): string[] {
+  const terms = [
+    ...tickers,
+    ...plan.exact_entities,
+    ...plan.aliases,
+    ...plan.related_entities.map((item) => item.name),
+    ...plan.concepts,
+    ...explicitTickerTerms(query),
+  ];
+  return Array.from(new Set(terms
+    .map((term) => String(term || "").replace(/^\$/, "").trim().toLowerCase())
+    .filter((term) => term.length >= 2 && !INSTRUMENT_ANCHOR_NOISE.has(term))
+    .filter((term) => !/(?:怎么买|能买吗|买入|卖出|仓位|当前|现在)/.test(term))));
 }
 
 function lexicalScore(text: string, terms: string[]): number {
@@ -317,14 +360,15 @@ async function llmRerank(
   cands: { id: string; date: string; text: string }[],
   keep: number,
   snippetChars = 140
-): Promise<string[]> {
-  if (cands.length <= 1) return cands.map((c) => c.id);
+): Promise<string[] | null> {
+  if (!cands.length) return [];
   const list = cands
     .map((c, i) => `${i}\t(${c.date})\t${String(c.text || "").replace(/\s+/g, " ").slice(0, snippetChars)}`)
     .join("\n");
   const sys =
-    "Select finance-KOL tweets to cite for answering AS that KOL. Prefer exact subject match, the KOL's own view/framework, facet coverage, and concrete mechanisms/data. Penalize tangential recaps, relayed news, near-duplicates, and pure recency.\n" +
-    `Return ONLY a JSON array of the best candidate indices, best first, at most ${keep} items. No markdown.`;
+    "Select finance-KOL tweets that DIRECTLY help answer the question AS that KOL. Prefer exact subject match, the KOL's own view/framework, concrete mechanisms/data, and useful facet coverage. Reject tangential market recaps, generic timing comments, relayed news without a stance, near-duplicates, and pure recency. It is correct to return fewer results or [] when evidence is weak.\n" +
+    "If the exact fund/instrument is absent, a focused post about ONE constituent or ONE industry theme can be valid evidence when its analysis materially informs the fund question. A single-constituent post must contain a real view on fundamentals, demand/supply, cycle, valuation, risk, or an actionable stance. Reject mere name-drops, guesses about what another investor may own, and mentions inside unrelated recaps. When good evidence exists, prefer 3-8 complementary sources over one passing mention.\n" +
+    `Return ONLY a JSON array of relevant candidate indices, best first, at most ${keep} items. No markdown.`;
   const usr =
     `User question: ${question}\n` +
     `Intent: ${plan.intent || "(n/a)"}\n` +
@@ -336,7 +380,7 @@ async function llmRerank(
       { role: "user", content: usr },
     ], { maxTokens: Math.max(120, keep * 7), temperature: 0.1 });
     const arr = JSON.parse(raw.match(/\[[\s\S]*\]/)?.[0] || "[]");
-    if (!Array.isArray(arr)) return [];
+    if (!Array.isArray(arr)) return null;
     const order: string[] = [];
     const seen = new Set<string>();
     for (const x of arr) {
@@ -348,8 +392,22 @@ async function llmRerank(
     }
     return order;
   } catch {
-    return [];
+    return null;
   }
+}
+
+function deterministicRelevantFallback(
+  pool: { r: any; score: number }[],
+  exactRouteIds: Set<string>,
+  keep: number,
+): { r: any; score: number }[] {
+  if (!pool.length) return [];
+  const top = Math.max(0.01, pool[0].score);
+  const floor = Math.max(1.5, top * 0.28);
+  const exact = pool.filter((x) => exactRouteIds.has(String(x.r.id)));
+  const adjacent = pool.filter((x) => !exactRouteIds.has(String(x.r.id)) && x.score >= floor);
+  const base = exact.length ? [...exact, ...adjacent] : adjacent;
+  return base.slice(0, keep);
 }
 
 export function shouldSkipLlmRerank(
@@ -386,10 +444,32 @@ export async function retrieve(
   plan?: QueryPlan,
   rerankModel?: string,
   mode: "query_side" | "tagged" = "query_side",
-  scopeKolId?: string
+  scopeKolId?: string,
+  options: { skipLlmRerank?: boolean } = {},
 ): Promise<{ citations: Citation[]; knowledge: RetrievedKnowledge[] }> {
-  const p: QueryPlan = plan || { ...EMPTY_PLAN, exact_entities: [...tickers] };
-  const allTerms = Array.from(new Set([...flattenPlanTerms(p), ...tickers, ...tokenize(query)]));
+  const basePlan: QueryPlan = plan || { ...EMPTY_PLAN, exact_entities: [...tickers] };
+  const p: QueryPlan = {
+    ...basePlan,
+    instruments: [...basePlan.instruments],
+    exact_entities: [...basePlan.exact_entities],
+    aliases: [...basePlan.aliases],
+    concepts: [...basePlan.concepts],
+    related_entities: [...basePlan.related_entities],
+    required_stances: [...basePlan.required_stances],
+    exclude_topics: [...basePlan.exclude_topics],
+  };
+  // ETF constituents are deterministic retrieval aliases, not model guesses. They let a question about
+  // a new fund retrieve the KOL's real views on its holdings while still rejecting generic "ETF" posts.
+  const explicitSymbols = explicitTickerTerms(query).slice(0, 2);
+  const etfData = await Promise.all(explicitSymbols.map((symbol) => getEtfHoldings(env, symbol).catch(() => null)));
+  const constituentTerms = etfData.flatMap((data) => (data?.holdings || []).slice(0, 15)
+    .flatMap((holding) => [holding.symbol, holding.name]).filter(Boolean));
+  if (constituentTerms.length) p.aliases = Array.from(new Set([...p.aliases, ...constituentTerms]));
+  const plannedTerms = [...flattenPlanTerms(p), ...tickers].filter(Boolean);
+  // Once the planner has produced structured entities/concepts, feeding every raw CJK 2-4 gram into
+  // FTS mostly retrieves generic phrases such as "你认为/现在/能买吗". Raw tokenization is a failure
+  // fallback only, not an additional noisy route.
+  const allTerms = Array.from(new Set(plannedTerms.length ? plannedTerms : deterministicRawAnchors(query)));
   const scope = scopeKolId || kolId; // which KOL's corpus to search (supports a tagged A/B control)
   // The planner is the (LLM) domain expander — it returns concepts incl. jargon (RRP/TGA/SOFR or
   // Starlink/Neutron/代理溢价). We split concepts across routes so the 12-phrase MATCH cap can't drop
@@ -419,13 +499,20 @@ export async function retrieve(
     } else {
       // Default query-side-only: match ONLY the original-text column with the planner's bilingual terms.
       const TEXT_ONLY = [10, 0, 0, 0, 0, 0];
+      // Eval/background callers intentionally skip the online planner. In that case the raw tokenizer
+      // is the fallback plan, so it still needs a real FTS route (not only the 2-char instr safety net).
+      // Raw spans preserve isolated tickers/industry terms near the front: DRAM, 存储, ETF, MU, etc.
+      const rawFallback = plannedTerms.length
+        ? Promise.resolve(new Map<string, number>())
+        : ftsRoute(env, scope, allTerms, TEXT_ONLY, 40, "{text}");
       const routes = await Promise.all([
         ftsRoute(env, scope, [...p.exact_entities, ...p.aliases, ...tickers], TEXT_ONLY, 40, "{text}"),
         ftsRoute(env, scope, concepts1, TEXT_ONLY, 40, "{text}"),
         concepts2.length ? ftsRoute(env, scope, concepts2, TEXT_ONLY, 30, "{text}") : Promise.resolve(new Map<string, number>()),
         ftsRoute(env, scope, [...p.related_entities.map((r) => r.name), ...p.required_stances], TEXT_ONLY, 20, "{text}"),
+        rawFallback,
       ]);
-      exactRouteIds = new Set(routes[0].keys());
+      exactRouteIds = new Set([...routes[0].keys(), ...routes[4].keys()]);
       for (const m of routes) mergeRoute(m);
     }
   } catch (e) {
@@ -501,12 +588,16 @@ export async function retrieve(
   // make). The blend only builds the candidate POOL; the reranker selects + orders the final set. If
   // the reranker fails, we fall back to the blend order (which is FTS-led, so still sensible).
   const isQuick = p.route === "quick" && !p.needs_tools;
-  const POOL = isQuick ? 18 : 30;
-  const KEEP = isQuick ? 14 : 18;
-  const RERANK_SNIPPET = isQuick ? 110 : 140;
+  const POOL = isQuick ? 16 : 26;
+  const KEEP = isQuick ? 8 : 10;
+  const RERANK_SNIPPET = isQuick ? 360 : 500;
   const pool = scored.slice(0, POOL);
-  const order = shouldSkipLlmRerank(pool, exactRouteIds)
-    ? []
+  // Explicit ticker questions must still be semantically judged when the lexical pool is small.
+  // Otherwise a single incidental constituent mention bypasses the reranker and becomes a citation.
+  const skipped = options.skipLlmRerank ||
+    (shouldSkipLlmRerank(pool, exactRouteIds) && explicitTickerTerms(query).length === 0);
+  const order = skipped
+    ? null
     : await llmRerank(
         env,
         rerankModel || env.MODEL_FLASH,
@@ -516,13 +607,39 @@ export async function retrieve(
         KEEP,
         RERANK_SNIPPET
       );
-  if (order.length) {
+  if (order !== null && order.length > 0) {
     const rank = new Map(order.map((id, i) => [id, i]));
-    const inOrder = scored
+    // The reranker is a selector, not just a sorter. Never append rejected candidates back.
+    scored = scored
       .filter((x) => rank.has(String(x.r.id)))
       .sort((a, b) => rank.get(String(a.r.id))! - rank.get(String(b.r.id))!);
-    const rest = scored.filter((x) => !rank.has(String(x.r.id)));
-    scored = [...inOrder, ...rest];
+  } else {
+    scored = deterministicRelevantFallback(pool, exactRouteIds, KEEP);
+  }
+
+  // For an explicit ticker question, a citation must contain the ticker or at least one concrete,
+  // non-generic alias/constituent/industry concept. Do not require two different anchors: a focused
+  // post about one core constituent (for example MU inside DRAM) can be strong evidence by itself.
+  // Generic words such as "ETF" remain excluded, so crypto ETF chatter and "卖飞ETF" jokes still fail.
+  if (explicitTickerTerms(query).length) {
+    const explicitSymbols = explicitTickerTerms(query).map((term) => term.toLowerCase());
+    const evidenceTerms = instrumentEvidenceTerms(p, tickers, query);
+    scored = scored.filter((item) => {
+      const text = rowTextWithQuote(item.r).toLowerCase().replace(/https?:\/\/\S+/g, " ");
+      if (text.replace(/\s+/g, "").length < 80) return false;
+      const matches = evidenceTerms.filter((term) => {
+        if (/^[a-z0-9.$-]+$/i.test(term)) {
+          const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          return new RegExp(`(?:^|[^a-z0-9])${escaped}(?=$|[^a-z0-9])`, "i").test(text);
+        }
+        return text.includes(term);
+      });
+      const directlyNamesTicker = explicitSymbols.some((term) => {
+        const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        return new RegExp(`(?:^|[^a-z0-9])${escaped}(?=$|[^a-z0-9])`, "i").test(text);
+      });
+      return directlyNamesTicker || new Set(matches).size >= 1;
+    });
   }
 
   // Dedup near-identical tweets, cap citations.
@@ -548,7 +665,11 @@ export async function retrieve(
 
 async function retrieveKnowledge(env: Env, kolId: string, terms: string[]): Promise<RetrievedKnowledge[]> {
   const kr = await env.DB.prepare(
-    `SELECT source,title,text FROM knowledge_chunks WHERE kol_id=? LIMIT 120`
+    `SELECT source,title,text FROM knowledge_chunks
+     WHERE kol_id=?
+       AND source NOT LIKE 'persona_backup:%'
+       AND source NOT LIKE 'persona_snapshot:%'
+     LIMIT 120`
   ).bind(kolId).all();
   const scoredKnowledge: { k: any; s: number }[] = [];
   for (const k of (kr.results || []) as any[]) {
@@ -558,12 +679,21 @@ async function retrieveKnowledge(env: Env, kolId: string, terms: string[]): Prom
     if (s > 0.5) scoredKnowledge.push({ k, s });
   }
   scoredKnowledge.sort((a, b) => b.s - a.s);
-  return scoredKnowledge.slice(0, 4).map((x) => ({
-    source: x.k.source,
-    title: x.k.title,
-    text: x.k.text,
-    relevance_score: x.s,
-  }));
+  const out: RetrievedKnowledge[] = [];
+  let remaining = 6000;
+  for (const x of scoredKnowledge.slice(0, 4)) {
+    if (remaining <= 0) break;
+    const text = String(x.k.text || "").slice(0, Math.min(2500, remaining));
+    if (!text) continue;
+    out.push({
+      source: x.k.source,
+      title: x.k.title,
+      text,
+      relevance_score: x.s,
+    });
+    remaining -= text.length;
+  }
+  return out;
 }
 
 // ---------------- Legacy fallback (pre-FTS provisioning) ----------------

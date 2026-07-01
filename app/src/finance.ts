@@ -5,6 +5,10 @@ export interface Quote {
   code: string;       // normalized internal code, e.g. usSOXL
   symbol: string;     // display symbol, e.g. SOXL
   name: string;
+  canonicalName: string;
+  assetType: "equity" | "etf" | "fund" | "index" | "unknown";
+  exchange: string;
+  identitySource: string;
   market: "us" | "hk" | "cn";
   currency: string;
   price: number;
@@ -64,6 +68,30 @@ const num = (s: string | undefined) => {
   return Number.isFinite(n) ? n : 0;
 };
 
+function titleCaseWords(value: string): string {
+  return value.toLowerCase().replace(/\b[a-z]/g, (m) => m.toUpperCase()).replace(/\bEtf\b/g, "ETF");
+}
+
+function canonicalInstrumentName(shortName: string, longName: string, assetType: Quote["assetType"]): string {
+  if (!longName) return shortName;
+  let name = titleCaseWords(longName.trim());
+  if (assetType === "etf") {
+    // Tencent's US long name often exposes the legal trust wrapper rather than the fund's public name:
+    // "Roundhill Etf Trust Memory Etf" -> "Roundhill Memory ETF".
+    name = name.replace(/^(.+?) ETF Trust (.+?) ETF$/i, "$1 $2 ETF");
+  }
+  return name;
+}
+
+function parseAssetType(raw: string, code: string): Quote["assetType"] {
+  const t = String(raw || "").toUpperCase();
+  if (t.includes("ETF")) return "etf";
+  if (t.includes("FUND")) return "fund";
+  if (t.includes("INDEX") || /^us(?:IXIC|INX|DJI)$/i.test(code) || /^hkHSI$/i.test(code)) return "index";
+  if (t) return "equity";
+  return "unknown";
+}
+
 // Parse one `v_<code>="a~b~c~..."` line from qt.gtimg.cn.
 export function parseQuoteLine(code: string, line: string): Quote | null {
   const m = line.match(/="([^"]*)"/);
@@ -76,13 +104,19 @@ export function parseQuoteLine(code: string, line: string): Quote | null {
   const open = num(f[5]);
   const change = prevClose ? price - prevClose : num(f[31]);
   const changePct = prevClose ? (change / prevClose) * 100 : num(f[32]);
+  const assetType = parseAssetType(f[56] || "", code);
+  const canonicalName = canonicalInstrumentName(f[1], f[46] || "", assetType);
   // high/low live at 33/34 for US; for A/HK they are also 33/34 in the long form.
   const high = num(f[33]) || Math.max(price, open);
   const low = num(f[34]) || Math.min(price || open, open || price);
   return {
     code,
     symbol: code.replace(/^us|^hk/, "").replace(/\.\w+$/, ""),
-    name: f[1],
+    name: canonicalName,
+    canonicalName,
+    assetType,
+    exchange: String(f[2] || "").split(".")[1] || market.toUpperCase(),
+    identitySource: f[46] ? "tencent_long_name" : "tencent_short_name",
     market,
     currency: currencyOf(market),
     price,

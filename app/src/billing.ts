@@ -16,24 +16,35 @@ export const PACKS: Record<string, { id: string; cents: number; credits: number;
   max:     { id: "max",     cents: 9990, credits: 65000, label: "Max" },
 };
 
-// Per-KOL monthly subscription. promoCents is the live launch price; gift = credits granted per period.
-export const KOL_PLANS: Record<string, { id: string; name: string; cents: number; promoCents: number; gift: number }> = {
-  qinbafrank:     { id: "qinbafrank",     name: "Qinbafrank", cents: 3990, promoCents: 1990, gift: 2000 },
-  aleabitoreddit: { id: "aleabitoreddit", name: "Serenity",   cents: 3990, promoCents: 1990, gift: 2000 },
-};
-
-// Airwallex recurring Price ids (created once via API in the SYNHEART GROUP LIMITED account,
-// USD 19.90/month). Used by the Hosted Billing Checkout. If you recreate the prices, update these.
-export const AIRWALLEX_PRICES: Record<string, string> = {
-  qinbafrank: "pri_sgpdbtvwkhjpzeoldpt",
-  aleabitoreddit: "pri_sgpdtsnpnhjpzf4j1gy",
-};
-
-export function planFor(kolId: string) {
-  return KOL_PLANS[kolId] || { id: kolId, name: kolId, cents: 3990, promoCents: 1990, gift: 2000 };
+export interface KolPlan {
+  id: string;
+  name: string;
+  cents: number;
+  promoCents: number;
+  gift: number;
+  airwallexPriceId: string | null;
+  enabled: boolean;
 }
-export function subCents(kolId: string, plan: string): number {
-  const p = planFor(kolId);
+
+export async function getKolPlan(env: Env, kolId: string): Promise<KolPlan | null> {
+  const row = await env.DB.prepare(
+    `SELECT id,display_name,subscription_enabled,subscription_price_cents,
+            subscription_promo_cents,subscription_gift,airwallex_price_id
+     FROM kols WHERE id=?`
+  ).bind(kolId).first<any>();
+  if (!row) return null;
+  return {
+    id: row.id,
+    name: row.display_name || row.id,
+    cents: Number(row.subscription_price_cents || 3990),
+    promoCents: Number(row.subscription_promo_cents || 1990),
+    gift: Number(row.subscription_gift || 2000),
+    airwallexPriceId: row.airwallex_price_id || null,
+    enabled: !!row.subscription_enabled,
+  };
+}
+
+export function subCents(p: KolPlan, plan: string): number {
   return plan === "default" ? p.cents : p.promoCents;
 }
 
@@ -139,8 +150,9 @@ export async function activateSubscription(
   env: Env, userId: string, kolId: string, plan: string,
   opts: { provider: string; providerSubId?: string; periodEnd?: number; ref: string }
 ) {
-  const p = planFor(kolId);
-  const cents = subCents(kolId, plan);
+  const p = await getKolPlan(env, kolId);
+  if (!p) throw new Error(`unknown kol ${kolId}`);
+  const cents = subCents(p, plan);
   const now = Date.now();
   const periodEnd = opts.periodEnd || now + 30 * DAY;
   await ensureAccount(env, userId);

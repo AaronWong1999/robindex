@@ -408,7 +408,7 @@ function WalletPage({ onCheckout, onClose, onOpenUsage, mobile }) {
 /* ===================== Subscriptions page ===================== */
 function SubsPage({ kols, onCheckout, onClose, mobile }) {
   const a = useBilling(); const B = window.RXB;
-  const list = Object.keys(B.KOL_PLANS);
+  const list = (kols || []).filter((kol) => kol.subscription?.enabled !== false).map((kol) => kol.id);
   return (
     <div className={"bill-page" + (mobile ? " mob" : "")}>
       <div className="bill-head">

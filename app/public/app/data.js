@@ -97,6 +97,14 @@
     aleabitoreddit: "https://pbs.twimg.com/profile_images/1996176688414367744/LXfA_lIx_400x400.jpg",
   };
 
+  function compactCount(n) {
+    const value = Number(n || 0);
+    if (!value) return "—";
+    if (value >= 1000000) return (value / 1000000).toFixed(value >= 10000000 ? 0 : 1).replace(/\.0$/, "") + "M";
+    if (value >= 1000) return (value / 1000).toFixed(value >= 100000 ? 0 : 1).replace(/\.0$/, "") + "K";
+    return String(value);
+  }
+
   function localizeKol(k, lang) {
     return {
       id: k.id, display_name: k.display_name, handle: k.handle,
@@ -143,24 +151,27 @@
           display_name: bk.display_name || bk.id,
           handle: bk.handle || bk.id,
           avatar_url: bk.avatar_url || AVATAR_URLS[bk.id] || "",
-          accent: enrich.accent || "#3DDC97",
-          role: enrich.role || bk.desc || "",
-          bio: enrich.bio || bk.desc || "",
-          tagline: enrich.tagline || "",
-          thesis: enrich.thesis || "",
-          style: enrich.style || [],
-          corpus: enrich.corpus || { tweets: "—", since: "—", persona: "—" },
-          stats: enrich.stats || { followers: "—", tweets: "—" },
-          suggested: enrich.suggested || { zh: [], en: [] },
+          accent: bk.accent || enrich.accent || "#3DDC97",
+          role: bk.role || enrich.role || bk.desc || "",
+          bio: bk.bio || enrich.bio || bk.desc || "",
+          tagline: bk.tagline || enrich.tagline || "",
+          thesis: bk.thesis || enrich.thesis || "",
+          style: bk.style || enrich.style || [],
+          corpus: bk.corpus || enrich.corpus || { tweets: compactCount(bk.statuses_count), since: "—", persona: "live" },
+          stats: bk.stats || enrich.stats || { followers: compactCount(bk.followers_count), tweets: compactCount(bk.statuses_count) },
+          suggested: bk.suggested || enrich.suggested || { zh: [], en: [] },
+          subscription: bk.subscription || { enabled: false },
         };
       });
+      if (window.RXB && window.RXB.setKolPlans) window.RXB.setKolPlans(_kols);
       _backendReady = true;
     } catch (e) {
       _kols = Object.entries(KOL_ENRICHMENT).map(([id, enrich]) => ({
-        id, display_name: id === "qinbafrank" ? "Qinbafrank" : "Serenity",
+        id, display_name: id === "qinbafrank" ? "Qinbafrank" : id === "aleabitoreddit" ? "Serenity" : id,
         handle: id, avatar_url: AVATAR_URLS[id] || "",
         ...enrich,
       }));
+      if (window.RXB && window.RXB.setKolPlans) window.RXB.setKolPlans(_kols);
       _backendReady = false;
     }
   }
@@ -227,6 +238,9 @@
               onToolCall(parsed);
             } else if (type === "delta") {
               fullText += parsed;
+              onDelta(fullText);
+            } else if (type === "final_answer") {
+              fullText = String(parsed || "");
               onDelta(fullText);
             } else if (type === "consumption") {
               // Server-side billing consumption row written — refresh the billing store so the new
@@ -299,10 +313,10 @@
       const j = await r.json();
       return (j.chats || []).map((c) => ({
         id: c.id,
-        kol: { id: c.kol_id, display_name: c.kol_id, handle: c.kol_id,
-          avatar_url: c.kol_id === "qinbafrank" ? "https://unavatar.io/x/qinbafrank" : "https://pbs.twimg.com/profile_images/1996176688414367744/LXfA_lIx_400x400.jpg",
-          accent: c.kol_id === "qinbafrank" ? "#3DDC97" : "#5B9DFF",
-          role: "", bio: "", tagline: "", thesis: "", style: [], corpus: { tweets: "\u2014", since: "\u2014", persona: "\u2014" }, stats: { followers: "\u2014", tweets: "\u2014" }, suggested: [] },
+        kol: _kols.find((k) => k.id === c.kol_id) || { id: c.kol_id, display_name: c.kol_id, handle: c.kol_id,
+          avatar_url: "", accent: "#6B7280", role: "", bio: "", tagline: "", thesis: "", style: [],
+          corpus: { tweets: "\u2014", since: "\u2014", persona: "\u2014" },
+          stats: { followers: "\u2014", tweets: "\u2014" }, suggested: [] },
         title: c.title || c.kol_id,
         messages: JSON.parse(c.messages_json || "[]"),
         ts: new Date(c.updated_at).getTime() || Date.now(),

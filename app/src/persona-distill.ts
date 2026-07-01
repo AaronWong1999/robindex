@@ -21,7 +21,7 @@ import {
   rankMentalModels,
 } from "./persona-gen";
 
-const DISTILL_PROMPT_VERSION = "representative-selection-v1";
+const DISTILL_PROMPT_VERSION = "topic-coverage-v2";
 
 // ---------- LLM primitive (sets the gateway long-timeout header; reads non-chunked JSON) ----------
 
@@ -116,7 +116,9 @@ function chunkConfig(tweets: Tw[], totalChars: number, explicitMaxChunks?: numbe
   if (tweets.length <= 6000) {
     return { maxChunks: Math.min(24, Math.max(8, Math.ceil(totalChars / 90000))), minChunkChars: 75000 };
   }
-  return { maxChunks: 32, minChunkChars: 60000 };
+  // Do not cap prolific accounts at 32 giant prompts. Keep every map call context-safe and let the
+  // durable driver process as many chunks as the corpus requires.
+  return { maxChunks: Math.max(32, Math.ceil(totalChars / 60000)), minChunkChars: 60000 };
 }
 
 // Split tweets into chronological windows. Default sizing is dynamic: tiny corpora stay in one map call,
@@ -184,7 +186,10 @@ function verifyPartial(pj: PersonaJson, normCorpus: string): PersonaJson {
   if (pj.mental_models?.length) {
     pj.mental_models = pj.mental_models
       .map((m) => {
-        const ev = (m.evidence || []).filter((e) => quoteVerified(e, normCorpus));
+        const rawEvidence = Array.isArray(m.evidence)
+          ? m.evidence
+          : (typeof m.evidence === "string" ? [m.evidence] : []);
+        const ev = rawEvidence.filter((e) => quoteVerified(e, normCorpus));
         return { ...m, evidence: ev };
       })
       .filter((m) => (m.evidence?.length || 0) > 0 || !(m as any)._hadEvidence);
@@ -206,12 +211,14 @@ this batch (you may elide the middle with "..." but each kept fragment must be a
 invent or paraphrase. Only include what THIS batch actually supports.
 
 Schema:
-{ "mental_models":[{"name":"","description":"","evidence":["verbatim quote"],"limitation":""}],
+{ "identity_summary":"broad professional identity covering at least two major domains, never one thesis",
+  "mental_models":[{"name":"","description":"","evidence":["verbatim quote"],"limitation":""}],
   "decision_heuristics":[{"rule":"if X then Y","example":"verbatim or paraphrase"}],
   "expression_dna":{"sentence_style":"","vocabulary":[""],"humor":"","certainty":"","opening_pattern":""},
   "values":[""],"anti_patterns":[""],"tensions":[""],"uncertainty_style":[],
   "track_record":[{"date":"YYYY-MM-DD","call":"","outcome":""}],
   "counter_views":[""],"sector_focus":[""],
+  "topic_coverage":[{"topic":"canonical bilingual topic","aliases":["literal aliases/tickers"],"post_count":0,"chunk_count":1,"recent_count":0,"evidence_ids":["tweet id"],"required":false}],
   "research_routine":[{"trigger":"","needs":[""],"reason":""}],
   "signature_examples":["verbatim short quote"],"signature_example_ids":["tweet id"],
   "analytical_exemplar_ids":["tweet id"] }
@@ -219,6 +226,11 @@ Schema:
 Limits: ≤5 mental_models (≤2 evidence each, each ≤200 chars), ≤6 decision_heuristics, ≤4 track_record
 (only dated calls actually in the batch), ≤4 sector_focus, ≤3 signature_examples, ≤4 research_routine,
 ≤4 analytical_exemplar_ids. Keep it compact.
+
+topic_coverage: include up to 8 materially recurring sectors/instruments/themes in THIS batch.
+post_count is the number of tweets in this batch substantially about the topic; recent_count counts
+tweets in the last 90 days relative to the newest tweet in the batch; evidence_ids must be ids from
+this batch. Include literal ticker/product aliases (e.g. MU, 美光, DRAM, 存储, memory).
 
 For mental_models, add quality when supported:
 {"recurrence":0..1,"distinctiveness":0..1,"actionability":0..1,"evidence_strength":0..1}
@@ -250,6 +262,10 @@ Rules:
 - expression_dna: synthesize the single best-supported profile.
 - values / anti_patterns / tensions / counter_views / sector_focus: union, dedupe,
   keep the ~8 most representative each.
+- identity_summary: synthesize a broad professional identity spanning at least two supported domains;
+  never use one market thesis as the identity.
+- topic_coverage: union topics and aliases, sum post_count/recent_count, count distinct input partials,
+  union valid evidence_ids. Never drop a topic that recurs in multiple partials or is strong recently.
 - uncertainty_style: always return []. If older partials contain honest_boundaries or uncertainty_style,
   drop them. Do NOT paraphrase them into softer style rules or move them to another field.
 - track_record: union, dedupe by date+call, newest first, keep up to 10.
@@ -274,6 +290,7 @@ async function mapChunk(env: Env, chunk: Chunk): Promise<PersonaJson | null> {
   const attempts: Array<{ maxTokens: number; sys: string; temp: number }> = [
     { maxTokens: 4096, sys: MAP_SYSTEM, temp: 0.2 },
     { maxTokens: 6000, sys: MAP_SYSTEM + `\n\nIMPORTANT: output ONLY the JSON object, starting with "{" and ending with "}". Keep it compact (fewer items) so it is COMPLETE and valid.`, temp: 0 },
+    { maxTokens: 4000, sys: MAP_SYSTEM + `\n\nSTRICT COMPACT RETRY: output a COMPLETE JSON object under 2500 tokens. Use at most 3 mental models, 4 heuristics, 5 topic_coverage rows, 2 items in every other list, one short evidence quote per model. Omit optional prose before truncating JSON.`, temp: 0 },
   ];
   for (const a of attempts) {
     const raw = await llmJson(env, env.MODEL_FLASH, [
@@ -325,13 +342,179 @@ async function reducePartials(
     { role: "system", content: sys },
     { role: "user", content: `PARTIAL persona JSONs to merge (${partials.length}):\n${serialized.map((s, i) => `--- partial ${i + 1} ---\n${s}`).join("\n")}` },
   ], { maxTokens, timeoutMs: 480000, temperature: 0.2 });
-  return extractPersonaJson(raw) || partials[0];
+  const parsed = extractPersonaJson(raw);
+  if (parsed) return parsed;
+  const retryRaw = await llmJson(env, env.MODEL_PRO, [
+    {
+      role: "system",
+      content: sys + `\n\nSTRICT RETRY: output a COMPLETE compact JSON object under 2800 tokens. Keep at most 4 mental models, 5 heuristics, 6 topic_coverage rows, and 3 items in other lists. Never truncate JSON.`,
+    },
+    { role: "user", content: `PARTIAL persona JSONs to merge (${partials.length}):\n${serialized.map((s, i) => `--- partial ${i + 1} ---\n${s}`).join("\n")}` },
+  ], { maxTokens: Math.min(maxTokens, 4500), timeoutMs: 360000, temperature: 0 });
+  return extractPersonaJson(retryRaw);
 }
 
 function stripInternal(p: PersonaJson): PersonaJson {
   const c: any = JSON.parse(JSON.stringify(p));
   for (const m of c.mental_models || []) delete m._hadEvidence;
   return c;
+}
+
+function deterministicIntermediateMerge(partials: PersonaJson[], tweets: Tw[]): PersonaJson {
+  const clean = partials.map((partial) => stripInternal(partial));
+  const merged: any = JSON.parse(JSON.stringify(clean[0] || {}));
+  const uniqueStrings = (field: string, limit: number) => {
+    const values = clean.flatMap((partial: any) => Array.isArray(partial[field]) ? partial[field] : []);
+    merged[field] = Array.from(new Set(values.map((value: any) => String(value || "").trim()).filter(Boolean))).slice(0, limit);
+  };
+  const mergeObjects = (field: string, keyOf: (item: any) => string, limit: number) => {
+    const out = new Map<string, any>();
+    for (const item of clean.flatMap((partial: any) => Array.isArray(partial[field]) ? partial[field] : [])) {
+      const key = keyOf(item).toLowerCase().trim();
+      if (!key) continue;
+      if (!out.has(key)) out.set(key, JSON.parse(JSON.stringify(item)));
+    }
+    merged[field] = Array.from(out.values()).slice(0, limit);
+  };
+
+  const identities = Array.from(new Set(clean.map((partial) => String(partial.identity_summary || "").trim()).filter(Boolean)));
+  merged.identity_summary = identities.slice(0, 2).join("；") || merged.identity_summary || "";
+
+  const modelMap = new Map<string, any>();
+  for (const model of clean.flatMap((partial: any) => partial.mental_models || [])) {
+    const key = String(model?.name || model?.description || "").toLowerCase().trim();
+    if (!key) continue;
+    const existing = modelMap.get(key);
+    if (!existing) {
+      modelMap.set(key, JSON.parse(JSON.stringify(model)));
+      continue;
+    }
+    existing.evidence = Array.from(new Set([...(existing.evidence || []), ...(model.evidence || [])])).slice(0, 4);
+  }
+  merged.mental_models = Array.from(modelMap.values()).slice(0, 8);
+  mergeObjects("decision_heuristics", (item) => String(item?.rule || item?.example || ""), 12);
+  mergeObjects("track_record", (item) => `${item?.date || ""}:${item?.call || ""}`, 10);
+  mergeObjects("research_routine", (item) => String(item?.trigger || item?.reason || ""), 6);
+  for (const field of ["values", "anti_patterns", "tensions", "counter_views", "sector_focus", "signature_examples"]) {
+    uniqueStrings(field, field === "signature_examples" ? 6 : 8);
+  }
+  uniqueStrings("analytical_exemplar_ids", 10);
+  uniqueStrings("signature_example_ids", 10);
+  merged.uncertainty_style = [];
+  merged.topic_coverage = mergeTopicCoverage(clean, tweets);
+
+  const dnaCandidates = clean.map((partial: any) => partial.expression_dna).filter(Boolean);
+  if (dnaCandidates.length) {
+    merged.expression_dna = JSON.parse(JSON.stringify(
+      dnaCandidates.sort((a: any, b: any) => (b.vocabulary?.length || 0) - (a.vocabulary?.length || 0))[0],
+    ));
+    merged.expression_dna.vocabulary = Array.from(new Set(
+      dnaCandidates.flatMap((dna: any) => dna.vocabulary || []).map((value: any) => String(value || "").trim()).filter(Boolean),
+    )).slice(0, 16);
+  }
+  return merged as PersonaJson;
+}
+
+type TopicCoverage = NonNullable<PersonaJson["topic_coverage"]>[number];
+
+function topicTokens(topic: Partial<TopicCoverage>): Set<string> {
+  const raw = [topic.topic || "", ...(topic.aliases || [])].join("|").toLowerCase();
+  return new Set(
+    raw.split(/[|/·,，、;；()（）\s]+/)
+      .map((x) => x.replace(/^\$/, "").trim())
+      .filter((x) => x.length >= 2),
+  );
+}
+
+function mergeTopicCoverage(partials: PersonaJson[], tweets: Tw[]): TopicCoverage[] {
+  const validIds = new Set(tweets.map((t) => String(t.id)));
+  const tweetById = new Map(tweets.map((t) => [String(t.id), t]));
+  const newest = Math.max(...tweets.map((t) => Number(t.created_at_ts || 0)), 0);
+  const recentFloor = newest - 90 * 86400;
+  const groups: Array<TopicCoverage & { tokens: Set<string> }> = [];
+
+  for (const partial of partials) {
+    const seenInPartial = new Set<number>();
+    for (const raw of partial.topic_coverage || []) {
+      if (!raw?.topic) continue;
+      const tokens = topicTokens(raw);
+      if (!tokens.size) continue;
+      let idx = groups.findIndex((g) => Array.from(tokens).some((t) => g.tokens.has(t)));
+      if (idx < 0) {
+        groups.push({
+          topic: String(raw.topic).trim(),
+          aliases: [],
+          post_count: 0,
+          chunk_count: 0,
+          recent_count: 0,
+          evidence_ids: [],
+          tokens: new Set<string>(),
+        });
+        idx = groups.length - 1;
+      }
+      const g = groups[idx];
+      for (const t of tokens) g.tokens.add(t);
+      g.aliases = Array.from(new Set([...(g.aliases || []), ...(raw.aliases || []).map(String)])).slice(0, 12);
+      g.post_count += Math.max(0, Number(raw.post_count || 0));
+      g.recent_count += Math.max(0, Number(raw.recent_count || 0));
+      if (!seenInPartial.has(idx)) {
+        g.chunk_count += Math.max(1, Number(raw.chunk_count || 1));
+        seenInPartial.add(idx);
+      }
+      for (const id of raw.evidence_ids || []) {
+        const sid = String(id);
+        if (validIds.has(sid) && !g.evidence_ids.includes(sid)) g.evidence_ids.push(sid);
+      }
+    }
+  }
+
+  return groups
+    .map((g) => {
+      const recentEvidence = g.evidence_ids.filter((id) => Number(tweetById.get(id)?.created_at_ts || 0) >= recentFloor).length;
+      const recentCount = Math.max(recentEvidence, Number(g.recent_count || 0));
+      const required = g.chunk_count >= 2 || g.post_count >= 8 || recentCount >= 3;
+      const { tokens: _tokens, ...clean } = g;
+      return { ...clean, recent_count: recentCount, evidence_ids: clean.evidence_ids.slice(0, 10), required };
+    })
+    .sort((a, b) =>
+      Number(b.required) - Number(a.required) ||
+      b.recent_count - a.recent_count ||
+      b.chunk_count - a.chunk_count ||
+      b.post_count - a.post_count
+    )
+    .slice(0, 16);
+}
+
+function applyDeterministicCoverage(merged: PersonaJson, partials: PersonaJson[], tweets: Tw[]): void {
+  const coverage = mergeTopicCoverage(partials, tweets);
+  merged.topic_coverage = coverage;
+  const requiredTopics = coverage.filter((t) => t.required).map((t) => t.topic);
+  merged.sector_focus = Array.from(new Set([...(merged.sector_focus || []), ...requiredTopics])).slice(0, 12);
+  if (!merged.identity_summary || merged.identity_summary.length < 30 || !/[·,/，、]| and | covering /i.test(merged.identity_summary)) {
+    const domains = merged.sector_focus.slice(0, 4);
+    if (domains.length >= 2) merged.identity_summary = `Multi-asset finance researcher covering ${domains.join(", ")}`;
+  }
+}
+
+export function personaCoverageGate(pj: PersonaJson, pack?: string): {
+  ok: boolean;
+  required: string[];
+  missing: string[];
+  identity_ok: boolean;
+} {
+  const requiredRows = (pj.topic_coverage || []).filter((t) => t.required).slice(0, 8);
+  const required = requiredRows.map((t) => t.topic);
+  const haystack = `${(pj.sector_focus || []).join(" ")}\n${pack || ""}`.toLowerCase();
+  const missing = requiredRows.flatMap((row) => {
+    const topicPresent = haystack.includes(row.topic.toLowerCase());
+    const aliases = (row.aliases || []).filter(Boolean).slice(0, 8);
+    const aliasHits = aliases.filter((term) => haystack.includes(String(term).toLowerCase())).length;
+    const aliasesOk = aliases.length === 0 || aliasHits >= Math.min(6, aliases.length);
+    return topicPresent && aliasesOk ? [] : [`${row.topic}${aliasesOk ? "" : ":aliases"}`];
+  });
+  const identity = String(pj.identity_summary || "");
+  const identityOk = identity.length >= 30 && (/[·,/，、]/.test(identity) || /\band\b|\bcovering\b/i.test(identity));
+  return { ok: missing.length === 0 && identityOk && required.length >= 2, required, missing, identity_ok: identityOk };
 }
 
 // ---------- analytical_exemplars: verbatim tweet selection (zero hallucination risk) ----------
@@ -514,6 +697,9 @@ export async function mapStage(
   const tweets = await loadAllTweets(env, kolId);
   if (tweets.length < 20) throw new Error(`Not enough tweets (${tweets.length}) for ${kolId}`);
   const chunks = chunkTweets(tweets, opts.maxChunks);
+  if (chunks.length > 96) {
+    throw new Error(`Corpus requires ${chunks.length} map chunks; automatic budget is 96`);
+  }
   const hash = corpusHash(tweets);
 
   const existing = await env.DB.prepare(
@@ -557,24 +743,49 @@ async function loadChunkPartials(env: Env, kolId: string): Promise<{ partials: P
 // intermediate, persisted as kind='reduce_l1'. Driver calls group 0..groups-1, each well under the edge
 // timeout (a single pro call). This is what makes a 32-chunk reduce fit Cloudflare's request limit.
 export async function reduceGroup(env: Env, kolId: string, groupIdx: number): Promise<{ group: number; groups: number; ok: boolean }> {
-  const { partials, hash } = await loadChunkPartials(env, kolId);
+  return reduceGroupLevel(env, kolId, 1, groupIdx);
+}
+
+export async function reduceGroupLevel(
+  env: Env,
+  kolId: string,
+  targetLevel: number,
+  groupIdx: number,
+): Promise<{ group: number; groups: number; ok: boolean }> {
+  const level = Math.max(1, Math.floor(targetLevel));
+  const { hash, tweets } = await loadChunkPartials(env, kolId);
+  const sourceKind = level === 1 ? "chunk" : `reduce_l${level - 1}`;
+  const rows = await env.DB.prepare(
+    `SELECT json FROM persona_facts WHERE kol_id=? AND kind=? AND corpus_hash=? ORDER BY chunk_idx ASC`
+  ).bind(kolId, sourceKind, hash).all();
+  const partials: PersonaJson[] = [];
+  for (const row of (rows.results || []) as any[]) {
+    try { partials.push(JSON.parse(row.json)); } catch {}
+  }
   if (!partials.length) throw new Error(`No mapped chunks for ${kolId} — run mapStage first`);
   const groups = Math.ceil(partials.length / REDUCE_GROUP_SIZE);
   if (groupIdx < 0 || groupIdx >= groups) return { group: groupIdx, groups, ok: false };
   // Idempotent: if this group's intermediate already exists for the current corpus, skip the pro call.
-  const have = await env.DB.prepare(`SELECT 1 FROM persona_facts WHERE id=?`).bind(`${kolId}:reduce_l1:${groupIdx}:${hash}`).first();
+  const targetKind = `reduce_l${level}`;
+  const id = `${kolId}:${targetKind}:${groupIdx}:${hash}`;
+  const have = await env.DB.prepare(`SELECT 1 FROM persona_facts WHERE id=?`).bind(id).first();
   if (have) return { group: groupIdx, groups, ok: true };
   const slice = partials.slice(groupIdx * REDUCE_GROUP_SIZE, (groupIdx + 1) * REDUCE_GROUP_SIZE);
   // Low output cap is critical: a pro reduce emitting N tokens takes ~N/65 s, and the Worker has a hard
   // ~100s execution limit. 4000 tokens (~60s) leaves margin; a 4-partial merge fits easily.
-  const merged = await reducePartials(env, slice, 4000, true);
-  if (merged) {
-    await env.DB.prepare(
-      `INSERT OR REPLACE INTO persona_facts (id,kol_id,kind,chunk_idx,corpus_hash,json,tweets_covered,date_min,date_max,updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))`
-    ).bind(`${kolId}:reduce_l1:${groupIdx}:${hash}`, kolId, "reduce_l1", groupIdx, hash, JSON.stringify(stripInternal(merged)), null, null, null).run();
-  }
-  return { group: groupIdx, groups, ok: !!merged };
+  const reduced = await reducePartials(env, slice, 4000, true);
+  const collapsed = reduced && slice.length > 1 && slice.some((partial) =>
+    JSON.stringify(stripInternal(reduced)) === JSON.stringify(stripInternal(partial))
+  );
+  // Some provider responses collapse to one input partial repeatedly. A structured deterministic union
+  // is safer than spinning forever or publishing a one-chunk persona; the final reduce still performs
+  // the cross-group synthesis and the coverage/eval gates remain unchanged.
+  const merged = reduced && !collapsed ? reduced : deterministicIntermediateMerge(slice, tweets);
+  await env.DB.prepare(
+    `INSERT OR REPLACE INTO persona_facts (id,kol_id,kind,chunk_idx,corpus_hash,json,tweets_covered,date_min,date_max,updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))`
+  ).bind(id, kolId, targetKind, groupIdx, hash, JSON.stringify(stripInternal(merged)), null, null, null).run();
+  return { group: groupIdx, groups, ok: true };
 }
 
 // REDUCE — FINAL: merge the level-1 intermediates into the consolidated persona, verify against the full
@@ -627,25 +838,36 @@ export async function reduceFinalDraft(env: Env, kolId: string): Promise<{ ok: b
   // matches the groups by construction (no dependency on hashing large tweet ids identically across read
   // paths) and stays LLM-only (no full-corpus load), keeping this step well under the ~100s limit.
   const latest = await env.DB.prepare(
-    `SELECT corpus_hash FROM persona_facts WHERE kol_id=? AND kind='reduce_l1' ORDER BY updated_at DESC, chunk_idx DESC LIMIT 1`
+    `SELECT corpus_hash FROM persona_facts
+     WHERE kol_id=? AND kind LIKE 'reduce_l%' ORDER BY updated_at DESC,chunk_idx DESC LIMIT 1`
   ).bind(kolId).first<any>();
   const hash = latest?.corpus_hash;
   if (!hash) throw new Error(`No reduce_l1 groups for ${kolId} — run reduceGroup first`);
-  const rows = await env.DB.prepare(
-    `SELECT json FROM persona_facts WHERE kol_id=? AND kind='reduce_l1' AND corpus_hash=? ORDER BY chunk_idx ASC`
+  const kinds = await env.DB.prepare(
+    `SELECT DISTINCT kind FROM persona_facts WHERE kol_id=? AND kind LIKE 'reduce_l%' AND corpus_hash=?`
   ).bind(kolId, hash).all();
+  const highestLevel = Math.max(...((kinds.results || []) as any[])
+    .map((row) => Number(String(row.kind || "").match(/^reduce_l(\d+)$/)?.[1] || 0)));
+  const finalKind = `reduce_l${Math.max(1, highestLevel)}`;
+  const rows = await env.DB.prepare(
+    `SELECT json FROM persona_facts WHERE kol_id=? AND kind=? AND corpus_hash=? ORDER BY chunk_idx ASC`
+  ).bind(kolId, finalKind, hash).all();
   const l1: PersonaJson[] = [];
   for (const r of (rows.results || []) as any[]) { try { l1.push(JSON.parse(r.json)); } catch {} }
   if (!l1.length) throw new Error(`No reduce_l1 groups for ${kolId} — run reduceGroup first`);
   // finalLimits=true bounds the output so it finishes naturally and parses; cap 8000 is generous headroom
   // (a bounded merge lands ~3k tokens). A truncated merge would silently fall back to a single partial.
-  const merged = await reducePartials(env, l1, 8000, false, true);
-  if (!merged) throw new Error(`Final reduce failed for ${kolId}`);
+  const llmMerged = await reducePartials(env, l1, 8000, false, true);
+  const collapsed = llmMerged && l1.length > 1 && l1.some((partial) =>
+    JSON.stringify(stripInternal(llmMerged)) === JSON.stringify(stripInternal(partial))
+  );
+  // The deterministic union is a candidate, never an automatic publication. Coverage and full eval
+  // still decide whether it can go live, but a malformed provider response cannot strand the job.
+  const merged = llmMerged && !collapsed
+    ? llmMerged
+    : deterministicIntermediateMerge(l1, await loadAllTweets(env, kolId));
   // Guard: reducePartials returns partials[0] on parse failure. If the merge didn't actually consolidate
   // (result === first partial), treat it as a failure rather than persisting a degraded single-group pack.
-  if (l1.length > 1 && JSON.stringify(stripInternal(merged)) === JSON.stringify(stripInternal(l1[0]))) {
-    throw new Error(`Final reduce produced no merge (fell back to a single partial) for ${kolId}`);
-  }
   await env.DB.prepare(
     `INSERT OR REPLACE INTO persona_facts (id,kol_id,kind,chunk_idx,corpus_hash,json,tweets_covered,date_min,date_max,updated_at)
      VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))`
@@ -659,22 +881,33 @@ export async function reduceFinalDraft(env: Env, kolId: string): Promise<{ ok: b
 export async function finalizeMerged(env: Env, kolId: string): Promise<DistillResult> {
   const kol = await env.DB.prepare(`SELECT id,display_name,handle,tagline FROM kols WHERE id=?`).bind(kolId).first<any>();
   if (!kol) throw new Error(`KOL not found: ${kolId}`);
-  const draft = await env.DB.prepare(`SELECT json FROM persona_facts WHERE id=?`).bind(`${kolId}:merged_draft`).first<any>();
+  const draft = await env.DB.prepare(`SELECT json,corpus_hash FROM persona_facts WHERE id=?`).bind(`${kolId}:merged_draft`).first<any>();
   if (!draft?.json) throw new Error(`No merged_draft for ${kolId} — run reduceFinalDraft first`);
   let merged: PersonaJson = JSON.parse(draft.json);
 
   const tweets = await loadAllTweets(env, kolId);
   const normFull = normWs(tweets.map((t) => t.text).join("\n"));
   merged = verifyPartial(merged, normFull);
+  const chunkRows = await env.DB.prepare(
+    `SELECT json FROM persona_facts WHERE kol_id=? AND kind='chunk' AND corpus_hash=? ORDER BY chunk_idx`
+  ).bind(kolId, draft.corpus_hash).all();
+  const chunkPartials: PersonaJson[] = [];
+  for (const row of (chunkRows.results || []) as any[]) {
+    try { chunkPartials.push(JSON.parse(row.json)); } catch {}
+  }
+  applyDeterministicCoverage(merged, chunkPartials, tweets);
   finalizePersonaJson(merged, tweets);
-  await saveMerged(env, kolId, merged, tweets);
 
   const pack = buildMarkdown(kol, merged);
+  const coverage = personaCoverageGate(merged, pack);
   const mm = merged.mental_models?.length || 0;
   const validation = [
     `INFO: map-reduce final over ${tweets.length} tweets → merged (verified, exemplars attached)`,
     mm >= 3 ? `PASS: ${mm} mental models` : `WARN: only ${mm} mental models`,
     `INFO: ${merged.analytical_exemplars?.length || 0} verbatim exemplars, ${merged.track_record?.length || 0} track-record items`,
+    coverage.ok
+      ? `PASS: topic coverage ${coverage.required.length}/${coverage.required.length}`
+      : `FAIL: topic coverage missing=${coverage.missing.join(",") || "none"} identity_ok=${coverage.identity_ok}`,
   ];
   return {
     persona_pack: pack, persona_json: merged, validation,
@@ -692,8 +925,8 @@ export async function reduceStage(env: Env, kolId: string): Promise<DistillResul
   if (!merged) throw new Error(`Reduce stage failed for ${kolId}`);
   const normFull = normWs(tweets.map((t) => t.text).join("\n"));
   merged = verifyPartial(merged, normFull);
+  applyDeterministicCoverage(merged, partials, tweets);
   finalizePersonaJson(merged, tweets);
-  await saveMerged(env, kolId, merged, tweets);
   const pack = buildMarkdown(kol, merged);
   const validation = await validatePersona(env, kol, merged, tweets);
   validation.unshift(`INFO: map-reduce over ${tweets.length} tweets, ${partials.length} chunk partials merged`);
@@ -790,6 +1023,8 @@ export async function distillPersonaIncremental(
   // recent ones for currency.
   const normFresh = normWs(fresh.map((t) => t.text).join("\n"));
   merged = verifyPartial(merged, normFresh.length > 200 ? normFresh + normWs(JSON.stringify(prior)) : normWs(JSON.stringify(prior)));
+  const allTweets = await loadAllTweets(env, kolId);
+  applyDeterministicCoverage(merged, [prior, ...newPartials], allTweets);
   const freshExemplars = selectExemplars(fresh, 2);
   merged.analytical_exemplars = Array.from(new Set([...freshExemplars, ...(prior.analytical_exemplars || [])])).slice(0, 5);
   rankMentalModels(merged, 8);
@@ -798,9 +1033,6 @@ export async function distillPersonaIncremental(
   // fresh tweets, but the merged JSON still represents prior facts + fresh partials, so auditing fields
   // such as tweets_covered/date_min/date_max must reflect the complete corpus rather than this week's
   // slice.
-  const allTweets = await loadAllTweets(env, kolId);
-  await saveMerged(env, kolId, merged, allTweets);
-
   const pack = buildMarkdown(kol, merged);
   const validation = await validatePersona(env, kol, merged, fresh);
   validation.unshift(`INFO: incremental reduce of ${fresh.length} new tweets in ${chunks.length} chunk(s)`);

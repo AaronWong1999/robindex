@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <meta name="referrer" content="no-referrer">
+  <title>Robindex · 新增 KOL</title>
+  <link rel="stylesheet" href="/onboard.css">
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <span class="eyebrow">ROBINDEX · PRIVATE LAB</span>
+      <h1>新增一个 KOL 分身</h1>
+      <p>粘贴 X/Twitter 主页。抓取、索引、蒸馏、评测和上线全部由 Cloudflare 后台完成。</p>
+    </header>
+
+    <section class="submit-card">
+      <form id="submit-form">
+        <label for="kol-url">X/Twitter 主页</label>
+        <div class="submit-row">
+          <input id="kol-url" name="url" autocomplete="off" spellcheck="false"
+                 placeholder="https://x.com/wufantouzi" required>
+          <button id="submit-button" type="submit">开始创建</button>
+        </div>
+        <p class="hint">也可输入 @handle。重复提交不会重复抓取或创建订阅产品。</p>
+        <p id="form-error" class="error" hidden></p>
+      </form>
+    </section>
+
+    <section class="jobs-head">
+      <div>
+        <span class="eyebrow">PIPELINE</span>
+        <h2>创建任务</h2>
+      </div>
+      <button id="refresh-button" class="ghost" type="button">刷新</button>
+    </section>
+    <div id="empty" class="empty">还没有任务。</div>
+    <div id="jobs" class="jobs"></div>
+  </main>
+  <script src="/onboard.js" defer></script>
+</body>
+</html>

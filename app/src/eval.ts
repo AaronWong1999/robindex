@@ -20,8 +20,8 @@ import { logPersonaExperiment } from "./persona-gen";
 // Eval responses are about voice/citation/stance, not live prices — no market data is fetched.
 const EMPTY_MARKET: MarketData = { quotes: [], benchmarks: [], klineText: "", primary: null, news: [], extraContext: "" };
 
-// Match the citation syntax used in chat (index.ts:497): [T1] / 【T1】, tolerant of inner spaces.
-const CITE_RE = /(?:\[|【)\s*(T\d+)\s*(?:\]|】)/g;
+// Chat presents pure numeric [1] while prompt sources use [T1]. Accept both and normalize to T refs.
+const CITE_RE = /(?:\[|【)\s*T?(\d+)\s*(?:\]|】)/gi;
 
 // Composite passing thresholds. Citation is the absolute gate; voice/stance are loose floors.
 const TH_CITATION = 0.7;
@@ -62,6 +62,49 @@ function parseScoreObject(raw: string): Record<string, number> {
   return out;
 }
 
+function parseKeyedScores(raw: string, ids: string[]): Record<string, number> {
+  let value: any = {};
+  try {
+    value = JSON.parse(raw.replace(/```json?\n?/g, "").replace(/```/g, "").trim());
+  } catch {
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (match) { try { value = JSON.parse(match[0]); } catch {} }
+    if (!value || !Object.keys(value).length) {
+      const arrayMatch = raw.match(/\[[\s\S]*\]/);
+      if (arrayMatch) { try { value = JSON.parse(arrayMatch[0]); } catch {} }
+    }
+  }
+  const rows = Array.isArray(value) ? value : (Array.isArray(value?.scores) ? value.scores : []);
+  const rowMap = new Map(rows
+    .filter((row: any) => row && typeof row === "object")
+    .map((row: any) => [String(row?.id || "").trim(), row]));
+  const obj = (!Array.isArray(value) && value && typeof value === "object") ? value : {};
+  const scoreFrom = (candidate: any): number | null => {
+    if (typeof candidate === "number") return Math.max(0, Math.min(1, candidate));
+    if (typeof candidate === "string") return parseScore(candidate);
+    if (!candidate || typeof candidate !== "object") return null;
+    for (const key of ["score", "value", "voice", "voice_score", "stance", "stance_score"]) {
+      const score = scoreFrom(candidate[key]);
+      if (score !== null) return score;
+    }
+    for (const [key, nested] of Object.entries(candidate)) {
+      if (key === "id" || key === "reason" || key === "comment") continue;
+      const score = scoreFrom(nested);
+      if (score !== null) return score;
+    }
+    return null;
+  };
+  const out: Record<string, number> = {};
+  for (const [index, id] of ids.entries()) {
+    const rawScore = rowMap.has(id) ? rowMap.get(id) :
+      (Array.isArray(value) && typeof value[index] !== "object" ? value[index] :
+      obj[id]);
+    const score = scoreFrom(rawScore);
+    out[id] = score === null ? 0 : score;
+  }
+  return out;
+}
+
 // Extract the "## Expression DNA" block from a persona pack (the voice fingerprint the judge scores against).
 function extractExpressionDna(pack: string): string {
   const m = pack.match(/##\s*Expression DNA[\s\S]*?(?=\n##\s|\n*$)/i);
@@ -72,6 +115,86 @@ interface EvalDraft {
   ec: any;
   response: string;
   scoreCitation: number;
+  citations?: any[];
+}
+
+async function completeJudge(
+  env: Env,
+  messages: { role: string; content: string }[],
+  expectedIds: string[],
+  maxTokens: number,
+): Promise<string> {
+  let raw = "";
+  for (let attempt = 0; attempt < 2; attempt++) {
+    raw = await completeChat(env, env.MODEL_FLASH, messages, {
+      maxTokens,
+      temperature: 0,
+      timeoutMs: 60000,
+    });
+    if (raw.trim() && expectedIds.some((id) => raw.includes(id))) return raw;
+    if (attempt < 1) await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  return raw;
+}
+
+async function judgeCitationQualityBatch(
+  env: Env,
+  drafts: EvalDraft[],
+): Promise<Record<string, { relevance: number; entailment: number }>> {
+  const out: Record<string, { relevance: number; entailment: number }> = {};
+  const BATCH = 4;
+  for (let i = 0; i < drafts.length; i += BATCH) {
+    const batch = drafts.slice(i, i + BATCH);
+    const withRefs = batch.filter((d) => Array.from(d.response.matchAll(CITE_RE)).length > 0);
+    const aliases = new Map(withRefs.map((d, index) => [d.ec.id, `c${index + 1}`]));
+    for (const d of batch) {
+      if (!withRefs.includes(d)) out[d.ec.id] = { relevance: 1, entailment: 1 };
+    }
+    if (!withRefs.length) continue;
+    const raw = await completeJudge(env, [
+      {
+        role: "system",
+        content:
+          `Judge citation quality. Output ONLY one JSON object keyed by the exact case id: {"case-id":{"relevance":0.0,"entailment":0.0}}. ` +
+          `relevance=how directly the supplied sources address the question/answer; entailment=whether each cited source actually supports the claim carrying its number. Penalize unused/tangential source stuffing and unsupported claims. Score 0..1.`,
+      },
+      {
+        role: "user",
+        content: withRefs.map((d) =>
+          `ID: ${aliases.get(d.ec.id)}\nQUESTION: ${d.ec.question || ""}\nANSWER:\n${d.response.slice(0, 1800)}\nCITED SOURCES:\n` +
+          (() => {
+            const refs = new Set(Array.from(d.response.matchAll(CITE_RE)).map((m) => `T${m[1]}`));
+            return (d.citations || [])
+              .filter((c) => refs.has(String(c.ref || "")))
+              .map((c) => `[${String(c.ref || "").replace(/^T/, "")}] ${String(c.snippet || "").slice(0, 600)}`)
+              .join("\n");
+          })()
+        ).join("\n\n---\n\n"),
+      },
+    ], Array.from(aliases.values()), Math.max(180, batch.length * 60));
+    let parsed: any = {};
+    try {
+      parsed = JSON.parse(raw.replace(/```json?\n?/g, "").replace(/```/g, "").trim());
+    } catch {
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (match) { try { parsed = JSON.parse(match[0]); } catch {} }
+      if (!parsed || !Object.keys(parsed).length) {
+        const arrayMatch = raw.match(/\[[\s\S]*\]/);
+        if (arrayMatch) { try { parsed = JSON.parse(arrayMatch[0]); } catch {} }
+      }
+    }
+    const rows = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.scores) ? parsed.scores : []);
+    const rowMap = new Map(rows.map((row: any) => [String(row?.id || "").trim(), row]));
+    for (const d of withRefs) {
+      const alias = aliases.get(d.ec.id) || "";
+      const row = rowMap.get(alias) || parsed?.[alias] || {};
+      out[d.ec.id] = {
+        relevance: Math.max(0, Math.min(1, Number(row.relevance) || 0)),
+        entailment: Math.max(0, Math.min(1, Number(row.entailment) || 0)),
+      };
+    }
+  }
+  return out;
 }
 
 async function judgeVoiceBatch(env: Env, dna: string, drafts: EvalDraft[]): Promise<Record<string, number>> {
@@ -79,23 +202,24 @@ async function judgeVoiceBatch(env: Env, dna: string, drafts: EvalDraft[]): Prom
   const BATCH = 6;
   for (let i = 0; i < drafts.length; i += BATCH) {
     const batch = drafts.slice(i, i + BATCH);
-    const raw = await completeChat(env, env.MODEL_FLASH, [
+    const aliases = new Map(batch.map((d, index) => [d.ec.id, `c${index + 1}`]));
+    const raw = await completeJudge(env, [
       {
         role: "system",
         content:
           `You judge whether replies match a finance KOL's documented voice. Given the Expression DNA and ` +
-          `several replies, output ONLY a JSON array: [{"id":"...","score":0.0}]. Score 0..1 = average ` +
+          `several replies, output ONLY a JSON object keyed by exact ID: {"case-id":0.0}. Score 0..1 = average ` +
           `agreement across sentence style, vocabulary, humor, certainty, opening pattern. No commentary.`,
       },
       {
         role: "user",
         content:
           `Expression DNA:\n${dna}\n\nReplies:\n` +
-          batch.map((d) => `ID: ${d.ec.id}\n${d.response.slice(0, 1500)}`).join("\n\n---\n\n"),
+          batch.map((d) => `ID: ${aliases.get(d.ec.id)}\n${d.response.slice(0, 1500)}`).join("\n\n---\n\n"),
       },
-    ], { maxTokens: Math.max(120, batch.length * 32), temperature: 0 });
-    const parsed = parseScoreObject(raw);
-    for (const d of batch) out[d.ec.id] = parsed[d.ec.id] ?? 0;
+    ], Array.from(aliases.values()), Math.max(180, batch.length * 64));
+    const parsed = parseKeyedScores(raw, Array.from(aliases.values()));
+    for (const d of batch) out[d.ec.id] = parsed[aliases.get(d.ec.id) || ""] ?? 0;
   }
   return out;
 }
@@ -106,24 +230,91 @@ async function judgeStanceBatch(env: Env, drafts: EvalDraft[]): Promise<Record<s
   const BATCH = 6;
   for (let i = 0; i < withStance.length; i += BATCH) {
     const batch = withStance.slice(i, i + BATCH);
-    const raw = await completeChat(env, env.MODEL_FLASH, [
+    const aliases = new Map(batch.map((d, index) => [d.ec.id, `c${index + 1}`]));
+    const raw = await completeJudge(env, [
       {
         role: "system",
         content:
-          `Output ONLY a JSON array: [{"id":"...","score":0.0}]. For each item, score 0..1: how well ` +
+          `Output ONLY a JSON object keyed by exact ID: {"case-id":0.0}. For each item, score 0..1: how well ` +
           `does the reply's directional stance agree with EXPECTED? 1=same direction & subject, 0=opposite. No commentary.`,
       },
       {
         role: "user",
         content: batch.map((d) =>
-          `ID: ${d.ec.id}\nEXPECTED: ${d.ec.expected_stance}\nREPLY:\n${d.response.slice(0, 1200)}`
+          `ID: ${aliases.get(d.ec.id)}\nEXPECTED: ${d.ec.expected_stance}\nREPLY:\n${d.response.slice(0, 1200)}`
         ).join("\n\n---\n\n"),
       },
-    ], { maxTokens: Math.max(120, batch.length * 32), temperature: 0 });
-    const parsed = parseScoreObject(raw);
-    for (const d of batch) out[d.ec.id] = parsed[d.ec.id] ?? 0;
+    ], Array.from(aliases.values()), Math.max(180, batch.length * 64));
+    const parsed = parseKeyedScores(raw, Array.from(aliases.values()));
+    for (const d of batch) out[d.ec.id] = parsed[aliases.get(d.ec.id) || ""] ?? 0;
   }
   return out;
+}
+
+interface CombinedJudgeScore {
+  voice: number;
+  stance: number | null;
+  relevance: number;
+  entailment: number;
+  reason: string;
+}
+
+async function judgeQualityBatch(
+  env: Env,
+  dna: string,
+  drafts: EvalDraft[],
+): Promise<{ scores: Record<string, CombinedJudgeScore>; raw: string }> {
+  if (!drafts.length) return { scores: {}, raw: "{}" };
+  const aliases = new Map(drafts.map((d, index) => [d.ec.id, `c${index + 1}`]));
+  const raw = await completeJudge(env, [
+    {
+      role: "system",
+      content:
+        `Audit finance-KOL answers. Return ONLY JSON keyed by the supplied id. Each value must be ` +
+        `{"voice":0.0,"stance":null,"relevance":0.0,"entailment":0.0,"reason":"short evidence-based reason"}. ` +
+        `voice=match to Expression DNA; relevance=answer and cited sources directly address the question; ` +
+        `entailment=cited sources support the claims carrying their citation numbers. ` +
+        `Only score stance when EXPECTED STANCE is present; otherwise return null. ` +
+        `Do not reward confident unsupported detail. Scores are 0..1.`,
+    },
+    {
+      role: "user",
+      content:
+        `EXPRESSION DNA:\n${dna.slice(0, 2500)}\n\n` +
+        drafts.map((d) => {
+          const refs = new Set(Array.from(d.response.matchAll(CITE_RE)).map((m) => `T${m[1]}`));
+          const sources = (d.citations || [])
+            .filter((c) => refs.has(String(c.ref || "")))
+            .map((c) => `[${String(c.ref || "").replace(/^T/, "")}] ${String(c.snippet || "").slice(0, 500)}`)
+            .join("\n");
+          return `ID: ${aliases.get(d.ec.id)}\nQUESTION: ${d.ec.question || ""}\n` +
+            `EXPECTED STANCE: ${d.ec.expected_stance || "(none)"}\nANSWER:\n${d.response.slice(0, 1800)}\n` +
+            `CITED SOURCES:\n${sources || "(none)"}`;
+        }).join("\n\n---\n\n"),
+    },
+  ], Array.from(aliases.values()), Math.max(300, drafts.length * 180));
+
+  let parsed: any = {};
+  try {
+    parsed = JSON.parse(raw.replace(/```json?\n?/g, "").replace(/```/g, "").trim());
+  } catch {
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (match) { try { parsed = JSON.parse(match[0]); } catch {} }
+  }
+  const scores: Record<string, CombinedJudgeScore> = {};
+  for (const d of drafts) {
+    const alias = aliases.get(d.ec.id) || "";
+    const row = parsed?.[alias] || {};
+    const bounded = (value: any) => Math.max(0, Math.min(1, Number(value) || 0));
+    scores[d.ec.id] = {
+      voice: bounded(row.voice),
+      stance: d.ec.expected_stance ? bounded(row.stance) : null,
+      relevance: bounded(row.relevance),
+      entailment: bounded(row.entailment),
+      reason: String(row.reason || "").slice(0, 500),
+    };
+  }
+  return { scores, raw };
 }
 
 // ---------- buildEvalSet: mine a golden set from the KOL's own corpus ----------
@@ -133,8 +324,10 @@ export async function buildEvalSet(
   kolId: string,
   opts: { realQa?: number; synth?: number } = {},
 ): Promise<{ built: number; real_qa: number; synth_follower: number }> {
-  const realTarget = opts.realQa ?? 24;
-  const synthTarget = opts.synth ?? 14;
+  // Keep the release gate compact. A focused 12-case audit is substantially more useful than the
+  // previous 39-case grab bag and costs a fraction as much to rerun.
+  const realTarget = opts.realQa ?? 8;
+  const synthTarget = opts.synth ?? 4;
 
   const kol = await env.DB.prepare(`SELECT id,display_name,handle,tagline,persona_pack FROM kols WHERE id=?`)
     .bind(kolId).first<KolRow>();
@@ -146,8 +339,12 @@ export async function buildEvalSet(
     `SELECT id, text FROM tweets
      WHERE kol_id=? AND is_retweet=0 AND length(text)>=80
      ORDER BY (likes + retweets * 2) DESC LIMIT ?`
-  ).bind(kolId, realTarget * 2).all();
-  const tweets = ((r.results || []) as any[]).slice(0, realTarget * 2);
+  ).bind(kolId, 200).all();
+  const financeTweet = (text: string) =>
+    /(?:\$[A-Z]{1,6}\b|\b[A-Z]{2,6}\b|股票|美股|港股|A股|ETF|基金|仓位|估值|市值|财报|盈利|营收|利率|通胀|流动性|美联储|国债|美元|比特币|加密|芯片|半导体|存储|AI|投资|交易|买入|卖出|减仓|加仓|周期)/i.test(text);
+  const tweets = ((r.results || []) as any[])
+    .filter((tweet) => financeTweet(String(tweet.text || "")))
+    .slice(0, realTarget);
   if (tweets.length < 5) throw new Error(`Not enough substantive tweets (${tweets.length}) for ${kolId}`);
 
   // Rebuild idempotently — an eval set should reflect the current corpus.
@@ -167,9 +364,10 @@ export async function buildEvalSet(
         role: "system",
         content:
           `For each numbered tweet from a finance KOL, infer the concrete follower QUESTION that tweet is answering, ` +
-          `and the KOL's STANCE in it. Output ONLY a JSON array; one object per input number: ` +
-          `[{"n":1,"question":"...","stance":"bullish on X | bearish on X | neutral | n/a"}]. ` +
-          `The question must be answerable from the tweet alone, in the tweet's own language. No commentary.`,
+          `and the KOL's explicit INVESTMENT STANCE in it. Output ONLY a JSON array; one object per input number: ` +
+          `[{"n":1,"question":"...","stance":"bullish on X | bearish on X | n/a"}]. ` +
+          `The question must concern investing, markets, companies, sectors, macro or tradable assets and be ` +
+          `answerable from the tweet alone. Use n/a for factual/explanatory posts or when direction is not explicit. No commentary.`,
       },
       { role: "user", content: numbered },
     ], { maxTokens: 1400, temperature: 0.2 });
@@ -207,6 +405,23 @@ export async function buildEvalSet(
     if (s.length >= 4) cases.push({ question: s, type: "synth_follower", stance: null, sourceId: null });
   }
 
+  // Deterministic regression probes for domains that are materially present in the corpus. These stop
+  // a reducer from dropping a current focus merely because the highest-engagement generic questions
+  // dominated the generated set.
+  const memoryProbe = await env.DB.prepare(
+    `SELECT id FROM tweets WHERE kol_id=? AND is_retweet=0
+     AND (lower(text) LIKE '%dram%' OR lower(text) LIKE '%memory%' OR text LIKE '%存储%' OR text LIKE '%美光%')
+     ORDER BY created_at_ts DESC LIMIT 1`
+  ).bind(kolId).first<any>();
+  if (memoryProbe?.id) {
+    cases.push({
+      question: "你如何判断 DRAM 存储 ETF 与美光（MU）当前是否值得买入？请区分 ETF、个股和行业周期。",
+      type: "regression",
+      stance: null,
+      sourceId: String(memoryProbe.id),
+    });
+  }
+
   // Persist.
   let n = 0;
   for (const c of cases) {
@@ -231,6 +446,8 @@ interface EvalSummary {
   avg_citation: number;
   avg_voice: number;
   avg_stance: number | null;
+  avg_relevance: number;
+  avg_entailment: number;
   passed: number;        // # of cases that passed all thresholds
   composite: number;     // run-level composite (mean of available metrics)
   baseline_composite: number | null;
@@ -241,7 +458,7 @@ interface EvalSummary {
 
 function citationScore(response: string, citations: { ref: string }[]): number {
   const validRefs = new Set(citations.map((c) => c.ref));
-  const cited = new Set(Array.from(response.matchAll(CITE_RE)).map((m) => m[1]));
+  const cited = new Set(Array.from(response.matchAll(CITE_RE)).map((m) => `T${m[1]}`));
   return cited.size === 0
     ? (validRefs.size === 0 ? 1 : 0)
     : Array.from(cited).filter((r) => validRefs.has(r)).length / cited.size;
@@ -301,17 +518,18 @@ export async function runEvalPreview(
   const out: any[] = [];
   for (const ec of caseRows.slice(0, limit)) {
     const live = await evalAnswerDraft(env, kol, kolId, String(ec.question), kol.persona_pack,);
-    const drafts: EvalDraft[] = [{ ec: { id: `${ec.id}:live`, expected_stance: ec.expected_stance }, response: live.response, scoreCitation: live.scoreCitation }];
+    const drafts: EvalDraft[] = [{ ec: { id: `${ec.id}:live`, question: ec.question, expected_stance: ec.expected_stance }, response: live.response, scoreCitation: live.scoreCitation, citations: live.citations }];
     let cand: Awaited<ReturnType<typeof evalAnswerDraft>> | null = null;
     if (opts.candidatePack) {
       cand = await evalAnswerDraft(env, kol, kolId, String(ec.question), opts.candidatePack);
-      drafts.push({ ec: { id: `${ec.id}:candidate`, expected_stance: ec.expected_stance }, response: cand.response, scoreCitation: cand.scoreCitation });
+      drafts.push({ ec: { id: `${ec.id}:candidate`, question: ec.question, expected_stance: ec.expected_stance }, response: cand.response, scoreCitation: cand.scoreCitation, citations: cand.citations });
     }
     const liveDna = extractExpressionDna(kol.persona_pack);
     const candDna = extractExpressionDna(opts.candidatePack || kol.persona_pack);
     const liveVoice = await judgeVoiceBatch(env, liveDna, [drafts[0]]);
     const candVoice = cand ? await judgeVoiceBatch(env, candDna, [drafts[1]]) : {};
     const stance = await judgeStanceBatch(env, drafts);
+    const citationQuality = await judgeCitationQualityBatch(env, drafts);
     out.push({
       id: ec.id,
       question: ec.question,
@@ -323,6 +541,8 @@ export async function runEvalPreview(
         score_citation: live.scoreCitation,
         score_voice: liveVoice[`${ec.id}:live`] ?? 0,
         score_stance: stance[`${ec.id}:live`] ?? null,
+        score_relevance: citationQuality[`${ec.id}:live`]?.relevance ?? 0,
+        score_entailment: citationQuality[`${ec.id}:live`]?.entailment ?? 0,
       },
       candidate: cand ? {
         answer: cand.response,
@@ -331,6 +551,8 @@ export async function runEvalPreview(
         score_citation: cand.scoreCitation,
         score_voice: candVoice[`${ec.id}:candidate`] ?? 0,
         score_stance: stance[`${ec.id}:candidate`] ?? null,
+        score_relevance: citationQuality[`${ec.id}:candidate`]?.relevance ?? 0,
+        score_entailment: citationQuality[`${ec.id}:candidate`]?.entailment ?? 0,
       } : null,
     });
   }
@@ -347,12 +569,13 @@ export async function runEval(
   if (!kol) throw new Error(`KOL not found: ${kolId}`);
   const personaPack = opts.personaPack || kol.persona_pack;
   if (!personaPack) throw new Error(`No persona_pack for ${kolId} — nothing to eval`);
+  const evalPersona = personaPack.slice(0, 20000);
 
   const personaVersion = opts.personaVersion || kol.persona_version || "unknown";
   // Generate eval responses with flash — it is the production chat default AND fast enough that a batch
   // of cases fits the worker's ~100s execution limit (pro would blow it on the first few cases).
   const modelVersion = env.MODEL_FLASH;
-  const dna = extractExpressionDna(personaPack);
+  const dna = extractExpressionDna(evalPersona);
   const mode = (kol.retrieval_mode === "tagged" ? "tagged" : "query_side") as "tagged" | "query_side";
   const scope = kol.corpus_id || kol.id;
 
@@ -365,11 +588,12 @@ export async function runEval(
 
   // Concurrent drivers can overlap (self-chain + cron). Reserve cases before spending model calls so
   // only one invocation scores a given case. If a Worker dies mid-case, the null-score reservation is
-  // released after 30 minutes.
+  // released after four minutes. A distill step owns a three-minute D1 lease, so this leaves a safety
+  // margin for a legitimate slow case while allowing the next cron ticks to recover without operators.
   await env.DB.prepare(
     `DELETE FROM eval_results
      WHERE kol_id=? AND persona_version=? AND score_citation IS NULL
-       AND datetime(created_at) < datetime('now','-30 minutes')`
+       AND datetime(created_at) < datetime('now','-4 minutes')`
   ).bind(kolId, personaVersion).run();
   const occupiedRows = ((await env.DB.prepare(
     `SELECT DISTINCT case_id FROM eval_results WHERE kol_id=? AND persona_version=?`
@@ -390,15 +614,16 @@ export async function runEval(
   let sumCite = 0, sumVoice = 0, sumStance = 0, stanceN = 0, passedN = 0;
   const drafts: EvalDraft[] = [];
 
-  for (const ec of cases) {
+  const generatedDrafts = await Promise.all(cases.map(async (ec) => {
     const question = String(ec.question);
     // Generate a persona answer the same way production chat does (persona + retrieved SOURCE TWEETS),
     // minus live market data.
     const { citations, knowledge } = await retrieve(
       env, kolId, kol.handle, question, [], undefined, env.MODEL_FLASH, mode, scope,
+      { skipLlmRerank: true },
     );
     const messages = buildMessages({
-      kol, persona: personaPack, knowledge, citations,
+      kol, persona: evalPersona, knowledge, citations,
       market: EMPTY_MARKET, history: [], userMessage: question,
     });
     const response = await completeChat(env, modelVersion, messages, { maxTokens: 700, temperature: 0.3 });
@@ -406,66 +631,80 @@ export async function runEval(
     // 1) Citation accuracy — fraction of cited [T#] that resolve to a retrieved source tweet.
     const scoreCitation = citationScore(response, citations);
 
-    drafts.push({ ec, response, scoreCitation });
-  }
+    return { ec, response, scoreCitation, citations };
+  }));
+  drafts.push(...generatedDrafts);
 
-  const voiceScores = await judgeVoiceBatch(env, dna, drafts);
-  const stanceScores = await judgeStanceBatch(env, drafts);
+  // One compact judge replaces the former voice + stance + citation calls. This cuts judge traffic
+  // by roughly two thirds and keeps one auditable rationale for all semantic scores.
+  const judged = await judgeQualityBatch(env, dna, drafts);
 
   for (const d of drafts) {
     const ec = d.ec;
     const scoreCitation = d.scoreCitation;
-    const scoreVoice = voiceScores[ec.id] ?? 0;
-    const scoreStance = ec.expected_stance ? (stanceScores[ec.id] ?? 0) : null;
+    const quality = judged.scores[ec.id] || {
+      voice: 0, stance: ec.expected_stance ? 0 : null, relevance: 0, entailment: 0, reason: "judge parse failed",
+    };
+    const scoreVoice = quality.voice;
+    const scoreStance = quality.stance;
+    const scoreRelevance = quality.relevance;
+    const scoreEntailment = quality.entailment;
 
     sumCite += scoreCitation;
     sumVoice += scoreVoice;
     if (scoreStance !== null) { sumStance += scoreStance; stanceN++; }
 
     const passed = scoreCitation >= TH_CITATION && scoreVoice >= TH_VOICE &&
+      scoreRelevance >= 0.6 && scoreEntailment >= 0.6 &&
       (scoreStance === null || scoreStance >= TH_STANCE);
     if (passed) passedN++;
 
     await env.DB.prepare(
       `UPDATE eval_results
-       SET score_citation=?, score_voice=?, score_stance=?, passed=?, regressed=0
+       SET score_citation=?, score_voice=?, score_stance=?, score_relevance=?,score_entailment=?,
+           passed=?,regressed=0,case_question=?,answer_text=?,citations_json=?,judge_json=?,input_chars=?
        WHERE id=?`
     ).bind(
-      scoreCitation, scoreVoice, scoreStance, passed ? 1 : 0,
+      scoreCitation, scoreVoice, scoreStance, scoreRelevance, scoreEntailment, passed ? 1 : 0,
+      String(ec.question || "").slice(0, 2000),
+      d.response.slice(0, 12000),
+      JSON.stringify(d.citations || []).slice(0, 30000),
+      JSON.stringify({ score: quality, raw: judged.raw }).slice(0, 16000),
+      evalPersona.length + JSON.stringify(d.citations || []).length,
       `${kolId}:${personaVersion}:${modelVersion}:${ec.id}`,
     ).run();
   }
 
   // Aggregate over ALL results for this version so far (the run may be spread across several batches).
   const agg = await env.DB.prepare(
-    `SELECT AVG(score_citation) c, AVG(score_voice) v, AVG(score_stance) s, SUM(passed) p, COUNT(*) n
+    `SELECT AVG(score_citation) c, AVG(score_voice) v, AVG(score_stance) s,
+            AVG(score_relevance) r,AVG(score_entailment) e,SUM(passed) p, COUNT(*) n
      FROM eval_results WHERE kol_id=? AND persona_version=? AND score_citation IS NOT NULL`
   ).bind(kolId, personaVersion).first<any>();
   const n = agg?.n || cases.length;
   const avgCite = agg?.c ?? 0;
   const avgVoice = agg?.v ?? 0;
   const avgStance = agg?.s ?? null;
+  const avgRelevance = agg?.r ?? 0;
+  const avgEntailment = agg?.e ?? 0;
   passedN = agg?.p ?? passedN;
   // Run composite = mean of the metrics we actually have.
-  const parts = [avgCite, avgVoice, ...(avgStance !== null ? [avgStance] : [])];
+  const parts = [avgCite, avgVoice, avgRelevance, avgEntailment, ...(avgStance !== null ? [avgStance] : [])];
   const composite = parts.reduce((a, b) => a + b, 0) / parts.length;
 
   // Baseline = the mean composite of the most recent eval run for a DIFFERENT persona_version. This is
   // the meaningful regression question: did the *new* pack get worse than the *previous* pack?
   const base = await env.DB.prepare(
-    `SELECT AVG(score_citation) c, AVG(score_voice) v, AVG(score_stance) s
-     FROM eval_results
-     WHERE kol_id=? AND persona_version <> ?
-       AND score_citation IS NOT NULL
-       AND persona_version = (
-         SELECT persona_version FROM eval_results
-         WHERE kol_id=? AND persona_version <> ? AND score_citation IS NOT NULL
-         ORDER BY created_at DESC LIMIT 1
-       )`
-  ).bind(kolId, personaVersion, kolId, personaVersion).first<any>();
+    `SELECT AVG(r.score_citation) c,AVG(r.score_voice) v,AVG(r.score_stance) s,
+            AVG(r.score_relevance) r,AVG(r.score_entailment) e,COUNT(*) n
+     FROM eval_results r
+     JOIN eval_cases ec ON ec.id=r.case_id AND ec.question=r.case_question
+     WHERE r.kol_id=? AND r.persona_version=?
+       AND r.answer_text IS NOT NULL AND r.score_citation IS NOT NULL AND ec.kol_id=?`
+  ).bind(kolId, kol.persona_version || "", kolId).first<any>();
   let baselineComposite: number | null = null;
-  if (base && base.c !== null) {
-    const bp = [base.c, base.v, ...(base.s !== null ? [base.s] : [])].filter((x) => x !== null);
+  if (base && base.c !== null && Number(base.n || 0) === allCases.length) {
+    const bp = [base.c, base.v, ...(base.r !== null ? [base.r] : []), ...(base.e !== null ? [base.e] : []), ...(base.s !== null ? [base.s] : [])].filter((x) => x !== null);
     baselineComposite = bp.length ? bp.reduce((a: number, b: number) => a + b, 0) / bp.length : null;
   }
   // Only judge regression once the full set is scored (remaining===0); a partial run isn't comparable.
@@ -481,6 +720,7 @@ export async function runEval(
   return {
     kol_id: kolId, persona_version: personaVersion, model_version: modelVersion,
     cases: n, avg_citation: avgCite, avg_voice: avgVoice, avg_stance: avgStance,
+    avg_relevance: avgRelevance, avg_entailment: avgEntailment,
     passed: passedN, composite, baseline_composite: baselineComposite, regressed,
     processed: cases.length, remaining,
   };

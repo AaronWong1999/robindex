@@ -1,5 +1,9 @@
 # Robindex
 
+> 2026-07-01：已取消自动周/月 Persona 模型任务，重构为可审计、固定预算的显式更新流程。
+> 事故原因、修复和剩余风险见
+> [`docs/2026-07-01-persona-eval-cost-audit.md`](docs/2026-07-01-persona-eval-cost-audit.md)。
+
 Robindex is a Cloudflare-native AI finance persona desk. A user signs in, picks a finance KOL persona, asks a market question, and gets a sourced answer written through that KOL's framework. Every cited claim links back to real tweets in the right-side source rail.
 
 There is no fine-tuning. The product is retrieval, persona distillation, live market tools, and prompt assembly. Model upgrades and better retrieval improve the product without retraining.
@@ -14,14 +18,15 @@ There is no fine-tuning. The product is retrieval, persona distillation, live ma
 
 The Worker serves both static assets and APIs. API routes are under `/api/*`. App deep links such as `/chat/:id` are served by the Desk SPA on `app.robindex.ai`.
 
-Latest verified production deploy: Cloudflare Worker version `af782781-47b6-4cab-9b12-fb1e9d2d9864` on 2026-06-22.
+Latest verified production deploy: Cloudflare Worker version `0374984b-4ad5-4af3-8f8f-e48077719ec1` on 2026-07-01.
 
 ## Current Product
 
 - Privy login with email and Google.
-- Two live personas:
+- Three live personas:
   - `qinbafrank` — macro transmission, AI trend, US stocks, crypto x TradFi.
   - `aleabitoreddit` / Serenity — AI semiconductor supply chain, photonics/CPO.
+  - `shufen46250836` / shu fen — global macro, storage/Micron, AI hardware, position sizing.
 - Chat answers stream over SSE.
 - The answer renderer supports clickable numeric citations.
 - Right rail has two tabs: persona profile and cited source tweets.
@@ -172,6 +177,7 @@ Important tables:
 | --- | --- |
 | `0 9 * * *` | Daily ingest |
 | `30 9 * * 1` | Weekly stance chunk and incremental persona refresh |
+| `0 10 1 * *` | Monthly full-corpus persona audit |
 | `* * * * *` | Drive in-progress distill/eval jobs |
 
 Cron definitions live in `app/wrangler.jsonc`.
@@ -194,6 +200,7 @@ Useful scripts:
 | `npm run tail` | Tail Worker logs |
 | `npm run test:dsl` | Test DSL stream cleaners |
 | `npm run test:prompt` | Test prompt formatting |
+| `npm run test:finance` | Test canonical ticker identity and asset classification |
 | `npm run build:privy` | Rebuild `privy-bundle.js` after SDK entry/dependency changes |
 
 ## Deploy
@@ -218,8 +225,95 @@ Common admin endpoints:
 | --- | --- |
 | `GET /api/admin/stats` | Corpus and persona stats |
 | `POST /api/admin/ingest` | Trigger ingest |
+| `POST /api/admin/onboard` | Start/resume publish-gated full-history KOL onboarding |
+| `POST /api/admin/onboard-drive?kol_id=<id>` | Advance one targeted ingest batch |
+| `GET /api/admin/onboard-status?kol_id=<id>` | Inspect corpus, index, billing, persona, and job state |
 | `POST /api/admin/distill-auto?kol_id=<id>&reset=1` | Full persona distill |
+| `POST /api/admin/persona-update` | Schedule a durable full/weekly/monthly candidate persona update |
+| `GET /api/admin/retrieval-debug` | Inspect the exact sources selected for one KOL/query |
 | `POST /api/admin/eval-run?kol_id=<id>&limit=2` | Eval run |
+
+## KOL Onboarding
+
+New KOLs are created private and move through `draft → ingesting → distilling → evaluating → ready`.
+`/api/kols` and `/api/chat` expose only public, ready KOLs with a complete persona pack.
+
+The onboarding driver is target-specific and resumable:
+
+1. GetXAPI profile lookup creates the private KOL row and a durable D1 job.
+2. Advanced-search cursor pagination backfills all publicly retrievable posts; every batch is archived to R2 and inserted idempotently.
+3. A D1 lease prevents the cron driver and self-chain from consuming the same cursor concurrently. Stale leases are reclaimed after three minutes.
+4. FTS is rebuilt from canonical D1 rows before distillation, because the FTS5 table has no uniqueness constraint.
+5. Full map/reduce persona distillation and the complete generated eval set run before `is_public` is enabled. The exact phase, group index, and step count are persisted in D1.
+6. Subscription products/prices live on the KOL row; Airwallex provisioning uses stable request ids so retries do not create duplicate products.
+7. A D1 step lease prevents the distill self-chain and cron driver from reserving the same eval cases. Orphaned eval reservations expire automatically after four minutes.
+8. The minute cron reads D1 as its source of truth and resumes `distilling`/`evaluating` jobs with a fresh Worker invocation. KV and self-fetch only reduce latency; losing either cannot strand a job.
+
+Persona publication is candidate-first for onboarding, weekly refreshes, and monthly full audits:
+
+- Map facts include a topic inventory with aliases, recurrence, recency, and evidence tweet ids.
+- Required recurring/recent topics are deterministically rendered into `Current Focus`, so final reduce cannot silently erase a material domain.
+- Candidates remain separate from the live pack until the complete eval set passes citation validity, source relevance, source entailment, voice, stance, and baseline-regression gates.
+- Weekly updates refresh recent focus; a monthly Cloudflare cron performs a full-corpus rebuild. Failed jobs retry from their D1 cursor without an operator.
+
+Instrument identity uses the quote provider's canonical long name and asset type rather than a stale
+localized short name. Reused tickers such as `DRAM` therefore enter model context as
+`Roundhill Memory ETF (DRAM, ETF)`, and ETFs never enter company-PE/profile tools.
+
+Retrieval candidates are private model context, not user-facing citations. The reranker can reject
+candidates and rejected rows are not appended back. After generation, deterministic reference parsing
+removes nonexistent markers and sends the source rail only tweets actually cited by the final answer.
+This adds no chat-time LLM call.
+
+Explicit ticker questions also apply a deterministic evidence floor: a post must name the ticker or
+match at least one concrete, non-generic alias, constituent, or industry concept. A focused post about
+one core constituent is valid evidence; generic asset-type words such as `ETF` cannot make an otherwise
+unrelated post citable. Citation numbers are unique across the whole conversation, assigned
+in first-appearance order, and the source rail keeps the conversation's cumulative source list.
+
+For ETFs, Cloudflare prefetches a cached holdings snapshot before answer generation. The model receives
+the fund's constituent weights, concentration, AUM, as-of date, source URL, and clearly labeled
+fund-level valuation. It must not guess holdings or apply operating-company financials to the fund.
+
+Operational findings from the shu fen rehearsal:
+
+- X's profile Posts timeline returned only ~275 recent rows; advanced search was required for history.
+- Public GetXAPI/Apify search returned 1,666 unique accessible rows from 2024-11-17 onward, while the profile status counter was higher. Deleted or non-publicly retrievable rows are not fabricated.
+- A long provider request can exhaust the current Worker's `waitUntil` budget. The rehearsal originally required an operator to trigger distillation; the continuation cursor now lives in D1, so the next minute cron starts/resumes it without local intervention.
+- The remote D1 predates Wrangler's migration ledger. Apply new compatibility migrations explicitly with `wrangler d1 execute --remote --file=...` until the ledger is reconciled.
+
+After the initial authenticated `POST /api/admin/onboard` (a future user submission will call the same
+service), profile lookup, ingestion, R2 archival, FTS, map/reduce, eval, billing provisioning, and publish
+gating execute in Cloudflare Workers against D1/R2/KV. A developer machine or CI remains the control
+plane for code deployment and schema migrations; it is not part of the per-KOL data pipeline.
+
+### Hidden self-serve onboarding
+
+`app.robindex.ai/add-kol/<invite-secret>` is a bearer-invite bootstrap. A valid URL sets a signed,
+30-day HttpOnly/SameSite session cookie and redirects to `/add-kol`; the clean page and all
+`/api/onboarding/*` endpoints return 404 without that cookie. The invite secret is a Worker secret,
+never an admin API key, and can be rotated independently.
+
+The hidden page accepts an X/Twitter profile URL or handle and exposes durable progress from D1.
+Requests are idempotent by handle, limited to one active job and three submissions per 24 hours per
+invite session/IP hash, and need no open browser after submission. The minute cron spends at most
+three expensive slots per tick across ingestion and distillation.
+
+Self-serve jobs add several safeguards over the original rehearsal:
+
+- GetXAPI cursor ingestion uses an owner lease with heartbeat; expired leases are reclaimed.
+- When accessible history appears truncated, Apify reconciles older date windows before FTS is
+  rebuilt. R2 stores append-only batches plus a final manifest.
+- Map prompts remain context-bounded for arbitrarily prolific accounts. Reduce is a durable,
+  multi-level tree instead of one large final request.
+- A malformed final reduce falls back to a deterministic structured candidate, never directly to a
+  public persona; coverage and full eval still gate publication.
+- Bilingual UI metadata is generated from the candidate persona with deterministic fallbacks.
+- Airwallex USD 19.90/month product provisioning happens only after eval passes. Persona, profile,
+  price IDs and `ready/is_public` switch together.
+
+Non-financial public accounts may be submitted, but this version intentionally keeps the current
+financial persona/chat template; quality outside finance is not guaranteed.
 
 ## Smoke Checks
 

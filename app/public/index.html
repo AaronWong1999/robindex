@@ -359,7 +359,7 @@ h1,h2,h3{font-weight:400;}
       <h2 style="font-family:'Newsreader',serif;font-weight:400;font-size:clamp(30px,4.6vw,56px);line-height:1.06;letter-spacing:-.022em;color:#14151A;margin:14px 0 0;" data-i18n="rosterTitle">The roster is just getting started.</h2>
       <p style="font-size:17px;line-height:1.6;color:#54565F;margin:16px auto 0;max-width:54ch;" data-i18n="rosterSub">Today, the people who move markets. Soon, anyone whose thinking you want working for you — new minds added continuously.</p>
     </div>
-    <div class="lpersonas" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:18px;margin-top:48px;">
+    <div id="dynamicRoster" class="lpersonas" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:18px;margin-top:48px;">
       <a href="https://app.robindex.ai/?agent=kol&amp;persona=qinbafrank" style="border:1px solid #E9E9E3;border-radius:16px;background:#fff;padding:22px;transition:.18s;display:block;">
         <div style="display:flex;align-items:center;gap:13px;">
           <img src="https://unavatar.io/x/qinbafrank" alt="Qinbafrank" width="50" height="50" loading="lazy" style="border-radius:12px;object-fit:cover;" />
@@ -386,7 +386,7 @@ h1,h2,h3{font-weight:400;}
           <span style="font-family:'Geist Mono',monospace;font-size:10.5px;color:#5C5E66;background:#F4F4F1;border:1px solid #ECECE6;border-radius:6px;padding:3px 8px;" data-i18n="p2t3">chokepoint</span>
         </div>
       </a>
-      <a href="https://app.robindex.ai/" style="border:1px dashed #C9CBD6;border-radius:16px;background:linear-gradient(180deg,#F7F8FF,#fff);padding:22px;display:flex;flex-direction:column;transition:.18s;">
+      <a data-roster-coming href="https://app.robindex.ai/" style="border:1px dashed #C9CBD6;border-radius:16px;background:linear-gradient(180deg,#F7F8FF,#fff);padding:22px;display:flex;flex-direction:column;transition:.18s;">
         <div style="width:50px;height:50px;border-radius:12px;background:rgba(27,48,224,.08);border:1px solid rgba(27,48,224,.18);display:flex;align-items:center;justify-content:center;color:var(--cobalt);">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
         </div>
@@ -507,6 +507,7 @@ h1,h2,h3{font-weight:400;}
 
   // Snapshot EN defaults from the DOM, so the user can flip back from ZH to EN.
   const en = {};
+  let rosterKols = [];
   document.querySelectorAll('[data-i18n]').forEach((n) => {
     const k = n.getAttribute('data-i18n');
     en[k] = n.innerHTML;
@@ -527,6 +528,57 @@ h1,h2,h3{font-weight:400;}
     });
     document.documentElement.setAttribute('lang', lang === 'zh' ? 'zh' : 'en');
     try { localStorage.setItem('rx.lang', lang); } catch (e) {}
+    renderRoster();
+  }
+
+  function localized(v, lang) {
+    return v && typeof v === 'object' && !Array.isArray(v) ? (v[lang] || v.zh || v.en || '') : (v || '');
+  }
+  function compactCount(n) {
+    const v = Number(n || 0);
+    if (v >= 1000000) return (v / 1000000).toFixed(v >= 10000000 ? 0 : 1).replace(/\.0$/, '') + 'M';
+    if (v >= 1000) return (v / 1000).toFixed(v >= 100000 ? 0 : 1).replace(/\.0$/, '') + 'K';
+    return v ? String(v) : '—';
+  }
+  function renderRoster() {
+    const roster = document.getElementById('dynamicRoster');
+    if (!roster || !rosterKols.length) return;
+    roster.querySelectorAll('[data-dynamic-kol]').forEach((n) => n.remove());
+    const existing = new Set(Array.from(roster.querySelectorAll('a[href*="persona="]')).map((a) => {
+      try { return new URL(a.href).searchParams.get('persona'); } catch (e) { return ''; }
+    }));
+    const coming = roster.querySelector('[data-roster-coming]');
+    const lang = document.documentElement.getAttribute('lang') === 'zh' ? 'zh' : 'en';
+    rosterKols.filter((kol) => !existing.has(kol.id)).forEach((kol) => {
+      const card = document.createElement('a');
+      card.setAttribute('data-dynamic-kol', kol.id);
+      card.href = 'https://app.robindex.ai/?agent=kol&persona=' + encodeURIComponent(kol.id);
+      card.style.cssText = 'border:1px solid #E9E9E3;border-radius:16px;background:#fff;padding:22px;transition:.18s;display:block;';
+      const top = document.createElement('div');
+      top.style.cssText = 'display:flex;align-items:center;gap:13px;';
+      const img = document.createElement('img');
+      img.src = kol.avatar_url || ''; img.alt = kol.display_name || ''; img.width = 50; img.height = 50; img.loading = 'lazy';
+      img.style.cssText = 'border-radius:12px;object-fit:cover;';
+      const identity = document.createElement('div');
+      identity.style.cssText = 'flex:1;min-width:0;';
+      const name = document.createElement('div'); name.style.cssText = 'font-size:16px;font-weight:600;'; name.textContent = kol.display_name || kol.id;
+      const handle = document.createElement('div'); handle.style.cssText = "font-family:'Geist Mono',monospace;font-size:11px;color:#9A9CA4;"; handle.textContent = '@' + (kol.handle || kol.id);
+      identity.append(name, handle);
+      const stat = document.createElement('div'); stat.style.textAlign = 'right';
+      const count = document.createElement('div'); count.style.cssText = "font-family:'Geist Mono',monospace;font-size:15px;font-weight:600;"; count.textContent = compactCount(kol.followers_count);
+      const followerLabel = document.createElement('div'); followerLabel.style.cssText = 'font-size:10px;color:#9A9CA4;'; followerLabel.textContent = lang === 'zh' ? '关注' : 'followers';
+      stat.append(count, followerLabel); top.append(img, identity, stat);
+      const bio = document.createElement('p'); bio.style.cssText = 'font-size:13.5px;line-height:1.6;color:#54565F;margin:15px 0 14px;'; bio.textContent = localized(kol.bio, lang) || localized(kol.tagline, lang);
+      const tags = document.createElement('div'); tags.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;';
+      const values = localized(kol.style, lang);
+      (Array.isArray(values) ? values.slice(0, 3) : []).forEach((value) => {
+        const tag = document.createElement('span');
+        tag.style.cssText = "font-family:'Geist Mono',monospace;font-size:10.5px;color:#5C5E66;background:#F4F4F1;border:1px solid #ECECE6;border-radius:6px;padding:3px 8px;";
+        tag.textContent = value; tags.appendChild(tag);
+      });
+      card.append(top, bio, tags);
+      roster.insertBefore(card, coming);
+    });
   }
 
   // Initial language: localStorage > browser > EN.
@@ -537,6 +589,10 @@ h1,h2,h3{font-weight:400;}
     else if ((navigator.language || '').toLowerCase().indexOf('zh') === 0) initial = 'zh';
   } catch (e) {}
   applyLang(initial);
+  fetch('/api/kols').then((r) => r.ok ? r.json() : null).then((j) => {
+    rosterKols = (j && Array.isArray(j.kols)) ? j.kols : [];
+    renderRoster();
+  }).catch(() => {});
 
   // Language menu wiring.
   const langBtn = document.getElementById('rxLang');

@@ -6,6 +6,7 @@ import { TOOLS, executeTool } from "./tools";
 import { sourceTweetForPrompt } from "./source-format";
 import { getAshareValuation, getAshareEstimates } from "./eastmoney-astock";
 import { getStockFinancialProfile } from "./eastmoney-global";
+import { getEtfHoldings, formatEtfHoldings } from "./etf";
 import type { ByokModelConfig } from "./byok";
 
 // User is asking about news / macro / what's happening — pull fast-news into context.
@@ -20,7 +21,7 @@ const BENCH_INDEX_CODES = ["usIXIC", "usINX", "usDJI", "hkHSI", "sh000001"];
 
 function fmtQuote(q: Quote): string {
   const sign = q.change >= 0 ? "+" : "";
-  return `${q.name} (${q.symbol}/${q.market.toUpperCase()}): ${q.price} ${q.currency}  ${sign}${q.change.toFixed(2)} (${sign}${q.changePct.toFixed(2)}%)  | open ${q.open} high ${q.high} low ${q.low} prevClose ${q.prevClose} | vol ${q.volume} | as of ${q.time}`;
+  return `${q.canonicalName || q.name} (${q.symbol}, ${q.assetType.toUpperCase()}/${q.market.toUpperCase()}): ${q.price} ${q.currency}  ${sign}${q.change.toFixed(2)} (${sign}${q.changePct.toFixed(2)}%)  | open ${q.open} high ${q.high} low ${q.low} prevClose ${q.prevClose} | vol ${q.volume} | as of ${q.time}`;
 }
 
 export interface MarketData {
@@ -90,7 +91,7 @@ export async function gatherMarketData(
     // A-shares: PE/PB/ROE/margins/growth/revenue/profit + analyst consensus (forward PE).
     // US/HK: key indicators + Yahoo analyst data (trailing/forward PE, PEG, target price, holders).
     // Runs in parallel with news — no added latency.
-    if (primary) {
+    if (primary && primary.assetType === "equity") {
       if (primary.market === "cn") {
         newsPromises.push(
           getAshareValuation(env.CACHE, primary.code).then(async (v) => {
@@ -132,6 +133,12 @@ export async function gatherMarketData(
           }).catch(() => {})
         );
       }
+    } else if (primary && primary.assetType === "etf") {
+      newsPromises.push(
+        getEtfHoldings(env, primary.symbol).then((holdings) => {
+          if (holdings) extraContext = formatEtfHoldings(holdings);
+        }).catch(() => {})
+      );
     }
 
     await Promise.all(newsPromises);
@@ -160,10 +167,11 @@ export function buildMessages(opts: {
     `Always respond in the SAME language as the user's message, regardless of the KOL's corpus language.\n` +
     `Speak in this persona's own voice, logic, and worldview. Do not break character or mention you are an AI.\n` +
     `Ground every market view in the persona's documented methodology and past statements below.\n` +
-    `CITE LIBERALLY: whenever a point connects to one of the persona's past tweets, cite it with its source id, but in the final answer write pure numeric brackets (source [T5] becomes [5]). A thorough analysis should reference 8-18 source tweets across different dates or facets, not one cluster. Only cite ids from SOURCE TWEETS. When citing, briefly note the historical context (e.g. "during the Apr tariff war" or "after NVDA earnings beat").\n` +
+    `CITE PRECISELY: cite a source only when it directly supports the sentence. In the final answer write pure numeric brackets (source [T5] becomes [5]). Use as many sources as needed, usually 2-8 for a focused question; never pad citations. Only cite ids from SOURCE TWEETS.\n` +
     `QUALITY BAR: first answer the user's concrete decision/question directly, then reconstruct your reasoning chain. Ground views in SOURCE TWEETS and LIVE MARKET DATA; if something isn't supported by either, say so.\n` +
     `If the corpus has no direct coverage of the asked-about instrument, say so, then apply your framework using adjacent peers or the macro chain to give a bounded inference. Never just stop at "no coverage".\n` +
     `When analyzing a specific instrument, always compare its valuation against industry peers, not in isolation.\n` +
+    `ASSET-TYPE RULE: if LIVE MARKET DATA identifies an ETF/fund/index, do not invent or apply company PE, EPS, revenue, market-cap, or company financial analysis. Use fund price/NAV, holdings, constituent valuations, exposure, liquidity, and the underlying industry cycle instead. Only state a fund-level valuation metric when it is explicitly present in LIVE MARKET DATA.\n` +
     `QUANTITATIVE REASONING: reason with numbers, don't just list them. Use growth rates to estimate forward valuation (e.g. PE-TTM / (1+profit-growth) ≈ forward PE), compare against peer multiples and historical range, and state a clear numeric verdict. If data shows PE-TTM=500x with profit growth of 120%, say what that implies — don't just show the raw figures.\n` +
     `Quantify risk with numeric ranges (e.g. 5-10% pullback, 15-20% correction, 25%+ drawdown), not vague words like "恐慌" or "大幅".\n` +
     `When a SOURCE TWEET includes Quoted context, treat it as context for what you were reacting to; do not attribute the quoted account's words to yourself unless your tweet itself endorses or comments on it.\n` +
@@ -186,6 +194,7 @@ export function buildMessages(opts: {
     `- 全市场涨跌幅排名 → get_market_ranking\n` +
     `- A股资金流/龙虎榜/板块 → get_ashare_detail (kind = fund_flow | dragon_tiger | sectors)\n` +
     `- A股估值/财务 → get_ashare_valuation (PE/PB/ROE/毛利率/营收增速/利润增速; primary已在LIVE DATA里)\n` +
+    `- ETF持仓/集中度 → primary ETF 会自动加载最新持仓；若上下文没有则明确说缺失，不要猜成分股\n` +
     `- 跨市场统一画像 → get_stock_profile (任何市场的PE/Forward PE/PEG/ROE/利润率/分析师目标价; 一个调用搞定)\n` +
     `Pattern: identify → fetch only missing details → compare/verify. Don't re-fetch data already shown.\n`;
 
@@ -201,9 +210,21 @@ export function buildMessages(opts: {
   const system = personaBlock + toolSop;
 
   // ---- VARIABLE SUFFIX: retrieved tweets + live data + user turn. ----
+  const questionLower = userMessage.toLowerCase();
+  const directEvidenceTerms = new Set<string>();
+  if (/\bdram\b/.test(questionLower)) ["dram", "memory", "存储", "美光", "mu"].forEach((x) => directEvidenceTerms.add(x));
+  if (/\bmu\b/.test(questionLower) || questionLower.includes("美光")) ["memory", "存储", "美光", "mu"].forEach((x) => directEvidenceTerms.add(x));
+  if (questionLower.includes("存储") || questionLower.includes("memory")) ["memory", "存储", "美光", "mu"].forEach((x) => directEvidenceTerms.add(x));
+  const hasDirectEvidence = directEvidenceTerms.size > 0 && citations.some((citation) => {
+    const snippet = String(citation.snippet || "").toLowerCase();
+    return Array.from(directEvidenceTerms).some((term) => snippet.includes(term));
+  });
+  const citationRequirement = hasDirectEvidence
+    ? `\nDIRECT EVIDENCE PRESENT: cite at least one directly relevant source in the final answer. Constituent/industry evidence may support an ETF cycle analysis, but distinguish it from ETF-specific facts.`
+    : "";
   const tweetsBlock = citations.length
     ? `SOURCE TWEETS (cite by id):\n` +
-      citations.map(sourceTweetForPrompt).join("\n")
+      citations.map(sourceTweetForPrompt).join("\n") + citationRequirement
     : `SOURCE TWEETS: (none retrieved)`;
 
   const benchmarkBlock = market.benchmarks?.length
@@ -310,6 +331,10 @@ export async function completeChat(
         messages,
         temperature: opts.temperature ?? 0.3,
         max_tokens: opts.maxTokens ?? 600,
+        // Background extraction, planning and judging never need hidden chain-of-thought.
+        // Some DeepSeek providers bill reasoning tokens outside the visible max_tokens budget,
+        // which previously turned a 700-token eval answer into several thousand billed tokens.
+        reasoning: { enabled: false },
       }),
       signal: controller.signal,
     });

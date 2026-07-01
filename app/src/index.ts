@@ -7,9 +7,9 @@ import { indexTweets, indexRawTweets } from "./tagger";
 import { gatherMarketData, buildMessages, maybeUpdateSummary, resolveToolPhase, type MarketData } from "./chat";
 import { getStockNews, getMarketNews } from "./marketdata";
 import { runDailyIngest, runWeeklyPersonaRefresh } from "./ingest";
-import { generatePersonaPack, evolvePersona, diagnosePersonaGeneration, logPersonaExperiment } from "./persona-gen";
+import { generatePersonaPack, evolvePersona, diagnosePersonaGeneration, logPersonaExperiment, type PersonaJson } from "./persona-gen";
 import { buildEvalSet, runEval, runEvalPreview, autoRollback, evalAndMaybeRollback } from "./eval";
-import { distillPersonaFull, distillPersonaIncremental, distillPersonaSample, mapStage, reduceStage, reduceGroup, reduceFinal, reduceFinalDraft, finalizeMerged, renderMergedPack, refineVoice } from "./persona-distill";
+import { distillPersonaFull, distillPersonaIncremental, distillPersonaSample, mapStage, reduceStage, reduceGroup, reduceGroupLevel, reduceFinal, reduceFinalDraft, finalizeMerged, renderMergedPack, refineVoice, personaCoverageGate } from "./persona-distill";
 import {
   getSectorBlocks, getFundFlowMinute, getDragonTiger, getLockupExpiry,
   getIndustryRanking, getMarginTrading, getStockInfo, getResearchReports,
@@ -21,12 +21,22 @@ import {
 import { authFromRequest } from "./auth";
 import {
   getState, grantTopup, activateSubscription, setSubscriptionStatus, eventSeen,
-  PACKS, planFor, subCents, AIRWALLEX_PRICES, ensureAccount, FREE,
+  PACKS, getKolPlan, subCents, ensureAccount, FREE,
 } from "./billing";
 import { createCheckoutSession, verifyWebhook } from "./stripe";
-import { createPaymentIntent, createBillingCheckout, verifyAirwallexWebhook, awEnv } from "./airwallex";
+import { createPaymentIntent, createBillingCheckout, verifyAirwallexWebhook, awEnv, provisionKolSubscription } from "./airwallex";
+import {
+  backfillOnboardingFromApify, buildPublicKolProfile, getOnboardingJob, listRunnableOnboardingJobs,
+  processOnboardingBatch, processOnboardingReconciliation, startOnboarding,
+  type PublicKolProfile,
+} from "./onboarding";
 import { APPLE_PAY_DOMAIN_ASSOCIATION } from "./applepay";
 import { getByokConfigByModelId, listByokModels, saveByokModel, deleteByokModel, BYOK_PROVIDERS } from "./byok";
+import { getEtfHoldings } from "./etf";
+import {
+  issueInviteSession, normalizeTwitterHandle, onboardingSecurityHeaders, readInviteSession,
+  timingSafeEqual, validSameOrigin, type InviteSession,
+} from "./onboarding-access";
 
 /** True iff the user has either a non-zero credit balance or an active subscription. */
 async function hasCreditBalance(env: Env, userId: string): Promise<boolean> {
@@ -148,6 +158,10 @@ function isAppHost(host: string): boolean {
   return host === APP_HOST;
 }
 
+function isOnboardingHost(host: string): boolean {
+  return isAppHost(host) || host === "127.0.0.1" || host === "localhost";
+}
+
 function isMarketingHost(host: string): boolean {
   return host === "robindex.ai" || host === "www.robindex.ai";
 }
@@ -156,6 +170,119 @@ function serveDesk(c: { req: { url: string; raw: Request }; env: Env }): Respons
   const url = new URL(c.req.url);
   url.pathname = "/desk.html";
   return c.env.ASSETS.fetch(new Request(url, c.req.raw));
+}
+
+async function inviteSessionOrNull(env: Env, req: Request): Promise<InviteSession | null> {
+  if (!isOnboardingHost(requestHost(req))) return null;
+  return readInviteSession(env, req);
+}
+
+async function serveProtectedOnboardingAsset(c: any, pathname: string): Promise<Response> {
+  const session = await inviteSessionOrNull(c.env, c.req.raw);
+  if (!session) return new Response("Not found", { status: 404, headers: onboardingSecurityHeaders() });
+  const url = new URL(c.req.url);
+  url.pathname = pathname;
+  const asset = await c.env.ASSETS.fetch(new Request(url, c.req.raw));
+  const headers = new Headers(asset.headers);
+  for (const [key, value] of Object.entries(onboardingSecurityHeaders())) headers.set(key, value);
+  return new Response(asset.body, { status: asset.status, headers });
+}
+
+type OnboardingRequestRow = {
+  id: string;
+  session_hash: string;
+  ip_hash: string;
+  source_input: string;
+  handle: string;
+  kol_id: string | null;
+  state: string;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+};
+
+function publicOnboardingState(job: any, kol: any, requestState: string): string {
+  if (kol?.is_public && kol?.onboarding_status === "ready" && Number(kol?.persona_length || 0) >= 500) return "ready";
+  if (requestState === "failed" || job?.phase === "failed" || kol?.onboarding_status === "failed") return "failed";
+  if (!job) return requestState || "validating";
+  if (job.phase === "ingesting" || job.phase === "ingesting_running") return "ingesting";
+  if (job.phase === "reconciling" || job.phase === "reconciling_running") return "reconciling";
+  if (job.phase === "distilling" || job.phase === "evaluating") {
+    const phase = String(job.distill_phase || "map");
+    if (phase === "map") return "mapping";
+    if (/^group/.test(phase) || ["final", "finalize"].includes(phase)) return "reducing";
+    if (phase === "profile") return "profiling";
+    if (["build_eval", "eval_candidate"].includes(phase)) return "evaluating";
+    if (phase === "provisioning") return "provisioning";
+  }
+  if (job.phase === "ready") return "ready";
+  return requestState || "queued";
+}
+
+async function serializeOnboardingRequest(env: Env, row: OnboardingRequestRow): Promise<any> {
+  const job = row.kol_id ? await getOnboardingJob(env, row.kol_id) : null;
+  const kol = row.kol_id
+    ? await env.DB.prepare(
+        `SELECT id,display_name,handle,avatar_url,onboarding_status,is_public,persona_version,
+                length(persona_pack) persona_length,airwallex_price_id
+         FROM kols WHERE id=?`
+      ).bind(row.kol_id).first<any>()
+    : null;
+  const corpus = row.kol_id
+    ? await env.DB.prepare(
+        `SELECT COUNT(*) total,SUM(CASE WHEN is_retweet=0 THEN 1 ELSE 0 END) originals,
+                MIN(created_at_iso) oldest,MAX(created_at_iso) newest
+         FROM tweets WHERE kol_id=?`
+      ).bind(row.kol_id).first<any>()
+    : null;
+  const indexed = row.kol_id
+    ? await env.DB.prepare(`SELECT COUNT(DISTINCT tweet_id) n FROM tweet_search WHERE kol_id=?`).bind(row.kol_id).first<{ n: number }>()
+    : null;
+  const state = publicOnboardingState(job, kol, row.state);
+  if (state !== row.state) {
+    await env.DB.prepare(
+      `UPDATE kol_onboarding_requests SET state=?,last_error=?,updated_at=datetime('now'),
+         completed_at=CASE WHEN ? IN ('ready','failed') THEN COALESCE(completed_at,datetime('now')) ELSE NULL END
+       WHERE id=?`
+    ).bind(state, job?.last_error || row.last_error, state, row.id).run();
+  }
+  const phaseBase: Record<string, number> = {
+    queued: 2, validating: 6, ingesting: 20, reconciling: 38, indexing: 44,
+    mapping: 54, reducing: 70, profiling: 79, evaluating: 86, provisioning: 97, ready: 100, failed: 100,
+  };
+  let progress = phaseBase[state] ?? 0;
+  if (state === "ingesting" && job?.pages_fetched) progress = Math.min(37, 15 + Math.log2(Number(job.pages_fetched) + 1) * 3);
+  return {
+    id: row.id,
+    handle: row.handle,
+    kol_id: row.kol_id,
+    state,
+    progress_percent: Math.round(progress),
+    pages_fetched: Number(job?.pages_fetched || 0),
+    distill_steps: Number(job?.distill_steps || 0),
+    indexed: Number(indexed?.n || 0),
+    last_error: job?.last_error || row.last_error,
+    status_text: state === "ready"
+      ? "质量门禁通过，已加入全站 KOL 列表"
+      : state === "failed"
+        ? "任务保持私有，可在修正问题后重试"
+        : "Cloudflare 将自动继续，无需保持页面打开",
+    corpus: {
+      total: Number(corpus?.total || 0),
+      originals: Number(corpus?.originals || 0),
+      oldest: corpus?.oldest || null,
+      newest: corpus?.newest || null,
+    },
+    profile: kol ? {
+      display_name: kol.display_name,
+      avatar_url: kol.avatar_url,
+      persona_version: kol.persona_version,
+      has_price: !!kol.airwallex_price_id,
+    } : null,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
 }
 
 function redirectToApp(req: Request): Response {
@@ -198,6 +325,93 @@ function normalizeCitationBrackets(text: string): string {
     .replace(/\[\s*T(\d+)\s*\]/gi, "[$1]")
     .replace(/[（(]\s*T(\d+)\s*[）)]/gi, "[$1]")
     .replace(/(^|[^\[\w])\bT(\d+)\b(?!\s*[\]\w])/gi, "$1[$2]");
+}
+
+type ChatCitation = {
+  ref: string;
+  tweet_id?: string;
+  url?: string;
+  [key: string]: any;
+};
+
+function citationKey(citation: ChatCitation): string {
+  return String(citation.tweet_id || citation.url || citation.ref || "");
+}
+
+function orderedNumericRefs(content: string): string[] {
+  const refs: string[] = [];
+  const seen = new Set<string>();
+  for (const match of String(content || "").matchAll(/(?:\[|【)\s*T?(\d+)\s*(?:\]|】)/gi)) {
+    const ref = `T${match[1]}`;
+    if (!seen.has(ref)) {
+      seen.add(ref);
+      refs.push(ref);
+    }
+  }
+  return refs;
+}
+
+async function loadConversationCitationState(env: Env, conversationId: string): Promise<{
+  citations: ChatCitation[];
+  numberByKey: Map<string, number>;
+}> {
+  const rows = await env.DB.prepare(
+    `SELECT content,citations FROM messages
+     WHERE conversation_id=? AND role='assistant' AND citations IS NOT NULL
+     ORDER BY created_at ASC,rowid ASC`
+  ).bind(conversationId).all();
+  const citations: ChatCitation[] = [];
+  const numberByKey = new Map<string, number>();
+  for (const row of (rows.results || []) as any[]) {
+    let saved: ChatCitation[] = [];
+    try {
+      const parsed = JSON.parse(row.citations || "[]");
+      if (Array.isArray(parsed)) saved = parsed;
+    } catch {}
+    const byRef = new Map(saved.map((citation) => [String(citation.ref || ""), citation]));
+    for (const oldRef of orderedNumericRefs(row.content)) {
+      const citation = byRef.get(oldRef);
+      if (!citation) continue;
+      const key = citationKey(citation);
+      if (!key || numberByKey.has(key)) continue;
+      const number = citations.length + 1;
+      numberByKey.set(key, number);
+      citations.push({ ...citation, ref: `T${number}` });
+    }
+  }
+  return { citations, numberByKey };
+}
+
+function renumberAnswerCitations(
+  answer: string,
+  candidates: ChatCitation[],
+  state: { citations: ChatCitation[]; numberByKey: Map<string, number> },
+): { answer: string; messageCitations: ChatCitation[]; cumulativeCitations: ChatCitation[] } {
+  const byLocalRef = new Map(candidates.map((citation) => [String(citation.ref || ""), citation]));
+  const messageCitations: ChatCitation[] = [];
+  const seenMessage = new Set<string>();
+  const rewritten = answer.replace(/(?:\[|【)\s*T?(\d+)\s*(?:\]|】)/gi, (marker, number) => {
+    const citation = byLocalRef.get(`T${number}`);
+    if (!citation) return "";
+    const key = citationKey(citation);
+    if (!key) return "";
+    let globalNumber = state.numberByKey.get(key);
+    if (!globalNumber) {
+      globalNumber = state.citations.length + 1;
+      state.numberByKey.set(key, globalNumber);
+      state.citations.push({ ...citation, ref: `T${globalNumber}` });
+    }
+    if (!seenMessage.has(key)) {
+      seenMessage.add(key);
+      messageCitations.push({ ...citation, ref: `T${globalNumber}` });
+    }
+    return `[${globalNumber}]`;
+  });
+  return {
+    answer: rewritten.replace(/[ \t]+([，。；：,.!?])/g, "$1").trim(),
+    messageCitations,
+    cumulativeCitations: state.citations,
+  };
 }
 
 function createDSLStreamCleaner() {
@@ -260,11 +474,172 @@ function createDSLStreamCleaner() {
   };
 }
 
+// ---- Hidden invite-based KOL onboarding ----
+app.get("/api/onboarding/invite", async (c) => {
+  if (!isOnboardingHost(requestHost(c.req.raw))) return c.notFound();
+  const configured = c.env.KOL_ONBOARD_INVITE_SECRET || "";
+  const supplied = String(c.req.query("token") || "");
+  if (configured.length < 32 || !timingSafeEqual(configured, supplied)) {
+    return new Response("Not found", { status: 404, headers: onboardingSecurityHeaders() });
+  }
+  const { cookie } = await issueInviteSession(c.env, c.req.raw);
+  return new Response(null, {
+    status: 302,
+    headers: {
+      ...onboardingSecurityHeaders(),
+      "Set-Cookie": cookie,
+      Location: "/add-kol",
+    },
+  });
+});
+
+app.get("/api/onboarding/page", (c) => serveProtectedOnboardingAsset(c, "/onboard.html"));
+app.get("/onboard.html", (c) => new Response("Not found", { status: 404, headers: onboardingSecurityHeaders() }));
+app.get("/onboard.css", (c) => serveProtectedOnboardingAsset(c, "/onboard.css"));
+app.get("/onboard.js", (c) => serveProtectedOnboardingAsset(c, "/onboard.js"));
+
+app.get("/api/onboarding/requests", async (c) => {
+  const session = await inviteSessionOrNull(c.env, c.req.raw);
+  if (!session) return c.json({ error: "not_found" }, 404);
+  const rows = await c.env.DB.prepare(
+    `SELECT * FROM kol_onboarding_requests WHERE session_hash=? ORDER BY created_at DESC LIMIT 50`
+  ).bind(session.sessionHash).all<OnboardingRequestRow>();
+  const requests = [];
+  for (const row of rows.results || []) requests.push(await serializeOnboardingRequest(c.env, row));
+  return c.json({ requests }, 200, onboardingSecurityHeaders());
+});
+
+app.get("/api/onboarding/requests/:id", async (c) => {
+  const session = await inviteSessionOrNull(c.env, c.req.raw);
+  if (!session) return c.json({ error: "not_found" }, 404);
+  const row = await c.env.DB.prepare(
+    `SELECT * FROM kol_onboarding_requests WHERE id=? AND session_hash=?`
+  ).bind(c.req.param("id"), session.sessionHash).first<OnboardingRequestRow>();
+  if (!row) return c.json({ error: "not_found" }, 404);
+  return c.json({ request: await serializeOnboardingRequest(c.env, row) }, 200, onboardingSecurityHeaders());
+});
+
+app.post("/api/onboarding/submit", async (c) => {
+  const session = await inviteSessionOrNull(c.env, c.req.raw);
+  if (!session) return c.json({ error: "not_found" }, 404);
+  if (!validSameOrigin(c.req.raw)) return c.json({ error: "bad_origin", message: "请求来源无效" }, 403);
+  const body = await c.req.json<{ url?: string; handle?: string }>()
+    .catch(() => ({} as { url?: string; handle?: string }));
+  let handle: string;
+  try {
+    handle = normalizeTwitterHandle(body.url || body.handle || "");
+  } catch (error: any) {
+    return c.json({ error: "invalid_handle", message: error.message || String(error) }, 400);
+  }
+
+  const duplicate = await c.env.DB.prepare(
+    `SELECT * FROM kol_onboarding_requests WHERE session_hash=? AND handle=?`
+  ).bind(session.sessionHash, handle).first<OnboardingRequestRow>();
+  if (duplicate) return c.json({ ok: true, request: await serializeOnboardingRequest(c.env, duplicate), duplicate: true });
+
+  const active = await c.env.DB.prepare(
+    `SELECT COUNT(*) n FROM kol_onboarding_requests
+     WHERE (session_hash=? OR ip_hash=?) AND state NOT IN ('ready','failed')`
+  ).bind(session.sessionHash, session.ipHash).first<{ n: number }>();
+  if (Number(active?.n || 0) >= 1) {
+    return c.json({ error: "active_limit", message: "当前已有一个创建任务，请等待完成后再提交" }, 429);
+  }
+  const daily = await c.env.DB.prepare(
+    `SELECT COUNT(*) n FROM kol_onboarding_requests
+     WHERE (session_hash=? OR ip_hash=?) AND created_at >= datetime('now','-24 hours')`
+  ).bind(session.sessionHash, session.ipHash).first<{ n: number }>();
+  if (Number(daily?.n || 0) >= 3) {
+    return c.json({ error: "daily_limit", message: "24 小时内最多创建 3 个 KOL" }, 429);
+  }
+
+  const id = crypto.randomUUID();
+  await c.env.DB.prepare(
+    `INSERT INTO kol_onboarding_requests
+       (id,session_hash,ip_hash,source_input,handle,state,updated_at)
+     VALUES (?,?,?,?,?,'validating',datetime('now'))`
+  ).bind(id, session.sessionHash, session.ipHash, String(body.url || body.handle || ""), handle).run();
+  try {
+    const started = await startOnboarding(c.env, { handle });
+    const ready = started.job.phase === "ready";
+    await c.env.DB.prepare(
+      `UPDATE kol_onboarding_requests SET kol_id=?,state=?,last_error=NULL,updated_at=datetime('now'),
+         completed_at=CASE WHEN ?='ready' THEN datetime('now') ELSE NULL END WHERE id=?`
+    ).bind(started.kol_id, ready ? "ready" : "ingesting", ready ? "ready" : "ingesting", id).run();
+  } catch (error: any) {
+    await c.env.DB.prepare(
+      `UPDATE kol_onboarding_requests SET state='failed',last_error=?,completed_at=datetime('now'),updated_at=datetime('now') WHERE id=?`
+    ).bind(String(error?.message || error).slice(0, 500), id).run();
+  }
+  const row = await c.env.DB.prepare(`SELECT * FROM kol_onboarding_requests WHERE id=?`).bind(id).first<OnboardingRequestRow>();
+  return c.json({ ok: true, request: row ? await serializeOnboardingRequest(c.env, row) : null }, 202);
+});
+
+app.post("/api/onboarding/requests/:id/retry", async (c) => {
+  const session = await inviteSessionOrNull(c.env, c.req.raw);
+  if (!session) return c.json({ error: "not_found" }, 404);
+  if (!validSameOrigin(c.req.raw)) return c.json({ error: "bad_origin", message: "请求来源无效" }, 403);
+  const row = await c.env.DB.prepare(
+    `SELECT * FROM kol_onboarding_requests WHERE id=? AND session_hash=?`
+  ).bind(c.req.param("id"), session.sessionHash).first<OnboardingRequestRow>();
+  if (!row) return c.json({ error: "not_found" }, 404);
+  const current = await serializeOnboardingRequest(c.env, row);
+  if (current.state !== "failed") return c.json({ error: "not_failed", message: "只有失败任务可以重试" }, 409);
+  try {
+    if (!row.kol_id) {
+      const started = await startOnboarding(c.env, { handle: row.handle });
+      row.kol_id = started.kol_id;
+    } else {
+      const job = await getOnboardingJob(c.env, row.kol_id);
+      const nextJobPhase = job?.has_more ? "ingesting" : "distilling";
+      const nextDistill = job?.has_more ? job?.distill_phase : "map";
+      await c.env.DB.prepare(
+        `UPDATE kol_onboarding_jobs SET phase=?,distill_phase=?,retries=0,phase_retries=0,
+           candidate_attempts=0,coverage_attempts=0,next_retry_at=NULL,last_error=NULL,lease_owner=NULL,lease_until=NULL,
+           updated_at=datetime('now') WHERE kol_id=?`
+      ).bind(nextJobPhase, nextDistill || "map", row.kol_id).run();
+      await c.env.DB.prepare(
+        `UPDATE kols SET onboarding_status=?,is_public=0,updated_at=datetime('now') WHERE id=?`
+      ).bind(nextJobPhase === "ingesting" ? "ingesting" : "distilling", row.kol_id).run();
+    }
+    await c.env.DB.prepare(
+      `UPDATE kol_onboarding_requests SET kol_id=?,state=?,last_error=NULL,completed_at=NULL,updated_at=datetime('now') WHERE id=?`
+    ).bind(row.kol_id, row.kol_id ? "ingesting" : "validating", row.id).run();
+  } catch (error: any) {
+    return c.json({ error: "retry_failed", message: String(error?.message || error) }, 500);
+  }
+  const updated = await c.env.DB.prepare(`SELECT * FROM kol_onboarding_requests WHERE id=?`).bind(row.id).first<OnboardingRequestRow>();
+  return c.json({ ok: true, request: updated ? await serializeOnboardingRequest(c.env, updated) : null });
+});
+
 app.get("/api/kols", async (c) => {
   const r = await c.env.DB.prepare(
-    `SELECT id,display_name,handle,avatar_url,tagline FROM kols ORDER BY display_name`
+    `SELECT id,display_name,handle,avatar_url,tagline,profile_json,followers_count,statuses_count,
+            subscription_enabled,subscription_price_cents,subscription_promo_cents,subscription_gift
+     FROM kols
+     WHERE is_public=1 AND onboarding_status='ready' AND persona_pack IS NOT NULL AND length(persona_pack)>=500
+     ORDER BY display_name`
   ).all();
-  return c.json({ kols: r.results || [] });
+  const kols = ((r.results || []) as any[]).map((row) => {
+    let profile: any = {};
+    try { profile = row.profile_json ? JSON.parse(row.profile_json) : {}; } catch {}
+    return {
+      id: row.id,
+      display_name: row.display_name,
+      handle: row.handle,
+      avatar_url: row.avatar_url,
+      tagline: row.tagline,
+      ...profile,
+      followers_count: Number(row.followers_count || 0),
+      statuses_count: Number(row.statuses_count || 0),
+      subscription: {
+        enabled: !!row.subscription_enabled,
+        priceMonthly: Number(row.subscription_price_cents || 3990) / 100,
+        promoMonthly: Number(row.subscription_promo_cents || 1990) / 100,
+        gift: Number(row.subscription_gift || 2000),
+      },
+    };
+  });
+  return c.json({ kols });
 });
 
 app.get("/api/config", async (c) => {
@@ -431,6 +806,13 @@ app.get("/api/kline-sina", async (c) => {
   return c.json({ symbol, kline: await getSinaKline(c.env.CACHE, symbol, num) });
 });
 
+app.get("/api/etf-holdings", async (c) => {
+  const symbol = c.req.query("symbol");
+  if (!symbol) return c.json({ error: "provide ?symbol=EUV" }, 400);
+  const holdings = await getEtfHoldings(c.env, symbol);
+  return holdings ? c.json(holdings) : c.json({ error: "holdings unavailable", symbol }, 404);
+});
+
 app.post("/api/chat", async (c) => {
   const body = await c.req.json<{
     kol_id: string;
@@ -442,6 +824,9 @@ app.post("/api/chat", async (c) => {
 
   const kol = await c.env.DB.prepare(`SELECT * FROM kols WHERE id=?`).bind(body.kol_id).first<KolRow>();
   if (!kol) return c.json({ error: "unknown kol_id" }, 404);
+  if (!kol.is_public || kol.onboarding_status !== "ready" || !kol.persona_pack || kol.persona_pack.length < 500) {
+    return c.json({ error: "kol_not_ready", message: "该 KOL 的完整语料与分身仍在构建中" }, 409);
+  }
 
   // Resolve model: BYOK models (cm_xxx) route through the user's own API; system models
   // ("pro", "flash") go through the Cloudflare AI Gateway. These two paths are mutually exclusive.
@@ -559,10 +944,10 @@ app.post("/api/chat", async (c) => {
         const rawTickerCandidates = Array.from(
           body.message.matchAll(/(?:\$|\b)([A-Z]{2,6})(?=\b)/g),
           (m) => m[1],
-        );
+        ).filter((ticker) => !["ETF", "FOMC", "PE", "PB", "EPS", "AI"].includes(ticker));
         const plannedInstruments = Array.from(new Set([
-          ...plan.instruments.map((i) => i.ticker || i.name).filter(Boolean),
           ...rawTickerCandidates,
+          ...plan.instruments.map((i) => i.ticker || i.name).filter(Boolean),
           ...plan.exact_entities,
         ]));
 
@@ -611,11 +996,11 @@ app.post("/api/chat", async (c) => {
           toolMemory: prevToolCalls.length ? prevToolCalls.slice(0, 8).join("\n") : undefined,
         });
 
-        // Send meta (citations + chart info) EARLY — right after retrieval, before the (optional) tool
-        // phase. This populates the right-side 原文支持 panel while the answer streams, dramatically
-        // improving perceived latency. (Previously meta was sent after the ~35s tool phase.)
+        // Retrieval candidates are private working context, not citations. The source rail is populated
+        // only after the final answer exists and we can deterministically keep refs actually used.
         send("meta", {
-          citations,
+          citations: [],
+          candidate_count: citations.length,
           chart: market.primary ? { code: market.primary.code, symbol: market.primary.symbol, market: market.primary.market } : null,
         });
 
@@ -655,6 +1040,7 @@ app.post("/api/chat", async (c) => {
               "Do not use a rigid template unless it fits the persona's style.\n" +
               "Do not stop at principles or say only that the persona avoids exact points.\n" +
               "引用写成 [1]、[2] 这种纯数字格式。自然地融入原文引用，不要刻意分段或加小标题。\n" +
+              "不要在文末追加参考资料列表、引文摘抄或编号说明；来源栏会单独展示原文。\n" +
               "缺数据明说，不要编。",
           },
         ];
@@ -731,12 +1117,23 @@ app.post("/api/chat", async (c) => {
         }
 
         full = normalizeCitationBrackets(stripToolCallDSL(full)).trim();
+        const validCitationRefs = new Set(citations.map((cc) => cc.ref));
+        // The model occasionally invents numeric markers for live data/news. Remove markers that do
+        // not map to a supplied source tweet, then replace the streamed draft with this canonical text.
+        full = full.replace(/(?:\[|【)\s*T?(\d+)\s*(?:\]|】)/gi, (marker, n) =>
+          validCitationRefs.has(`T${n}`) ? `[${n}]` : ""
+        ).replace(/[ \t]+([，。；：,.!?])/g, "$1").trim();
+        const usedRefs = new Set(Array.from(full.matchAll(/(?:\[|【)\s*T?(\d+)\s*(?:\]|】)/gi)).map((m) => `T${m[1]}`));
+        const locallyUsed = usedRefs.size ? citations.filter((cc) => usedRefs.has(cc.ref)) : [];
+        const citationState = await loadConversationCitationState(c.env, convId!);
+        const renumbered = renumberAnswerCitations(full, locallyUsed, citationState);
+        full = renumbered.answer;
+        const usedCitations = renumbered.messageCitations;
+        const cumulativeCitations = renumbered.cumulativeCitations;
 
         // Persist before closing the stream. Cloudflare may stop work after controller.close(), which
         // would leave follow-up turns with only user messages and no memory of the assistant answer.
         if (full) {
-          const usedRefs = new Set(Array.from(full.matchAll(/(?:\[|【)\s*T?(\d+)\s*(?:\]|】)/gi)).map((m) => `T${m[1]}`));
-          const usedCitations = usedRefs.size ? citations.filter((cc) => usedRefs.has(cc.ref)) : [];
           await c.env.DB.prepare(
             `INSERT INTO messages (id,conversation_id,role,content,citations,tool_calls) VALUES (?,?,?,?,?,?)`
           )
@@ -750,6 +1147,20 @@ app.post("/api/chat", async (c) => {
             c.executionCtx.waitUntil(maybeUpdateSummary(c.env, convId!, model).catch((e) => console.error("summary update failed", e)));
           }
         }
+        send("meta", {
+          citations: cumulativeCitations,
+          message_citations: usedCitations,
+          candidate_count: citations.length,
+          final: true,
+          chart: market.primary ? {
+            code: market.primary.code,
+            symbol: market.primary.symbol,
+            market: market.primary.market,
+            name: market.primary.canonicalName || market.primary.name,
+            asset_type: market.primary.assetType,
+          } : null,
+        });
+        send("final_answer", full);
 
         // Record a billing consumption row so /api/billing/state surfaces it (with byok flag
         // set when the user used their own key). Token counts are best-effort estimated.
@@ -776,7 +1187,7 @@ app.post("/api/chat", async (c) => {
           // Mirror to localStorage so the page instantly reflects the new row.
           send("consumption", { byok: !!byokCfg, free: isFree, points, model: body.model });
         }
-        send("done", {});
+        send("done", { citation_count: usedCitations.length });
         controller.close();
       } catch (e) {
         send("error", { message: String(e) });
@@ -1001,15 +1412,20 @@ app.post("/api/billing/checkout", async (c) => {
   } else if (body.type === "sub") {
     const kolId = body.kolId || "";
     if (!kolId) return c.json({ error: "unknown_kol" }, 400);
+    const kolPlan = await getKolPlan(c.env, kolId);
+    if (!kolPlan || !kolPlan.enabled) return c.json({ error: "unknown_kol" }, 400);
     plan = body.plan === "default" ? "default" : "promo";
-    kind = "sub"; ref = kolId; amountCents = subCents(kolId, plan);
-    name = `Robindex · ${planFor(kolId).name} 订阅`;
+    kind = "sub"; ref = kolId; amountCents = subCents(kolPlan, plan);
+    name = `Robindex · ${kolPlan.name} 订阅`;
   } else {
     return c.json({ error: "bad_type" }, 400);
   }
 
   // Airwallex subscriptions need a recurring Price set up in the account (see AIRWALLEX_PRICES).
-  if (provider === "airwallex" && kind === "sub" && !AIRWALLEX_PRICES[ref]) return c.json({ error: "no_airwallex_price_for_kol" }, 400);
+  const checkoutPlan = kind === "sub" ? await getKolPlan(c.env, ref) : null;
+  if (provider === "airwallex" && kind === "sub" && !checkoutPlan?.airwallexPriceId) {
+    return c.json({ error: "no_airwallex_price_for_kol" }, 400);
+  }
 
   const recordPayment = (id: string, prov: string) => c.env.DB.prepare(
     `INSERT OR IGNORE INTO billing_payments (id,user_id,provider,kind,ref,amount_cents,currency,status,created_at) VALUES (?,?,?,?,?,?,?,?,?)`
@@ -1028,7 +1444,7 @@ app.post("/api/billing/checkout", async (c) => {
     // Airwallex subscription: Hosted Billing Checkout returns a URL (no SDK), like Stripe.
     if (kind === "sub") {
       const co = await createBillingCheckout(c.env, {
-        priceId: AIRWALLEX_PRICES[ref],
+        priceId: checkoutPlan!.airwallexPriceId!,
         successUrl: `${origin}/?billing=success&provider=airwallex`, cancelUrl,
         metadata: { user_id: auth.userId, kol_id: ref, kind: "sub", plan },
       });
@@ -1451,41 +1867,91 @@ app.get("/api/admin/search-stats", async (c) => {
   return c.json({ tweets: tweets.results, tagged: tagged.results, indexed: indexed.results });
 });
 
-// ---- Auto-onboard: full KOL clone pipeline from just a Twitter handle ----
+async function triggerOnboardingDrive(env: Env, origin: string, kolId: string): Promise<void> {
+  const url = `${origin}/api/admin/onboard-drive?kol_id=${encodeURIComponent(kolId)}`;
+  const init = { method: "POST", headers: { "x-admin-key": env.ADMIN_KEY || "" } };
+  await (env.SELF ? env.SELF.fetch(url, init) : fetch(url, init));
+}
+
+// ---- Auto-onboard: resumable full-history KOL clone pipeline ----
 app.post("/api/admin/onboard", async (c) => {
   if (!adminOk(c)) return c.json({ error: "unauthorized" }, 401);
-  const body = await c.req.json<{ handle: string; display_name?: string; twitter_uid?: string }>();
+  const body = await c.req.json<{
+    handle: string;
+    display_name?: string;
+    twitter_uid?: string;
+    profile?: PublicKolProfile;
+    reset?: boolean;
+  }>();
   if (!body.handle) return c.json({ error: "handle required" }, 400);
-  const { generatePersonaPack } = await import("./persona-gen");
-  const { runDailyIngest } = await import("./ingest");
-  const kolId = body.handle.toLowerCase().replace(/[^a-z0-9]/g, "");
-  // Step 1: Create KOL record
-  await c.env.DB.prepare(
-    `INSERT OR IGNORE INTO kols (id,display_name,handle,twitter_uid,updated_at)
-     VALUES (?,?,?,?,datetime('now'))`
-  ).bind(kolId, body.display_name || body.handle, body.handle, body.twitter_uid || null).run();
-  // Step 2: Run initial ingest. Tweets become searchable as soon as they land in D1.
-  await runDailyIngest(c.env);
-  // Step 3: Generate persona pack
-  let personaInfo: { validation?: string[]; error?: string } = {};
   try {
-    const result = await generatePersonaPack(c.env, kolId);
-    await c.env.DB.prepare(
-      `UPDATE kols SET persona_pack=?, persona_version='v1-auto', updated_at=datetime('now') WHERE id=?`
-    ).bind(result.persona_pack, kolId).run();
-    personaInfo = { validation: result.validation };
-  } catch (e) {
-    personaInfo = { error: String(e) };
+    const started = await startOnboarding(c.env, body);
+    const origin = new URL(c.req.url).origin;
+    c.executionCtx.waitUntil(triggerOnboardingDrive(c.env, origin, started.kol_id).catch(() => {}));
+    return c.json({ ok: true, kol_id: started.kol_id, job: started.job, scheduled: true });
+  } catch (e: any) {
+    return c.json({ error: e.message || String(e) }, 500);
   }
+});
+
+app.post("/api/admin/onboard-drive", async (c) => {
+  if (!adminOk(c)) return c.json({ error: "unauthorized" }, 401);
+  const kolId = c.req.query("kol_id");
+  if (!kolId) return c.json({ error: "kol_id required" }, 400);
+  try {
+    const result = await processOnboardingBatch(c.env, kolId, 5);
+    const origin = new URL(c.req.url).origin;
+    if (result.job.phase === "ingesting") {
+      c.executionCtx.waitUntil(triggerOnboardingDrive(c.env, origin, kolId).catch(() => {}));
+    } else if (result.start_distill) {
+      await c.env.DB.prepare(`UPDATE kol_onboarding_jobs SET phase='distilling',updated_at=datetime('now') WHERE kol_id=?`)
+        .bind(kolId).run();
+      const url = `${origin}/api/admin/distill-auto?kol_id=${encodeURIComponent(kolId)}&reset=1`;
+      const init = { method: "POST", headers: { "x-admin-key": c.env.ADMIN_KEY || "" } };
+      c.executionCtx.waitUntil(Promise.resolve(c.env.SELF ? c.env.SELF.fetch(url, init) : fetch(url, init)).then(() => {}).catch(() => {}));
+    }
+    return c.json({ ok: true, job: result.job, start_distill: result.start_distill });
+  } catch (e: any) {
+    return c.json({ error: e.message || String(e) }, 500);
+  }
+});
+
+app.get("/api/admin/onboard-status", async (c) => {
+  if (!adminOk(c)) return c.json({ error: "unauthorized" }, 401);
+  const kolId = c.req.query("kol_id");
+  if (!kolId) return c.json({ error: "kol_id required" }, 400);
+  const job = await getOnboardingJob(c.env, kolId);
+  if (!job) return c.json({ error: "not found" }, 404);
   const stats = await c.env.DB.prepare(
-    `SELECT COUNT(*) total, SUM(CASE WHEN is_retweet=0 THEN 1 ELSE 0 END) non_retweets FROM tweets WHERE kol_id=?`
+    `SELECT COUNT(*) total,
+            SUM(CASE WHEN is_retweet=0 THEN 1 ELSE 0 END) originals,
+            MIN(created_at_iso) oldest,MAX(created_at_iso) newest
+     FROM tweets WHERE kol_id=?`
   ).bind(kolId).first<any>();
-  return c.json({
-    ok: true,
-    kol_id: kolId,
-    tweets: { total: stats?.total || 0, non_retweets: stats?.non_retweets || 0 },
-    persona: personaInfo.validation || personaInfo.error,
-  });
+  const indexed = await c.env.DB.prepare(`SELECT COUNT(*) n FROM tweet_search WHERE kol_id=?`).bind(kolId).first<any>();
+  const kol = await c.env.DB.prepare(
+    `SELECT onboarding_status,is_public,persona_version,length(persona_pack) persona_length,
+            airwallex_product_id,airwallex_price_id FROM kols WHERE id=?`
+  ).bind(kolId).first<any>();
+  return c.json({ job, kol, corpus: stats, indexed: indexed?.n || 0 });
+});
+
+app.post("/api/admin/onboard-apify-backfill", async (c) => {
+  if (!adminOk(c)) return c.json({ error: "unauthorized" }, 401);
+  const kolId = c.req.query("kol_id");
+  const since = c.req.query("since") || "2010-01-01";
+  const until = c.req.query("until") || new Date().toISOString().slice(0, 10);
+  if (!kolId) return c.json({ error: "kol_id required" }, 400);
+  try {
+    const result = await backfillOnboardingFromApify(c.env, kolId, { since, until });
+    const origin = new URL(c.req.url).origin;
+    const url = `${origin}/api/admin/distill-auto?kol_id=${encodeURIComponent(kolId)}&reset=1`;
+    const init = { method: "POST", headers: { "x-admin-key": c.env.ADMIN_KEY || "" } };
+    c.executionCtx.waitUntil(Promise.resolve(c.env.SELF ? c.env.SELF.fetch(url, init) : fetch(url, init)).then(() => {}).catch(() => {}));
+    return c.json({ ok: true, ...result, distill_scheduled: true });
+  } catch (e: any) {
+    return c.json({ error: e.message || String(e) }, 500);
+  }
 });
 
 app.get("/research", (c) => serveDesk(c));
@@ -1507,6 +1973,79 @@ app.post("/api/admin/persona-refresh", async (c) => {
   if (!adminOk(c)) return c.json({ error: "unauthorized" }, 401);
   const updated = await runWeeklyPersonaRefresh(c.env);
   return c.json({ ok: true, updated });
+});
+
+app.post("/api/admin/persona-update", async (c) => {
+  if (!adminOk(c)) return c.json({ error: "unauthorized" }, 401);
+  const body = await c.req.json<{ kol_id?: string; kind?: "weekly" | "monthly" | "full" | "rerender" }>()
+    .catch(() => ({} as { kol_id?: string; kind?: "weekly" | "monthly" | "full" | "rerender" }));
+  const kolId = String(body.kol_id || "").trim();
+  if (!kolId) return c.json({ error: "kol_id required" }, 400);
+  const kol = await c.env.DB.prepare(`SELECT id FROM kols WHERE id=?`).bind(kolId).first();
+  if (!kol) return c.json({ error: "unknown kol_id" }, 404);
+  const kind = body.kind || "full";
+  if (kind === "rerender") {
+    const result = await finalizeMerged(c.env, kolId);
+    if (!result.persona_json || result.persona_pack.length < 500) {
+      return c.json({ error: "rerender produced invalid candidate" }, 500);
+    }
+    const version = `v2-mapreduce-rerender-${new Date().toISOString().slice(0, 10)}-candidate-${Date.now()}`;
+    await stagePersonaCandidate(c.env, kolId, version, result.persona_pack, result.persona_json);
+    await c.env.DB.prepare(`UPDATE persona_candidates SET status='evaluating',updated_at=datetime('now') WHERE kol_id=?`)
+      .bind(kolId).run();
+    await c.env.DB.prepare(
+      `INSERT INTO persona_update_jobs
+         (kol_id,kind,phase,distill_phase,distill_group_index,distill_steps,retries,last_error,updated_at)
+       VALUES (?,'rerender','evaluating','eval_candidate',0,0,0,NULL,datetime('now'))
+       ON CONFLICT(kol_id) DO UPDATE SET
+         kind='rerender',phase='evaluating',distill_phase='eval_candidate',distill_group_index=0,
+         distill_steps=0,retries=0,last_error=NULL,completed_at=NULL,updated_at=datetime('now')`
+    ).bind(kolId).run();
+    return c.json({ ok: true, kol_id: kolId, kind, staged: true, version, pack_length: result.persona_pack.length });
+  }
+  const firstPhase = "map";
+  await c.env.DB.prepare(
+    `INSERT INTO persona_update_jobs
+       (kol_id,kind,phase,distill_phase,distill_group_index,distill_steps,retries,last_error,updated_at)
+     VALUES (?,?,'distilling',?,0,0,0,NULL,datetime('now'))
+     ON CONFLICT(kol_id) DO UPDATE SET
+       kind=excluded.kind,phase='distilling',distill_phase=excluded.distill_phase,distill_group_index=0,
+       distill_steps=0,retries=0,last_error=NULL,completed_at=NULL,updated_at=datetime('now')`
+  ).bind(kolId, kind, firstPhase).run();
+  return c.json({ ok: true, kol_id: kolId, kind, scheduled: true });
+});
+
+app.get("/api/admin/retrieval-debug", async (c) => {
+  if (!adminOk(c)) return c.json({ error: "unauthorized" }, 401);
+  const kolId = String(c.req.query("kol_id") || "").trim();
+  const query = String(c.req.query("q") || "").trim();
+  if (!kolId || !query) return c.json({ error: "kol_id and q required" }, 400);
+  const kol = await c.env.DB.prepare(
+    `SELECT id,handle,retrieval_mode,corpus_id FROM kols WHERE id=?`
+  ).bind(kolId).first<any>();
+  if (!kol) return c.json({ error: "unknown kol_id" }, 404);
+  const result = await retrieve(
+    c.env,
+    kolId,
+    kol.handle,
+    query,
+    [],
+    undefined,
+    c.env.MODEL_FLASH,
+    kol.retrieval_mode === "tagged" ? "tagged" : "query_side",
+    kol.corpus_id || kol.id,
+  );
+  return c.json({
+    ok: true,
+    kol_id: kolId,
+    query,
+    citations: result.citations,
+    knowledge: result.knowledge.map((item) => ({
+      source: item.source,
+      title: item.title,
+      relevance_score: item.relevance_score,
+    })),
+  });
 });
 
 // ---- Persona Pack generation & evolution ----
@@ -1582,6 +2121,25 @@ app.post("/api/admin/eval-run", async (c) => {
   }
 });
 
+app.get("/api/admin/eval-results", async (c) => {
+  if (!adminOk(c)) return c.json({ error: "unauthorized" }, 401);
+  const kolId = String(c.req.query("kol_id") || "").trim();
+  if (!kolId) return c.json({ error: "kol_id required" }, 400);
+  const version = String(c.req.query("version") || "").trim();
+  const limit = Math.min(Math.max(parseInt(c.req.query("limit") || "50", 10), 1), 100);
+  const sql = version
+    ? `SELECT r.*,ec.ground_truth_type,ec.expected_stance,ec.source_tweet_id
+       FROM eval_results r LEFT JOIN eval_cases ec ON ec.id=r.case_id
+       WHERE r.kol_id=? AND r.persona_version=? ORDER BY r.created_at DESC LIMIT ?`
+    : `SELECT r.*,ec.ground_truth_type,ec.expected_stance,ec.source_tweet_id
+       FROM eval_results r LEFT JOIN eval_cases ec ON ec.id=r.case_id
+       WHERE r.kol_id=? ORDER BY r.created_at DESC LIMIT ?`;
+  const result = version
+    ? await c.env.DB.prepare(sql).bind(kolId, version, limit).all()
+    : await c.env.DB.prepare(sql).bind(kolId, limit).all();
+  return c.json({ results: result.results || [] });
+});
+
 app.get("/api/admin/eval-preview", async (c) => {
   if (!adminOk(c)) return c.json({ error: "unauthorized" }, 401);
   const kolId = c.req.query("kol_id");
@@ -1646,6 +2204,80 @@ async function publishDistilledPack(env: Env, kolId: string, pack: string, versi
   }
   await env.DB.prepare(`UPDATE kols SET persona_pack=?, persona_version=?, updated_at=datetime('now') WHERE id=?`)
     .bind(pack, version, kolId).run();
+}
+
+async function stagePersonaCandidate(
+  env: Env,
+  kolId: string,
+  version: string,
+  pack: string,
+  personaJson: PersonaJson,
+): Promise<void> {
+  const coverage = personaCoverageGate(personaJson, pack);
+  if (!coverage.ok) {
+    throw new Error(`persona coverage gate failed: missing=${coverage.missing.join(",") || "none"} identity_ok=${coverage.identity_ok}`);
+  }
+  await env.DB.prepare(
+    `INSERT INTO persona_candidates
+       (kol_id,version,persona_pack,persona_json,coverage_json,profile_json,status,last_error,updated_at)
+     VALUES (?,?,?,?,?,NULL,'staged',NULL,datetime('now'))
+     ON CONFLICT(kol_id) DO UPDATE SET
+       version=excluded.version,persona_pack=excluded.persona_pack,persona_json=excluded.persona_json,
+       coverage_json=excluded.coverage_json,profile_json=NULL,status='staged',last_error=NULL,updated_at=datetime('now')`
+  ).bind(kolId, version, pack, JSON.stringify(personaJson), JSON.stringify(coverage)).run();
+}
+
+async function publishPersonaCandidate(
+  env: Env,
+  kolId: string,
+  billing: { productId: string; priceId: string },
+): Promise<void> {
+  const candidate = await env.DB.prepare(
+    `SELECT version,persona_pack,persona_json,profile_json FROM persona_candidates
+     WHERE kol_id=? AND status IN ('evaluating','passed')`
+  ).bind(kolId).first<any>();
+  if (!candidate) throw new Error(`persona candidate missing for ${kolId}`);
+  if (!candidate.profile_json) throw new Error(`public profile missing for ${kolId}`);
+  const candidateJson = JSON.parse(candidate.persona_json || "{}") as PersonaJson;
+  const coverage = personaCoverageGate(candidateJson, candidate.persona_pack);
+  if (!coverage.ok) throw new Error(`candidate coverage changed before publish: ${coverage.missing.join(",") || "identity"}`);
+  const current = await env.DB.prepare(`SELECT persona_pack,persona_version FROM kols WHERE id=?`).bind(kolId).first<any>();
+  if (current?.persona_pack && current.persona_pack.length > 100) {
+    await env.DB.prepare(
+      `INSERT OR REPLACE INTO knowledge_chunks (id,kol_id,source,title,text) VALUES (?,?,?,?,?)`
+    ).bind(
+      `${kolId}:persona_backup:${new Date().toISOString().slice(0, 10)}:${Date.now()}`,
+      kolId,
+      `persona_backup:${current.persona_version || "unknown"}`,
+      `Persona backup ${new Date().toISOString().slice(0, 10)}`,
+      current.persona_pack,
+    ).run();
+  }
+  const profile = JSON.parse(candidate.profile_json);
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE kols SET persona_pack=?,persona_version=?,profile_json=?,tagline=?,
+         airwallex_product_id=?,airwallex_price_id=?,onboarding_status='ready',is_public=1,
+         updated_at=datetime('now') WHERE id=?`
+    ).bind(
+      candidate.persona_pack,
+      candidate.version,
+      candidate.profile_json,
+      profile?.tagline?.zh || profile?.tagline?.en || null,
+      billing.productId,
+      billing.priceId,
+      kolId,
+    ),
+    env.DB.prepare(
+    `INSERT INTO persona_facts
+       (id,kol_id,kind,chunk_idx,corpus_hash,json,tweets_covered,date_min,date_max,updated_at)
+     VALUES (?,?,'merged',NULL,'published',?,NULL,NULL,NULL,datetime('now'))
+     ON CONFLICT(id) DO UPDATE SET json=excluded.json,updated_at=datetime('now')`
+    ).bind(`${kolId}:merged`, kolId, candidate.persona_json || "{}"),
+    env.DB.prepare(
+      `UPDATE persona_candidates SET status='published',last_error=NULL,updated_at=datetime('now') WHERE kol_id=?`
+    ).bind(kolId),
+  ]);
 }
 
 // Full-corpus map-reduce persona distillation. Reads 100% of the corpus (chunk → flash map → pro
@@ -1800,10 +2432,15 @@ async function runDistillStep(
       await log(`map ${prog.cached}/${prog.total} (rem ${prog.remaining})`);
       return prog.remaining > 0 ? { next: "map", extra: "" } : { next: "group", extra: "&i=0" };
     }
-    if (phase === "group") {
-      const prog = await reduceGroup(env, kolId, groupIdx);
-      await log(`reduce_group ${groupIdx + 1}/${prog.groups} ok=${prog.ok}`);
-      return groupIdx + 1 < prog.groups ? { next: "group", extra: `&i=${groupIdx + 1}` } : { next: "final", extra: "" };
+    if (phase === "group" || /^group_l\d+$/.test(phase)) {
+      const targetLevel = phase === "group" ? 1 : Number(phase.match(/^group_l(\d+)$/)?.[1] || 1);
+      const prog = await reduceGroupLevel(env, kolId, targetLevel, groupIdx);
+      await log(`reduce_l${targetLevel} ${groupIdx + 1}/${prog.groups} ok=${prog.ok}`);
+      if (!prog.ok) return { next: phase, extra: `&i=${groupIdx}` };
+      if (groupIdx + 1 < prog.groups) return { next: phase, extra: `&i=${groupIdx + 1}` };
+      return prog.groups > 4
+        ? { next: `group_l${targetLevel + 1}`, extra: "&i=0" }
+        : { next: "final", extra: "" };
     }
     if (phase === "final") {
       // Final reduce, step 1/2: the pro merge ONLY (no full-corpus load) → 'merged_draft' fact. LLM-only
@@ -1820,53 +2457,117 @@ async function runDistillStep(
       const result = await finalizeMerged(env, kolId);
       if (result.persona_pack.length >= 500) {
         const version = `v2-mapreduce-${new Date().toISOString().slice(0, 10)}`;
-        const candidateVersion = `${version}-candidate-${Date.now()}`;
-        const cnt = await env.DB.prepare(`SELECT COUNT(*) n FROM eval_cases WHERE kol_id=?`).bind(kolId).first<{ n: number }>();
-        let publish = true;
-        let gateNote = "no eval set; publish without candidate gate";
-        if (cnt?.n) {
-          const baseline = await env.DB.prepare(
-            `SELECT persona_version, AVG(score_citation) c, AVG(score_voice) v, AVG(score_stance) s, COUNT(*) n
-             FROM eval_results
-             WHERE kol_id=? AND score_citation IS NOT NULL
-               AND persona_version NOT LIKE '%candidate%'
-             GROUP BY persona_version
-             HAVING n >= 6
-             ORDER BY MAX(created_at) DESC
-             LIMIT 1`
-          ).bind(kolId).first<any>();
-          const cand = await runEval(env, kolId, {
-            limit: 1,
-            personaPack: result.persona_pack,
-            personaVersion: candidateVersion,
-          });
-          const baseParts = baseline
-            ? [baseline.c, baseline.v, ...(baseline.s !== null ? [baseline.s] : [])].filter((x) => x !== null)
-            : [];
-          const baselineComposite = baseParts.length
-            ? baseParts.reduce((a: number, b: number) => a + b, 0) / baseParts.length
-            : null;
-          publish =
-            cand.processed > 0 &&
-            cand.avg_citation >= 0.55 &&
-            cand.avg_voice >= 0.25 &&
-            (baselineComposite === null || cand.composite >= baselineComposite - 0.08);
-          gateNote =
-            `candidate_gate baseline=${baselineComposite?.toFixed(3) ?? "none"} base_ver=${baseline?.persona_version || "none"} ` +
-            `cand=${cand.composite.toFixed(3)} cite=${cand.avg_citation.toFixed(3)} voice=${cand.avg_voice.toFixed(3)} ` +
-            `processed=${cand.processed} publish=${publish}`;
-        }
-        await log(gateNote);
-        if (!publish) {
-          await log(`finalize candidate rejected; live pack preserved`);
-          await env.CACHE.delete(stepKey);
-          return { next: null, extra: "" };
-        }
-        await publishDistilledPack(env, kolId, result.persona_pack, version);
-        await log(`finalize published ${version}: models=${result.stats.models} exemplars=${result.stats.exemplars} len=${result.persona_pack.length}`);
-        return { next: "eval", extra: "" };
+        if (!result.persona_json) throw new Error(`final persona JSON missing for ${kolId}`);
+        // Quality failures are terminal and remain private. Do not spend another full final-reduce
+        // cycle hoping a stochastic retry happens to pass the same gate.
+        await stagePersonaCandidate(env, kolId, `${version}-candidate-${Date.now()}`, result.persona_pack, result.persona_json);
+        await env.DB.prepare(`UPDATE persona_candidates SET status='evaluating',updated_at=datetime('now') WHERE kol_id=?`)
+          .bind(kolId).run();
+        await env.DB.prepare(`UPDATE kols SET onboarding_status='evaluating',updated_at=datetime('now') WHERE id=? AND is_public=0`)
+          .bind(kolId).run();
+        await env.DB.prepare(`UPDATE kol_onboarding_jobs SET phase='evaluating',updated_at=datetime('now') WHERE kol_id=?`)
+          .bind(kolId).run();
+        await env.DB.prepare(
+          `UPDATE persona_update_jobs SET phase='evaluating',distill_phase='eval_candidate',updated_at=datetime('now')
+           WHERE kol_id=? AND phase='distilling'`
+        ).bind(kolId).run();
+        await log(`finalize staged candidate: models=${result.stats.models} exemplars=${result.stats.exemplars} len=${result.persona_pack.length}`);
+        return { next: "build_eval", extra: "" };
       }
       await log(`finalize: pack too short (${result.persona_pack.length}), not published`);
+      return { next: null, extra: "" };
+    }
+    if (phase === "profile") {
+      const candidate = await env.DB.prepare(
+        `SELECT persona_json FROM persona_candidates WHERE kol_id=? AND status='evaluating'`
+      ).bind(kolId).first<any>();
+      if (!candidate?.persona_json) throw new Error(`persona candidate JSON missing for ${kolId}`);
+      const profile = await buildPublicKolProfile(env, kolId, JSON.parse(candidate.persona_json));
+      await env.DB.prepare(
+        `UPDATE persona_candidates SET profile_json=?,updated_at=datetime('now') WHERE kol_id=?`
+      ).bind(JSON.stringify(profile), kolId).run();
+      await log(`public profile generated: suggested=${profile.suggested.zh.length}/${profile.suggested.en.length}`);
+      return { next: "provisioning", extra: "" };
+    }
+    if (phase === "build_eval") {
+      const built = await buildEvalSet(env, kolId);
+      await log(`eval set rebuilt: total=${built.built} real=${built.real_qa} synth=${built.synth_follower}`);
+      return { next: "eval_candidate", extra: "" };
+    }
+    if (phase === "eval_candidate") {
+      const candidate = await env.DB.prepare(
+        `SELECT version,persona_pack FROM persona_candidates WHERE kol_id=? AND status='evaluating'`
+      ).bind(kolId).first<any>();
+      if (!candidate) throw new Error(`no evaluating persona candidate for ${kolId}`);
+      const cnt = await env.DB.prepare(`SELECT COUNT(*) n FROM eval_cases WHERE kol_id=?`).bind(kolId).first<{ n: number }>();
+      if (!cnt?.n) return { next: "build_eval", extra: "" };
+      const s = await runEval(env, kolId, {
+        limit: 2,
+        personaPack: candidate.persona_pack,
+        personaVersion: candidate.version,
+      });
+      await log(`candidate eval rem=${s.remaining} composite=${s.composite.toFixed(3)} cite=${s.avg_citation.toFixed(3)} regressed=${s.regressed}`);
+      if (s.remaining > 0) return { next: "eval_candidate", extra: "" };
+      const targeted = await env.DB.prepare(
+        `SELECT r.score_citation c,r.score_voice v,r.score_relevance rel,r.score_entailment ent
+         FROM eval_results r JOIN eval_cases ec ON ec.id=r.case_id
+         WHERE r.kol_id=? AND r.persona_version=? AND lower(ec.question) LIKE '%dram%'
+         ORDER BY r.created_at DESC LIMIT 1`
+      ).bind(kolId, candidate.version).first<any>();
+      const targetedPassed = !targeted || (
+        Number(targeted.c || 0) >= 0.7 &&
+        Number(targeted.v || 0) >= 0.5 &&
+        Number(targeted.rel || 0) >= 0.6 &&
+        Number(targeted.ent || 0) >= 0.6
+      );
+      const passRate = s.cases > 0 ? s.passed / s.cases : 0;
+      const passed = !s.regressed && s.avg_citation >= 0.55 && s.avg_voice >= 0.4 &&
+        s.avg_relevance >= 0.6 && s.avg_entailment >= 0.6 &&
+        (s.avg_stance === null || s.avg_stance >= 0.6) &&
+        passRate >= 0.65 && targetedPassed;
+      if (!passed) {
+        await env.DB.prepare(
+          `UPDATE persona_candidates SET status='rejected',last_error=?,updated_at=datetime('now') WHERE kol_id=?`
+        ).bind(
+          `eval rejected pass_rate=${passRate.toFixed(3)} composite=${s.composite.toFixed(3)} ` +
+          `citation=${s.avg_citation.toFixed(3)} voice=${s.avg_voice.toFixed(3)} ` +
+          `relevance=${s.avg_relevance.toFixed(3)} entailment=${s.avg_entailment.toFixed(3)}`,
+          kolId,
+        ).run();
+        throw new Error(`candidate eval gate failed for ${kolId}`);
+      }
+      await env.DB.prepare(
+        `UPDATE persona_candidates SET status='passed',last_error=NULL,updated_at=datetime('now') WHERE kol_id=?`
+      ).bind(kolId).run();
+      return { next: "profile", extra: "" };
+    }
+    if (phase === "provisioning") {
+      const kol = await env.DB.prepare(
+        `SELECT display_name,airwallex_product_id,airwallex_price_id FROM kols WHERE id=?`
+      ).bind(kolId).first<any>();
+      if (!kol) throw new Error(`KOL not found: ${kolId}`);
+      let productId = String(kol.airwallex_product_id || "");
+      let priceId = String(kol.airwallex_price_id || "");
+      if (!productId || !priceId) {
+        const plan = await getKolPlan(env, kolId);
+        if (!plan) throw new Error(`subscription plan missing for ${kolId}`);
+        const provisioned = await provisionKolSubscription(env, {
+          kolId,
+          displayName: kol.display_name || kolId,
+          promoCents: 1990,
+        });
+        productId = provisioned.productId;
+        priceId = provisioned.priceId;
+      }
+      await publishPersonaCandidate(env, kolId, { productId, priceId });
+      await env.CACHE.delete(stepKey);
+      await env.DB.prepare(
+        `UPDATE kol_onboarding_jobs SET phase='ready',last_error=NULL,completed_at=datetime('now'),updated_at=datetime('now') WHERE kol_id=?`
+      ).bind(kolId).run();
+      await env.DB.prepare(
+        `UPDATE persona_update_jobs SET phase='ready',completed_at=datetime('now'),updated_at=datetime('now') WHERE kol_id=? AND phase IN ('distilling','evaluating')`
+      ).bind(kolId).run();
+      await log(`DONE candidate published with Airwallex price ${priceId}`);
       return { next: null, extra: "" };
     }
     if (phase === "eval") {
@@ -1882,14 +2583,126 @@ async function runDistillStep(
       if (s.regressed) { const rb = await autoRollback(env, kolId, "distill-auto eval regression"); rolled = rb.rolled_back; }
       await env.CACHE.delete(stepKey);
       await log(`DONE composite=${s.composite.toFixed(3)} regressed=${s.regressed} rolled_back=${rolled}`);
+      const onboarding = await env.DB.prepare(`SELECT kol_id FROM kol_onboarding_jobs WHERE kol_id=?`).bind(kolId).first();
+      if (onboarding) {
+        if (s.regressed && !rolled) {
+          await env.DB.prepare(
+            `UPDATE kol_onboarding_jobs SET phase='failed',last_error=?,updated_at=datetime('now') WHERE kol_id=?`
+          ).bind(`eval regression composite=${s.composite.toFixed(3)}`, kolId).run();
+          await env.DB.prepare(`UPDATE kols SET onboarding_status='failed',is_public=0,updated_at=datetime('now') WHERE id=?`)
+            .bind(kolId).run();
+        } else {
+          await env.DB.prepare(
+            `UPDATE kol_onboarding_jobs SET phase='ready',last_error=NULL,completed_at=datetime('now'),updated_at=datetime('now') WHERE kol_id=?`
+          ).bind(kolId).run();
+          await env.DB.prepare(`UPDATE kols SET onboarding_status='ready',is_public=1,updated_at=datetime('now') WHERE id=?`)
+            .bind(kolId).run();
+        }
+      }
       return { next: null, extra: "" };
     }
     await log(`ERROR unknown phase ${phase}`);
     return { next: null, extra: "" };
   } catch (e: any) {
     await log(`ERROR phase=${phase}: ${String(e).slice(0, 200)}`);
+    const lifecycle = await env.DB.prepare(
+      `SELECT is_public,length(persona_pack) pack_len FROM kols WHERE id=?`
+    ).bind(kolId).first<any>();
+    const keepLive = Number(lifecycle?.is_public || 0) === 1 && Number(lifecycle?.pack_len || 0) >= 500;
+    const onboarding = await env.DB.prepare(`SELECT phase FROM kol_onboarding_jobs WHERE kol_id=?`).bind(kolId).first<any>();
+    if (onboarding && !["ready", "failed"].includes(String(onboarding.phase))) {
+      if (keepLive) {
+        await env.DB.prepare(
+          `UPDATE kol_onboarding_jobs SET phase='ready',last_error=?,updated_at=datetime('now') WHERE kol_id=?`
+        ).bind(`candidate retained old live persona: ${String(e).slice(0, 300)}`, kolId).run();
+      } else {
+        await env.DB.prepare(
+          `UPDATE kol_onboarding_jobs SET phase='failed',last_error=?,updated_at=datetime('now') WHERE kol_id=?`
+        ).bind(`distill ${phase}: ${String(e).slice(0, 400)}`, kolId).run();
+        await env.DB.prepare(`UPDATE kols SET onboarding_status='failed',is_public=0,updated_at=datetime('now') WHERE id=?`)
+          .bind(kolId).run();
+      }
+    }
+    const rejected = await env.DB.prepare(
+      `SELECT status FROM persona_candidates WHERE kol_id=?`
+    ).bind(kolId).first<any>();
+    await env.DB.prepare(
+      `UPDATE persona_update_jobs SET phase='failed',
+         retries=CASE WHEN ?=1 THEN 8 ELSE retries+1 END,last_error=?,updated_at=datetime('now')
+       WHERE kol_id=? AND phase NOT IN ('ready','failed')`
+    ).bind(rejected?.status === "rejected" ? 1 : 0, `distill ${phase}: ${String(e).slice(0, 400)}`, kolId).run();
     return { next: null, extra: "" };
   }
+}
+
+async function acquireDistillStepLock(env: Env, kolId: string): Promise<string | null> {
+  const owner = crypto.randomUUID();
+  const now = Date.now();
+  // Pro reduce calls can legitimately take 3-6 minutes. Keep the lease longer than one call so a
+  // later cron tick cannot start the same group while the provider response is still in flight.
+  const leaseUntil = now + 10 * 60 * 1000;
+  await env.DB.prepare(
+    `INSERT INTO distill_step_locks (kol_id,owner,lease_until,updated_at)
+     VALUES (?,?,?,datetime('now'))
+     ON CONFLICT(kol_id) DO UPDATE SET
+       owner=excluded.owner,lease_until=excluded.lease_until,updated_at=datetime('now')
+     WHERE distill_step_locks.lease_until < ?`
+  ).bind(kolId, owner, leaseUntil, now).run();
+  const row = await env.DB.prepare(`SELECT owner FROM distill_step_locks WHERE kol_id=?`).bind(kolId).first<any>();
+  return row?.owner === owner ? owner : null;
+}
+
+async function releaseDistillStepLock(env: Env, kolId: string, owner: string): Promise<void> {
+  await env.DB.prepare(`DELETE FROM distill_step_locks WHERE kol_id=? AND owner=?`).bind(kolId, owner).run();
+}
+
+async function persistDistillCursor(
+  env: Env,
+  kolId: string,
+  next: string | null,
+  extra: string,
+  steps: number,
+): Promise<void> {
+  const onboarding = await env.DB.prepare(
+    `SELECT phase FROM kol_onboarding_jobs WHERE kol_id=?`
+  ).bind(kolId).first<any>();
+  if (next) {
+    const nextI = extra.includes("i=") ? parseInt(extra.split("i=")[1], 10) : 0;
+    const reduceLevel = next === "group" ? 1 : Number(next.match(/^group_l(\d+)$/)?.[1] || 0);
+    if (onboarding) await env.DB.prepare(
+      `UPDATE kol_onboarding_jobs
+       SET distill_phase=?,distill_group_index=?,distill_steps=?,reduce_level=?,distill_updated_at=datetime('now'),
+           updated_at=datetime('now')
+       WHERE kol_id=? AND phase IN ('distilling','evaluating')`
+    ).bind(next, Number.isFinite(nextI) ? nextI : 0, steps, reduceLevel, kolId).run();
+    await env.DB.prepare(
+      `UPDATE persona_update_jobs
+       SET distill_phase=?,distill_group_index=?,distill_steps=?,reduce_level=?,updated_at=datetime('now')
+       WHERE kol_id=? AND phase IN ('distilling','evaluating')`
+    ).bind(next, Number.isFinite(nextI) ? nextI : 0, steps, reduceLevel, kolId).run();
+    return;
+  }
+  // A successful eval step changes the lifecycle to ready before returning null. Any other terminal
+  // null means the candidate gate/pack generation stopped and must remain private.
+  const lifecycle = await env.DB.prepare(
+    `SELECT is_public,length(persona_pack) pack_len FROM kols WHERE id=?`
+  ).bind(kolId).first<any>();
+  const keepLive = Number(lifecycle?.is_public || 0) === 1 && Number(lifecycle?.pack_len || 0) >= 500;
+  if (onboarding && onboarding.phase !== "ready" && onboarding.phase !== "failed" && !keepLive) {
+    await env.DB.prepare(
+      `UPDATE kol_onboarding_jobs
+       SET phase='failed',last_error=?,distill_steps=?,distill_updated_at=datetime('now'),updated_at=datetime('now')
+       WHERE kol_id=?`
+    ).bind(`distill stopped before ready`, steps, kolId).run();
+    await env.DB.prepare(
+      `UPDATE kols SET onboarding_status='failed',is_public=0,updated_at=datetime('now') WHERE id=?`
+    ).bind(kolId).run();
+  }
+  await env.DB.prepare(
+    `UPDATE persona_update_jobs SET phase='failed',last_error='distill stopped before ready',
+       distill_steps=?,updated_at=datetime('now')
+     WHERE kol_id=? AND phase NOT IN ('ready','failed')`
+  ).bind(steps, kolId).run();
 }
 
 // Automated backfill orchestrator. Runs the current step IN-REQUEST, then self-triggers the next via a
@@ -1905,24 +2718,23 @@ app.post("/api/admin/distill-auto", async (c) => {
   if (!kolId) return c.json({ error: "kol_id required" }, 400);
   const phase = c.req.query("phase") || "map";
   const groupIdx = parseInt(c.req.query("i") || "0", 10);
-  const STEP_CAP = 80;
 
-  // Runaway guard: a KV-backed step counter (TTL 2h), reset on a fresh start.
+  // Progress is bounded by durable cursors, not a global step cap: very large accounts may
+  // legitimately require hundreds of context-safe map/reduce steps.
   const stepKey = `distill_steps:${kolId}`;
   let steps = c.req.query("reset") === "1" ? 0 : parseInt((await c.env.CACHE.get(stepKey)) || "0", 10);
   steps++;
   await c.env.CACHE.put(stepKey, String(steps), { expirationTtl: 7200 });
 
-  if (steps > STEP_CAP) {
-    await logPersonaExperiment(c.env, kolId, {
-      content: "", finish_reason: "step", content_len: 0, duration_ms: 0, parse_ok: true, error_type: null,
-      note: `[${steps}] STOP: step cap ${STEP_CAP} hit at phase=${phase}`,
-    }, 0, "distill_auto");
-    await c.env.CACHE.delete(`distill_job:${kolId}`);
-    return c.json({ stopped: "step_cap", steps });
+  const lockOwner = await acquireDistillStepLock(c.env, kolId);
+  if (!lockOwner) return c.json({ ok: true, busy: true, phase, steps });
+  let result: { next: string | null; extra: string };
+  try {
+    result = await runDistillStep(c.env, kolId, phase, groupIdx, steps, stepKey);
+  } finally {
+    await releaseDistillStepLock(c.env, kolId, lockOwner);
   }
-
-  const result = await runDistillStep(c.env, kolId, phase, groupIdx, steps, stepKey);
+  await persistDistillCursor(c.env, kolId, result.next, result.extra, steps);
   if (result.next) {
     const nextI = result.extra.includes("i=") ? parseInt(result.extra.split("i=")[1], 10) : 0;
     await c.env.CACHE.put(`distill_job:${kolId}`, JSON.stringify({ phase: result.next, i: nextI }), { expirationTtl: 7200 });
@@ -1962,24 +2774,93 @@ app.post("/api/admin/persona-diagnose", async (c) => {
 // self-chain can't (the long sequence of slow eval batches): each cron tick is an independent invocation
 // with a fresh ~100s budget, so it never hits the await-the-slow-child wall. One step/min → a full eval
 // (~13 batches) finishes in ~13 min, hands-off. Idempotent steps mean overlap with the self-chain is safe.
-async function driveDistillJobs(env: Env): Promise<void> {
+async function driveDistillJobs(env: Env, limit = 3): Promise<void> {
+  // Failed jobs stay failed until an explicit retry request. A previous blanket UPDATE revived every
+  // old shadow failure on each monthly run and silently spent model credits for hours.
+  // D1 is the durable source of truth for onboarding. It survives KV expiry and a Worker being
+  // terminated between finishing a provider request and scheduling its self-fetch continuation.
+  const durableRows = await env.DB.prepare(
+    `SELECT kol_id,distill_phase,distill_group_index,distill_steps,
+            COALESCE(distill_updated_at,updated_at) AS sort_at
+     FROM kol_onboarding_jobs
+     WHERE phase IN ('distilling','evaluating') AND distill_phase IS NOT NULL
+     UNION ALL
+     SELECT kol_id,distill_phase,distill_group_index,distill_steps,updated_at AS sort_at
+     FROM persona_update_jobs
+     WHERE phase IN ('distilling','evaluating') AND distill_phase IS NOT NULL
+     ORDER BY sort_at ASC
+     LIMIT ?`
+  ).bind(Math.max(1, Math.min(3, limit))).all();
+  const durableIds = new Set<string>();
+  for (const row of (durableRows.results || []) as any[]) {
+    const kolId = String(row.kol_id);
+    if (durableIds.has(kolId)) continue;
+    durableIds.add(kolId);
+    const steps = Number(row.distill_steps || 0) + 1;
+    if (steps > 120) {
+      const reason = "distill budget exceeded: 120 Worker steps";
+      await env.DB.batch([
+        env.DB.prepare(
+          `UPDATE persona_update_jobs SET phase='failed',retries=8,last_error=?,updated_at=datetime('now')
+           WHERE kol_id=? AND phase IN ('distilling','evaluating')`
+        ).bind(reason, kolId),
+        env.DB.prepare(
+          `UPDATE kol_onboarding_jobs SET phase='failed',last_error=?,updated_at=datetime('now')
+           WHERE kol_id=? AND phase IN ('distilling','evaluating')`
+        ).bind(reason, kolId),
+      ]);
+      await env.CACHE.delete(`distill_job:${kolId}`);
+      continue;
+    }
+    const lockOwner = await acquireDistillStepLock(env, kolId);
+    if (!lockOwner) continue;
+    let result: { next: string | null; extra: string };
+    try {
+      result = await runDistillStep(
+        env,
+        kolId,
+        String(row.distill_phase),
+        Number(row.distill_group_index || 0),
+        steps,
+        `distill_steps:${kolId}`,
+      );
+    } finally {
+      await releaseDistillStepLock(env, kolId, lockOwner);
+    }
+    await persistDistillCursor(env, kolId, result.next, result.extra, steps);
+    if (result.next) {
+      const nextI = result.extra.includes("i=") ? parseInt(result.extra.split("i=")[1], 10) : 0;
+      await env.CACHE.put(
+        `distill_job:${kolId}`,
+        JSON.stringify({ phase: result.next, i: Number.isFinite(nextI) ? nextI : 0 }),
+        { expirationTtl: 7200 },
+      );
+    } else {
+      await env.CACHE.delete(`distill_job:${kolId}`);
+    }
+  }
+
+  // Remove pre-D1 orphan cursors instead of executing them. Durable rows are now the sole authority;
+  // otherwise a stale KV key can start an unobservable, unbudgeted model loop.
   const list = await env.CACHE.list({ prefix: "distill_job:" });
   for (const key of list.keys) {
     const kolId = key.name.slice("distill_job:".length);
-    const jobRaw = await env.CACHE.get(key.name);
-    if (!jobRaw) continue;
-    let job: { phase: string; i: number };
-    try { job = JSON.parse(jobRaw); } catch { await env.CACHE.delete(key.name); continue; }
-    const stepKey = `distill_steps:${kolId}`;
-    const steps = parseInt((await env.CACHE.get(stepKey)) || "0", 10) + 1;
-    await env.CACHE.put(stepKey, String(steps), { expirationTtl: 7200 });
-    if (steps > 200) { await env.CACHE.delete(key.name); continue; } // runaway guard
-    const result = await runDistillStep(env, kolId, job.phase, job.i || 0, steps, stepKey);
-    if (result.next) {
-      const nextI = result.extra.includes("i=") ? parseInt(result.extra.split("i=")[1], 10) : 0;
-      await env.CACHE.put(key.name, JSON.stringify({ phase: result.next, i: nextI }), { expirationTtl: 7200 });
-    } else {
-      await env.CACHE.delete(key.name);
+    if (durableIds.has(kolId)) continue;
+    await env.CACHE.delete(key.name);
+    await env.CACHE.delete(`distill_steps:${kolId}`);
+  }
+}
+
+async function driveOnboardingJobs(env: Env, limit = 3): Promise<void> {
+  const jobs = await listRunnableOnboardingJobs(env, limit);
+  for (const job of jobs) {
+    const result = job.phase === "reconciling"
+      ? await processOnboardingReconciliation(env, job.kol_id)
+      : await processOnboardingBatch(env, job.kol_id, 5);
+    if (result.start_distill) {
+      // No self-fetch is required here. processOnboardingBatch persisted map/0 in D1 and the independent
+      // distill cron driver will pick it up with a fresh invocation budget.
+      await env.CACHE.delete(`distill_job:${job.kol_id}`);
     }
   }
 }
@@ -2085,6 +2966,20 @@ export default {
   fetch(req: Request, env: Env, ctx: ExecutionContext) {
     const host = requestHost(req);
     const url = new URL(req.url);
+    // Static Assets may short-circuit extensionless SPA paths in local/production asset routing.
+    // Rewrite the two hidden human-facing routes into API space before handing off to Hono.
+    if (isOnboardingHost(host)) {
+      const invite = url.pathname.match(/^\/add-kol\/([^/]+)\/?$/);
+      if (invite) {
+        url.pathname = "/api/onboarding/invite";
+        url.searchParams.set("token", invite[1]);
+        return app.fetch(new Request(url, req), env, ctx);
+      }
+      if (url.pathname === "/add-kol" || url.pathname === "/add-kol/") {
+        url.pathname = "/api/onboarding/page";
+        return app.fetch(new Request(url, req), env, ctx);
+      }
+    }
     if (isMarketingHost(host)) {
       if (
         url.pathname.startsWith("/kol/") ||
@@ -2103,14 +2998,16 @@ export default {
   },
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext) {
     if (event.cron === "* * * * *") {
-      // Every minute: advance any in-progress distill backfill by one step (no-op when none are running).
-      ctx.waitUntil(driveDistillJobs(env));
+      // Every minute: at most three expensive job steps globally. Reserve one slot for ingestion /
+      // reconciliation and two for distill/eval so one prolific account cannot starve every other job.
+      ctx.waitUntil(Promise.all([
+        driveOnboardingJobs(env, 1),
+        driveDistillJobs(env, 2),
+      ]).then(() => {}));
       return;
     }
-    if (event.cron === "30 9 * * 1") {
-      ctx.waitUntil(runWeeklyPersonaRefresh(env));
-      return;
-    }
+    // Persona refreshes are explicit jobs only. The daily cron below fetches/indexes new tweets
+    // without any LLM calls; it never rewrites a live persona automatically.
     ctx.waitUntil(runDailyIngest(env));
   },
 };

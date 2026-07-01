@@ -1,6 +1,6 @@
 # Robindex Plan
 
-Last updated: 2026-06-22.
+Last updated: 2026-07-01.
 
 Use `README.md` as the handoff source of truth for architecture, files, deploys, and operational notes. This file is only the current product status, recent changes, and next work.
 
@@ -11,13 +11,13 @@ Use `README.md` as the handoff source of truth for architecture, files, deploys,
 | Marketing | Live at https://robindex.ai and https://www.robindex.ai |
 | Product | Live at https://app.robindex.ai |
 | Auth | Privy email + Google |
-| Personas | `qinbafrank`, `aleabitoreddit` / Serenity |
+| Personas | `qinbafrank`, `aleabitoreddit` / Serenity, `shufen46250836` / shu fen |
 | Chat | SSE streaming, sourced answer renderer, D1/localStorage history sync |
 | Deep links | `/chat/:id` direct load and refresh |
 | Source rail | Persona/source tabs, full tweet hydration, media and quoted tweet cards |
 | Deploy | `cd app && npm run deploy:cf` |
 
-Latest verified deploy: `af782781-47b6-4cab-9b12-fb1e9d2d9864`.
+Latest verified deploy: `0374984b-4ad5-4af3-8f8f-e48077719ec1`.
 
 ## Recently Shipped
 
@@ -50,6 +50,18 @@ Latest verified deploy: `af782781-47b6-4cab-9b12-fb1e9d2d9864`.
 
 - `npm run preflight` verifies Cloudflare auth and production smoke paths.
 - `npm run deploy:cf` is the preferred deploy path because it loads `scripts/cloudflare-dns-patch.cjs`.
+- New KOL onboarding is targeted, resumable, publish-gated, and backed by durable D1 job state.
+- Hidden self-serve onboarding uses a rotatable bearer invite, signed session cookie, D1 request
+  queue, IP/session quotas, multi-level reduce, automatic public metadata, and deferred billing.
+- Distill/eval continuation state is stored in D1 and resumed by the minute cron; Worker termination,
+  self-fetch loss, KV expiry, and orphaned eval reservations no longer require a local operator.
+- Persona updates are candidate-first across onboarding, weekly updates, and monthly full audits;
+  topic coverage plus citation relevance/entailment are publish gates.
+- Market context carries canonical instrument names and asset types; the source rail contains only
+  references actually used by the final answer.
+- ETF questions load current holdings/weights before answering; ticker evidence gates reject generic
+  same-word matches, and citations use one cumulative sequence across the conversation.
+- KOL presentation and subscription metadata are API-driven; the Desk and marketing roster no longer need a release for each new public KOL.
 
 ## Known Constraints
 
@@ -66,8 +78,9 @@ Latest verified deploy: `af782781-47b6-4cab-9b12-fb1e9d2d9864`.
 1. Code tab: turn persona theses into runnable strategy/backtest code instead of placeholder UI.
 2. Auth hardening: ensure every history, subscription, and billing endpoint derives user identity server-side rather than trusting client `user_id`.
 3. Billing enforcement: connect subscription/credits state to backend model access and usage accounting.
-4. More personas: add a repeatable onboarding/admin path for new KOLs.
-5. Evaluation quality: add pairwise answer comparison, citation relevance checks, and more real user questions.
+4. Self-service personas: replace the current hidden bearer invite with authenticated ownership,
+   moderation, per-user billing and cross-device recovery when the feature becomes public.
+5. Evaluation quality: add pairwise answer comparison and more real user questions.
 6. Frontend build: consider replacing in-browser Babel with a small Vite/esbuild pipeline once product surface stabilizes.
 7. Observability: add targeted logs/metrics for chat latency, retrieval quality, citation hydration misses, and source rail errors.
 
@@ -87,3 +100,15 @@ Before shipping backend/chat changes:
 - Run `npm run test:prompt` if prompt formatting changed.
 - Smoke `/api/kols`, `/api/tweets`, and one chat path.
 - Do not commit local secrets or raw paid data.
+# 2026-07-01 Persona 评测与成本修复
+
+- [x] 禁止自动周更/月更调用模型
+- [x] 禁止失败任务和孤立 KV cursor 自动复活
+- [x] 排除 Persona backup RAG 污染并限制上下文
+- [x] 关闭后台模型 reasoning
+- [x] 将评测缩为金融相关 8+4 题、确定性检索和单一联合裁判
+- [x] 保存回答、引用和裁判原文
+- [x] 发布门禁加入 65% 单题通过率和 stance/专项检查
+- [x] 质量失败不再自动重做
+- [x] 增加任务、步骤和 map chunk 成本上限
+- [ ] 以受控全新账号执行一次生产 canary

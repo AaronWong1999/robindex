@@ -11,9 +11,119 @@ CREATE TABLE IF NOT EXISTS kols (
   persona_version TEXT,
   retrieval_mode TEXT DEFAULT 'query_side',-- 'query_side' (default) | 'tagged'
   corpus_id     TEXT,                       -- search another KOL's corpus; NULL = own id
+  profile_json  TEXT,                       -- bilingual public UI metadata
+  onboarding_status TEXT NOT NULL DEFAULT 'ready',
+  is_public     INTEGER NOT NULL DEFAULT 1,
+  followers_count INTEGER DEFAULT 0,
+  statuses_count INTEGER DEFAULT 0,
+  x_created_at TEXT,
+  subscription_enabled INTEGER NOT NULL DEFAULT 1,
+  subscription_price_cents INTEGER NOT NULL DEFAULT 3990,
+  subscription_promo_cents INTEGER NOT NULL DEFAULT 1990,
+  subscription_gift INTEGER NOT NULL DEFAULT 2000,
+  airwallex_product_id TEXT,
+  airwallex_price_id TEXT,
   created_at    TEXT DEFAULT (datetime('now')),
   updated_at    TEXT DEFAULT (datetime('now'))
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_kols_handle ON kols(handle);
+CREATE INDEX IF NOT EXISTS idx_kols_public_status ON kols(is_public, onboarding_status);
+
+CREATE TABLE IF NOT EXISTS kol_onboarding_jobs (
+  kol_id TEXT PRIMARY KEY,
+  handle TEXT NOT NULL,
+  phase TEXT NOT NULL DEFAULT 'draft',
+  cursor TEXT,
+  has_more INTEGER NOT NULL DEFAULT 1,
+  pages_fetched INTEGER NOT NULL DEFAULT 0,
+  tweets_fetched INTEGER NOT NULL DEFAULT 0,
+  tweets_inserted INTEGER NOT NULL DEFAULT 0,
+  retries INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  distill_phase TEXT,
+  distill_group_index INTEGER NOT NULL DEFAULT 0,
+  distill_steps INTEGER NOT NULL DEFAULT 0,
+  distill_updated_at TEXT,
+  lease_owner TEXT,
+  lease_until INTEGER,
+  next_retry_at TEXT,
+  phase_retries INTEGER NOT NULL DEFAULT 0,
+  no_progress_count INTEGER NOT NULL DEFAULT 0,
+  r2_batches INTEGER NOT NULL DEFAULT 0,
+  r2_rows INTEGER NOT NULL DEFAULT 0,
+  originals_count INTEGER NOT NULL DEFAULT 0,
+  indexed_count INTEGER NOT NULL DEFAULT 0,
+  reduce_level INTEGER NOT NULL DEFAULT 0,
+  candidate_attempts INTEGER NOT NULL DEFAULT 0,
+  coverage_attempts INTEGER NOT NULL DEFAULT 0,
+  started_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now')),
+  completed_at TEXT,
+  FOREIGN KEY (kol_id) REFERENCES kols(id)
+);
+CREATE INDEX IF NOT EXISTS idx_kol_onboarding_phase ON kol_onboarding_jobs(phase, updated_at);
+CREATE INDEX IF NOT EXISTS idx_kol_onboarding_distill ON kol_onboarding_jobs(phase, distill_updated_at);
+
+CREATE TABLE IF NOT EXISTS kol_onboarding_requests (
+  id TEXT PRIMARY KEY,
+  session_hash TEXT NOT NULL,
+  ip_hash TEXT NOT NULL,
+  source_input TEXT NOT NULL,
+  handle TEXT NOT NULL,
+  kol_id TEXT,
+  state TEXT NOT NULL DEFAULT 'queued',
+  last_error TEXT,
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now')),
+  completed_at TEXT,
+  FOREIGN KEY (kol_id) REFERENCES kols(id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_onboarding_request_session_handle
+ON kol_onboarding_requests(session_hash, handle);
+CREATE INDEX IF NOT EXISTS idx_onboarding_request_session
+ON kol_onboarding_requests(session_hash, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_onboarding_request_ip
+ON kol_onboarding_requests(ip_hash, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_onboarding_request_state
+ON kol_onboarding_requests(state, updated_at);
+
+CREATE TABLE IF NOT EXISTS distill_step_locks (
+  kol_id TEXT PRIMARY KEY,
+  owner TEXT NOT NULL,
+  lease_until INTEGER NOT NULL,
+  updated_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS persona_candidates (
+  kol_id TEXT PRIMARY KEY,
+  version TEXT NOT NULL,
+  persona_pack TEXT NOT NULL,
+  persona_json TEXT,
+  coverage_json TEXT,
+  status TEXT NOT NULL DEFAULT 'staged',
+  last_error TEXT,
+  profile_json TEXT,
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS persona_update_jobs (
+  kol_id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  phase TEXT NOT NULL DEFAULT 'distilling',
+  distill_phase TEXT NOT NULL DEFAULT 'map',
+  distill_group_index INTEGER NOT NULL DEFAULT 0,
+  distill_steps INTEGER NOT NULL DEFAULT 0,
+  retries INTEGER NOT NULL DEFAULT 0,
+  reduce_level INTEGER NOT NULL DEFAULT 0,
+  candidate_attempts INTEGER NOT NULL DEFAULT 0,
+  coverage_attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  started_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now')),
+  completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_persona_update_runnable ON persona_update_jobs(phase, updated_at);
 
 CREATE TABLE IF NOT EXISTS tweets (
   id            TEXT PRIMARY KEY,          -- tweet id (string)
@@ -159,6 +269,13 @@ CREATE TABLE IF NOT EXISTS eval_results (
   score_citation  REAL,
   score_voice     REAL,
   score_stance    REAL,
+  score_relevance REAL,
+  score_entailment REAL,
+  case_question    TEXT,
+  answer_text      TEXT,
+  citations_json   TEXT,
+  judge_json       TEXT,
+  input_chars      INTEGER,
   passed          INTEGER DEFAULT 0,
   regressed       INTEGER DEFAULT 0,
   created_at      TEXT DEFAULT (datetime('now'))

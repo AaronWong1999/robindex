@@ -6,7 +6,7 @@
     zh: {
       navProduct: "产品", navPersonas: "分身", navHow: "原理", navPricing: "定价",
       open: "进入终端", login: "登录",
-      heroPill: "金融版 AI 工作台 · 已接入 2 位 KOL 分身",
+      heroPill: "金融版 AI 工作台 · 已接入 3 位 KOL 分身",
       h1a: "把交易判断，", h1b: "交给懂行的 AI 分身",
       heroSub: "选一位金融 KOL 的 AI 分身，用 ta 的判断框架回答你的每一个问题。答案逐句标注原文出处，可一键展开来源推文。模型、推理算力、界面风格，全都你说了算。",
       ctaPrimary: "进入终端", ctaGhost: "看它怎么工作",
@@ -57,7 +57,7 @@
     en: {
       navProduct: "Product", navPersonas: "Personas", navHow: "How it works", navPricing: "Pricing",
       open: "Open terminal", login: "Log in",
-      heroPill: "The AI desk for finance · 2 KOL personas live",
+      heroPill: "The AI desk for finance · 3 KOL personas live",
       h1a: "Hand your market calls to ", h1b: "AI personas who know the game",
       heroSub: "Pick a finance KOL's AI persona and get every question answered through their framework. Each claim is sourced sentence-by-sentence, expandable into the original tweet. You control the model, the reasoning effort, and the look.",
       ctaPrimary: "Open terminal", ctaGhost: "See how it works",
@@ -108,6 +108,7 @@
   };
 
   let lang = "zh";
+  let publicKols = [];
   let theme = "aurora";
   let menuOpen = false;
 
@@ -216,6 +217,64 @@
     try { localStorage.setItem("rx.lang", l); } catch (e) {}
     updateLangCur();
     renderLangMenu();
+    renderDynamicRoster();
+  }
+
+  function pickLocalized(value) {
+    if (value && typeof value === "object" && !Array.isArray(value)) return value[lang] || value.zh || value.en || "";
+    return value || "";
+  }
+
+  function compactCount(n) {
+    const v = Number(n || 0);
+    if (v >= 1000000) return (v / 1000000).toFixed(v >= 10000000 ? 0 : 1).replace(/\.0$/, "") + "M";
+    if (v >= 1000) return (v / 1000).toFixed(v >= 100000 ? 0 : 1).replace(/\.0$/, "") + "K";
+    return v ? String(v) : "—";
+  }
+
+  function renderDynamicRoster() {
+    const roster = document.getElementById("dynamicRoster");
+    if (!roster || !publicKols.length) return;
+    roster.querySelectorAll("[data-dynamic-kol]").forEach((node) => node.remove());
+    const existing = new Set(Array.from(roster.querySelectorAll('a[href*="persona="]')).map((a) => {
+      try { return new URL(a.href).searchParams.get("persona"); } catch { return ""; }
+    }));
+    const coming = roster.querySelector("[data-roster-coming]");
+    publicKols.filter((kol) => !existing.has(kol.id)).forEach((kol) => {
+      const card = document.createElement("a");
+      card.dataset.dynamicKol = kol.id;
+      card.href = `https://app.robindex.ai/?agent=kol&persona=${encodeURIComponent(kol.id)}`;
+      card.style.cssText = "border:1px solid #E9E9E3;border-radius:16px;background:#fff;padding:22px;transition:.18s;display:block;";
+      const style = pickLocalized(kol.style);
+      const tags = Array.isArray(style) ? style.slice(0, 3) : [];
+      card.innerHTML =
+        `<div style="display:flex;align-items:center;gap:13px;">` +
+          `<img src="${kol.avatar_url || ""}" alt="" width="50" height="50" loading="lazy" style="border-radius:12px;object-fit:cover;" />` +
+          `<div style="flex:1;min-width:0;"><div style="font-size:16px;font-weight:600;"></div><div style="font-family:'Geist Mono',monospace;font-size:11px;color:#9A9CA4;"></div></div>` +
+          `<div style="text-align:right;"><div style="font-family:'Geist Mono',monospace;font-size:15px;font-weight:600;">${compactCount(kol.followers_count)}</div><div style="font-size:10px;color:#9A9CA4;">${lang === "en" ? "followers" : "关注"}</div></div>` +
+        `</div><p style="font-size:13.5px;line-height:1.6;color:#54565F;margin:15px 0 14px;"></p><div style="display:flex;flex-wrap:wrap;gap:6px;"></div>`;
+      card.querySelector("div div div").textContent = kol.display_name || kol.id;
+      card.querySelector("div div div + div").textContent = "@" + (kol.handle || kol.id);
+      card.querySelector("p").textContent = pickLocalized(kol.bio) || pickLocalized(kol.tagline);
+      const tagWrap = card.lastElementChild;
+      tags.forEach((text) => {
+        const tag = document.createElement("span");
+        tag.style.cssText = "font-family:'Geist Mono',monospace;font-size:10.5px;color:#5C5E66;background:#F4F4F1;border:1px solid #ECECE6;border-radius:6px;padding:3px 8px;";
+        tag.textContent = text;
+        tagWrap.appendChild(tag);
+      });
+      roster.insertBefore(card, coming);
+    });
+  }
+
+  async function loadPublicKols() {
+    try {
+      const res = await fetch("/api/kols");
+      if (!res.ok) return;
+      const json = await res.json();
+      publicKols = Array.isArray(json.kols) ? json.kols : [];
+      renderDynamicRoster();
+    } catch {}
   }
 
   function initReveal() {
@@ -318,6 +377,7 @@
     initNav();
     initThemeMenu();
     initReveal();
+    loadPublicKols();
     const visual = document.querySelector(".lvisual");
     if (visual) {
       const io = new IntersectionObserver((es) => es.forEach((e) => {

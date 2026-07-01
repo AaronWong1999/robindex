@@ -132,7 +132,7 @@ function Home({ kols, target, setTarget, onAsk, models, model, setModel, effort,
   const submit = () => { if (!loggedIn) { onLogin(); return; } if (text.trim()) { onAsk(tk, text.trim()); setText(""); } };
   return React.createElement("div", { className: "home" },
     React.createElement("div", { className: "home-inner" },
-      React.createElement("div", { className: "home-badge" }, React.createElement("span", { className: "dot" }), T("homeBadge")),
+      React.createElement("div", { className: "home-badge" }, React.createElement("span", { className: "dot" }), T("homeBadge")(kols.length)),
       React.createElement("h1", null, T("h1a"), React.createElement("em", null, T("h1b"))),
       React.createElement("p", { className: "lede" }, T("ledeA"), React.createElement("b", null, T("ledeBold")), T("ledeB")),
       React.createElement("div", { className: "home-ask" },
@@ -267,12 +267,75 @@ function historyProcessSteps(resp) {
   return steps;
 }
 
+function citedRefs(answer) {
+  const refs = new Set();
+  String(answer || "").replace(/(?:\[|【)\s*T?(\d+)\s*(?:\]|】)/gi, (_, n) => {
+    refs.add("T" + n);
+    return _;
+  });
+  return refs;
+}
+
+function onlyUsedCitations(answer, citations) {
+  const refs = citedRefs(answer);
+  if (!refs.size) return [];
+  return (Array.isArray(citations) ? citations : []).filter((c) => refs.has(c.ref || ("T" + c.id)));
+}
+
+function citationIdentity(citation) {
+  return String(citation && (citation.tweet_id || citation.url || citation.ref || citation.id) || "");
+}
+
+function normalizeConversationCitationSequence(messages) {
+  const numberBySource = new Map();
+  let nextNumber = 1;
+  return (messages || []).map((message) => {
+    if (!message || message.role !== "k" || !message.resp) return message;
+    const answer = String(message.resp.answerMd || message.streamText || "");
+    const candidates = message._citations || message.resp.citations || [];
+    const byRef = new Map(candidates.map((citation) => [String(citation.ref || ("T" + citation.id)), citation]));
+    const used = [];
+    const usedKeys = new Set();
+    const rewritten = answer.replace(/(?:\[|【)\s*T?(\d+)\s*(?:\]|】)/gi, (marker, n) => {
+      const citation = byRef.get("T" + n);
+      if (!citation) return "";
+      const key = citationIdentity(citation);
+      if (!key) return "";
+      if (!numberBySource.has(key)) numberBySource.set(key, nextNumber++);
+      const globalNumber = numberBySource.get(key);
+      if (!usedKeys.has(key)) {
+        usedKeys.add(key);
+        used.push({ ...citation, ref: "T" + globalNumber });
+      }
+      return "[" + globalNumber + "]";
+    }).replace(/[ \t]+([，。；：,.!?])/g, "$1").trim();
+    const resp = { ...message.resp, answerMd: rewritten, citations: used };
+    return { ...message, _citations: used, resp };
+  });
+}
+
+function conversationSources(messages) {
+  const bySource = new Map();
+  for (const message of messages || []) {
+    if (!message || message.role !== "k") continue;
+    for (const citation of (message._citations || (message.resp && message.resp.citations) || [])) {
+      const key = citationIdentity(citation);
+      if (key && !bySource.has(key)) bySource.set(key, citation);
+    }
+  }
+  return Array.from(bySource.values()).sort((a, b) =>
+    Number(String(a.ref || "").replace(/^T/, "")) - Number(String(b.ref || "").replace(/^T/, ""))
+  );
+}
+
 function normalizeHistoryMsg(m, kolId) {
   if (m.role === "u" && m.text != null) return m;
   if (m.role === "user" || (m.role === "u" && m.content)) return { id: m.id || uid(), role: "u", text: m.content || m.text || "" };
   if (m.role === "k" && m.resp) {
     const resp = { ...m.resp };
-    return { ...m, done: m.done !== false, resp: { ...resp, processSteps: historyProcessSteps(resp), toolCalls: resp.toolCalls || [] } };
+    const answer = resp.answerMd || m.streamText || "";
+    const citations = onlyUsedCitations(answer, m._citations || resp.citations || []);
+    return { ...m, _citations: citations, done: m.done !== false, resp: { ...resp, citations, processSteps: historyProcessSteps({ ...resp, citations }), toolCalls: resp.toolCalls || [] } };
   }
   if (m.role === "assistant" || m.role === "k") {
     const resp = {
@@ -286,8 +349,9 @@ function normalizeHistoryMsg(m, kolId) {
       id: m.id || uid(),
       role: "k",
       done: true,
-      kol: { id: kolId, display_name: kolId === "qinbafrank" ? "Qinbafrank" : "Serenity", handle: kolId },
-      resp: { ...resp, processSteps: historyProcessSteps(resp) },
+      kol: (RX.kols(window.RXI.lang).find((k) => k.id === kolId) ||
+        { id: kolId, display_name: kolId, handle: kolId, avatar_url: "", accent: "#6B7280" }),
+      resp: { ...resp, citations: onlyUsedCitations(resp.answerMd, resp.citations), processSteps: historyProcessSteps({ ...resp, citations: onlyUsedCitations(resp.answerMd, resp.citations) }) },
       streamText: "",
       error: null,
     };
@@ -296,12 +360,13 @@ function normalizeHistoryMsg(m, kolId) {
 }
 function normalizeMessages(messages, kolId) {
   const seen = new Set();
-  return (messages || []).map((m) => normalizeHistoryMsg(m, kolId)).map((m) => {
+  const normalized = (messages || []).map((m) => normalizeHistoryMsg(m, kolId)).map((m) => {
     let id = m && m.id ? String(m.id) : uid();
     if (seen.has(id)) id = uid();
     seen.add(id);
     return { ...m, id };
   });
+  return normalizeConversationCitationSequence(normalized);
 }
 function messagesHaveKolMismatch(messages, kolId) {
   if (!kolId) return false;
@@ -579,14 +644,13 @@ function App() {
     }
     try {
       const old = JSON.parse(localStorage.getItem("robindex_convs") || "[]");
-      const validPersonas = ["qinbafrank", "aleabitoreddit"];
-      return old.filter((c) => validPersonas.includes(c.persona)).map((c) => {
+      return old.filter((c) => c && c.persona).map((c) => {
         const kolId = c.persona;
+        const knownKol = RX.kols(window.RXI.lang).find((k) => k.id === kolId);
         const msgs = normalizeMessages((c.messages || []).map((m, i) => ({ ...m, id: "old_" + i })), kolId);
         return {
-          id: c.id, kol: { id: kolId, display_name: kolId === "qinbafrank" ? "Qinbafrank" : "Serenity", handle: kolId,
-            avatar_url: kolId === "qinbafrank" ? "https://unavatar.io/x/qinbafrank" : "https://pbs.twimg.com/profile_images/1996176688414367744/LXfA_lIx_400x400.jpg",
-            accent: kolId === "qinbafrank" ? "#3DDC97" : "#5B9DFF",
+          id: c.id, kol: knownKol || { id: kolId, display_name: kolId, handle: kolId,
+            avatar_url: "", accent: "#6B7280",
             role: "", bio: "", tagline: "", thesis: "", style: [], corpus: { tweets: "\u2014", since: "\u2014", persona: "\u2014" }, stats: { followers: "\u2014", tweets: "\u2014" }, suggested: [] },
           title: c.title || kolId, messages: msgs, ts: c.ts || Date.now(),
         };
@@ -661,21 +725,22 @@ function App() {
     setActive(normalizedChat); setView("chat"); setTab("ask"); setMtab("chat");
     setMessages(safeSaved);
     setHighlight(null);
-    const lastK = safeSaved.filter((m) => m.role === "k" && m.done);
-    if (!lastK.length) { setSources([]); setRailTab("persona"); return; }
-    const last = lastK[lastK.length - 1];
-    const cites = last._citations || (last.resp && last.resp.citations) || [];
+    const cites = conversationSources(safeSaved);
     if (!cites.length) { setSources([]); setRailTab("persona"); return; }
     setSources(cites);
     setRailTab("sources");
     RX.hydrateCitations(chat.kol.id, cites, chat.kol.handle).then((hydrated) => {
       if (!isBoundToChat(chat.id)) return;
       setSources(hydrated);
-      setMessages((msgs) => msgs.map((m) => m.id === last.id ? {
-        ...m,
-        _citations: hydrated,
-        resp: { ...m.resp, citations: hydrated },
-      } : m));
+      const hydratedBySource = new Map(hydrated.map((citation) => [citationIdentity(citation), citation]));
+      setMessages((msgs) => msgs.map((m) => {
+        if (m.role !== "k" || !m.resp) return m;
+        const messageCitations = (m._citations || m.resp.citations || []).map((citation) => {
+          const full = hydratedBySource.get(citationIdentity(citation));
+          return full ? { ...full, ref: citation.ref } : citation;
+        });
+        return { ...m, _citations: messageCitations, resp: { ...m.resp, citations: messageCitations } };
+      }));
     });
   };
 
@@ -870,7 +935,7 @@ function App() {
         },
         onMeta: (meta) => {
           if (!isCurrentRequest()) return;
-          const cites = (meta.citations || []).map((c, i) => ({
+          const mapCitations = (items) => (items || []).map((c, i) => ({
             ref: c.ref || ("T" + (i + 1)),
             tweet_id: c.tweet_id || c.id || "",
             date: c.date || "",
@@ -880,19 +945,30 @@ function App() {
             snippet: c.snippet || c.text || "",
             quoted: c.quoted || null,
           }));
-          setSources(cites);
-          setRailTab("sources");
-          setHighlight(null);
+          const cites = mapCitations(meta.citations);
+          const messageCites = mapCitations(meta.message_citations || meta.citations);
+          if (meta.final) {
+            setSources(cites);
+            if (cites.length) setRailTab("sources");
+            setHighlight(null);
+          }
           console.log("[Desk] onMeta: citations =", cites.length);
           setMessages((m) => m.map((x) => {
             if (x.id !== kMsg.id) return x;
             const chartText = meta.chart && meta.chart.symbol ? (lang_ === "en" ? `, with ${meta.chart.symbol} market context` : `，并确认 ${meta.chart.symbol} 行情`) : "";
-            const sourceText = lang_ === "en"
-              ? `I found ${cites.length} source${cites.length === 1 ? "" : "s"} to ground the answer${chartText}`
-              : `已筛选 ${cites.length} 条可引用原文${chartText}`;
+            const candidateCount = Number(meta.candidate_count || cites.length || 0);
+            const sourceText = meta.final
+              ? (lang_ === "en"
+                  ? `I cited ${messageCites.length} source${messageCites.length === 1 ? "" : "s"} in the answer${chartText}`
+                  : `正文实际引用 ${messageCites.length} 条原文${chartText}`)
+              : (lang_ === "en"
+                  ? `I selected ${candidateCount} relevant source candidate${candidateCount === 1 ? "" : "s"}${chartText}`
+                  : `已筛选 ${candidateCount} 条相关原文候选${chartText}`);
             const current = (x.resp.processSteps || []).map((s) => s.state === "run" ? { ...s, state: "done" } : s);
             const processSteps = upsertProcessStep(current, { id: "phase:meta", text: sourceText, kind: "meta", state: "done" });
-            return { ...x, _citations: cites, resp: { ...x.resp, citations: cites, processSteps } };
+            return meta.final
+              ? { ...x, _citations: messageCites, resp: { ...x.resp, citations: messageCites, processSteps } }
+              : { ...x, resp: { ...x.resp, processSteps } };
           }));
         },
         onToolCall: (tc) => {
@@ -958,7 +1034,6 @@ function App() {
 
   const composerAsk = (question, atts) => { if (curKol) ask(curKol, question); };
   const onCite = (ref, citations) => {
-    if (Array.isArray(citations) && citations.length) setSources(citations);
     setRailTab("sources");
     setHighlight(citeKey(ref));
     setCiteTick((n) => n + 1);

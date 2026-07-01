@@ -12,6 +12,7 @@ export interface Env {
   GETXAPI_KEY?: string;        // Worker secret (preferred X/Twitter ingest source)
   APIFY_TOKEN?: string;        // Worker secret (for cron ingest)
   ADMIN_KEY?: string;          // Worker secret (for bulk import)
+  KOL_ONBOARD_INVITE_SECRET?: string; // 256-bit bearer secret for the hidden self-serve onboarding page
   PRIVY_APP_ID?: string;       // Worker secret / env variable for Privy
   STRIPE_SECRET_KEY?: string;       // Worker secret — Stripe API key (sk_test_… / sk_live_…)
   STRIPE_WEBHOOK_SECRET?: string;   // Worker secret — Stripe webhook signing secret (whsec_…)
@@ -34,4 +35,16 @@ export interface KolRow {
   persona_version: string | null;
   retrieval_mode?: string | null;   // 'query_side' (default) | 'tagged'
   corpus_id?: string | null;        // search another KOL's corpus; null = own id
+  profile_json?: string | null;
+  onboarding_status?: string | null;
+  is_public?: number | null;
+  followers_count?: number | null;
+  statuses_count?: number | null;
+  x_created_at?: string | null;
+  subscription_enabled?: number | null;
+  subscription_price_cents?: number | null;
+  subscription_promo_cents?: number | null;
+  subscription_gift?: number | null;
+  airwallex_product_id?: string | null;
+  airwallex_price_id?: string | null;
 }

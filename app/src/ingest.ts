@@ -2,7 +2,7 @@ import type { Env } from "./env";
 import { completeChat } from "./chat";
 import { evolvePersona, logPersonaExperiment } from "./persona-gen";
 import { evalAndMaybeRollback } from "./eval";
-import { distillPersonaIncremental, loadMergedFacts } from "./persona-distill";
+import { distillPersonaIncremental, loadMergedFacts, personaCoverageGate } from "./persona-distill";
 import { indexRawTweets } from "./tagger";
 
 const APIFY_ACTOR = "apidojo~tweet-scraper";
@@ -19,7 +19,7 @@ function tweetIdGt(a: string, b: string): boolean {
 }
 
 // Map an Apify apidojo/tweet-scraper item into our tweet row shape (defensive about field names).
-function mapApifyTweet(it: any, kolId: string) {
+export function mapApifyTweet(it: any, kolId: string) {
   const id = String(it.id || it.id_str || it.tweetId || "");
   const text = it.text || it.full_text || it.fullText || "";
   const created = it.createdAt || it.created_at || it.date || "";
@@ -61,7 +61,7 @@ function mapQuoted(it: any): string {
   });
 }
 
-function mapGetxTweet(it: any, kolId: string) {
+export function mapGetxTweet(it: any, kolId: string) {
   const id = String(it.id || "");
   const created = it.createdAt || it.created_at || "";
   const ts = created ? Math.floor(new Date(created).getTime() / 1000) : 0;
@@ -149,14 +149,16 @@ async function getxFetch(
 
 // Append-only raw archive to R2. Twitter data is paid, so every fetched batch is
 // preserved verbatim as its own object (never overwritten) under raw/<kol>/<ISO>.json.
-async function archiveRawToR2(env: Env, kolId: string, rows: TweetRow[]): Promise<void> {
-  if (!env.RAW || !rows.length) return;
+export async function archiveRawToR2(env: Env, kolId: string, rows: TweetRow[]): Promise<string | null> {
+  if (!env.RAW || !rows.length) return null;
   const key = `raw/${kolId}/incr-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
   try {
     await env.RAW.put(key, JSON.stringify(rows), { httpMetadata: { contentType: "application/json" } });
     console.log(`r2 archive ${kolId}: wrote ${rows.length} raw tweets -> ${key}`);
+    return key;
   } catch (e) {
     console.log(`r2 archive ${kolId} error: ${e}`);
+    return null;
   }
 }
 
@@ -337,22 +339,28 @@ export async function runWeeklyPersonaRefresh(env: Env): Promise<number> {
           if (hasFacts) {
             const inc = await distillPersonaIncremental(env, k.id, since);
             if (inc.changed && inc.result && inc.result.persona_pack.length >= 500) {
-              if (k.persona_pack && k.persona_pack.length > 100) {
-                const backupId = `${k.id}:persona_backup:${week}:${Date.now()}`;
-                await env.DB.prepare(
-                  `INSERT OR REPLACE INTO knowledge_chunks (id,kol_id,source,title,text) VALUES (?,?,?,?,?)`
-                ).bind(backupId, k.id, `persona_backup:${k.persona_version || "unknown"}`, `Persona backup ${week}`, k.persona_pack).run();
-              }
-              await env.DB.prepare(`UPDATE kols SET persona_pack=?, persona_version=?, updated_at=datetime('now') WHERE id=?`)
-                .bind(inc.result.persona_pack, `v2-mapreduce-inc-${week}`, k.id).run();
-              console.log(`persona distill-inc ${k.id}: +${inc.result.stats.tweets} tweets, models=${inc.result.stats.models}`);
-              const er = await evalAndMaybeRollback(env, k.id, { limit: 12, smoke: true });
-              if (er.smoke_suspicious) {
-                await env.CACHE.put(`distill_job:${k.id}`, JSON.stringify({ phase: "eval", i: 0 }), { expirationTtl: 7200 });
-                await env.CACHE.put(`distill_steps:${k.id}`, "0", { expirationTtl: 7200 });
-                console.log(`eval ${k.id}: smoke suspicious; scheduled full eval via distill_job`);
-              }
-              if (!er.skipped) console.log(`eval ${k.id}: composite=${er.summary?.composite?.toFixed(3)} regressed=${er.summary?.regressed} rolled_back=${er.rolled_back}`);
+              if (!inc.result.persona_json) throw new Error("weekly candidate persona JSON missing");
+              const gate = personaCoverageGate(inc.result.persona_json, inc.result.persona_pack);
+              if (!gate.ok) throw new Error(`weekly coverage gate failed: ${gate.missing.join(",") || "identity"}`);
+              const candidateVersion = `v2-mapreduce-inc-${week}-candidate-${Date.now()}`;
+              await env.DB.prepare(
+                `INSERT INTO persona_candidates
+                   (kol_id,version,persona_pack,persona_json,coverage_json,status,last_error,updated_at)
+                 VALUES (?,?,?,?,?,'evaluating',NULL,datetime('now'))
+                 ON CONFLICT(kol_id) DO UPDATE SET
+                   version=excluded.version,persona_pack=excluded.persona_pack,persona_json=excluded.persona_json,
+                   coverage_json=excluded.coverage_json,status='evaluating',last_error=NULL,updated_at=datetime('now')`
+              ).bind(k.id, candidateVersion, inc.result.persona_pack, JSON.stringify(inc.result.persona_json), JSON.stringify(gate)).run();
+              await env.DB.prepare(
+                `INSERT INTO persona_update_jobs
+                   (kol_id,kind,phase,distill_phase,distill_group_index,distill_steps,last_error,updated_at)
+                 VALUES (?,'weekly','evaluating','build_eval',0,0,NULL,datetime('now'))
+                 ON CONFLICT(kol_id) DO UPDATE SET
+                   kind='weekly',
+                   phase='evaluating',distill_phase='build_eval',distill_group_index=0,
+                   distill_steps=0,last_error=NULL,completed_at=NULL,updated_at=datetime('now')`
+              ).bind(k.id).run();
+              console.log(`persona distill-inc ${k.id}: staged +${inc.result.stats.tweets} tweets, models=${inc.result.stats.models}`);
             } else {
               console.log(`persona distill-inc ${k.id}: ${inc.note}`);
             }
@@ -383,9 +391,7 @@ export async function runWeeklyPersonaRefresh(env: Env): Promise<number> {
         }
       }
 
-      await env.DB.prepare(`UPDATE kols SET persona_version=?, updated_at=datetime('now') WHERE id=?`)
-        .bind(k.persona_pack ? version : k.persona_version, k.id)
-        .run();
+      // persona_version changes only after the candidate completes full evaluation and is published.
     } catch (e: any) {
       console.log(`weekly refresh ${k.id} error: ${e}`);
       // Outer failure (DB query, stance chunk, version update). Record as a cron-level row.

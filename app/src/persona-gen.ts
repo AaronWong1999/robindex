@@ -219,6 +219,7 @@ interface TrackRecordItem {
   outcome: string;
 }
 export interface PersonaJson {
+  identity_summary?: string;
   mental_models: MentalModel[];
   decision_heuristics: DecisionHeuristic[];
   expression_dna: ExpressionDna;
@@ -230,6 +231,15 @@ export interface PersonaJson {
   track_record?: TrackRecordItem[];   // C1: dated calls + outcomes
   counter_views?: string[];           // C1: blind spots / what critics would say
   sector_focus?: string[];            // C1: sectors/tickers this KOL covers most
+  topic_coverage?: {
+    topic: string;
+    aliases?: string[];
+    post_count: number;
+    chunk_count: number;
+    recent_count: number;
+    evidence_ids: string[];
+    required?: boolean;
+  }[];
   signature_examples?: string[];      // C1: representative quotes / 金句 (voice exemplars)
   analytical_exemplars?: string[];    // C2: full analytical paragraphs where the KOL applies their framework to a specific instrument
   analytical_exemplar_ids?: string[];  // model-selected tweet ids; materialized to verbatim text in code
@@ -518,7 +528,10 @@ export async function generatePersonaPack(
 
 export function buildMarkdown(kol: any, pj: PersonaJson | null): string {
   const lines: string[] = [];
-  const tagline = pj?.mental_models?.[0]?.description || kol.tagline || "Finance commentator";
+  const broadFocus = (pj?.sector_focus || []).slice(0, 4).join(", ");
+  const tagline = pj?.identity_summary || (broadFocus
+    ? `Finance researcher covering ${broadFocus}`
+    : kol.tagline || "Finance commentator");
   lines.push(`## Identity`);
   lines.push(`${kol.display_name} (@${kol.handle}) — ${tagline}`);
   lines.push("");
@@ -568,6 +581,16 @@ export function buildMarkdown(kol: any, pj: PersonaJson | null): string {
   if (pj?.sector_focus?.length) {
     lines.push(`## Sector Focus（覆盖领域）`);
     lines.push(pj.sector_focus.join(" · "));
+    lines.push("");
+  }
+
+  const currentFocus = (pj?.topic_coverage || []).filter((t) => t.required).slice(0, 12);
+  if (currentFocus.length) {
+    lines.push(`## Current Focus（当前重点覆盖）`);
+    currentFocus.forEach((t) => {
+      const aliases = (t.aliases || []).filter((a) => a && a.toLowerCase() !== t.topic.toLowerCase()).slice(0, 8);
+      lines.push(`- **${t.topic}**${aliases.length ? ` (${aliases.join(", ")})` : ""} — corpus mentions ${t.post_count}; recent evidence ${t.recent_count}`);
+    });
     lines.push("");
   }
 

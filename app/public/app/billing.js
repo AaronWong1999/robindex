@@ -35,6 +35,21 @@
     aleabitoreddit: { id: "aleabitoreddit", name: "Serenity", priceMonthly: 39.9, promoMonthly: 19.9, gift: 2000, accent: "#5B9DFF" },
   };
   const planFor = (id) => KOL_PLANS[id] || { id, name: id, priceMonthly: SUB_DEFAULT, promoMonthly: SUB_PROMO, gift: SUB_GIFT, accent: "#5B9DFF" };
+  function setKolPlans(kols) {
+    (kols || []).forEach((kol) => {
+      const sub = kol.subscription || {};
+      if (sub.enabled === false) { delete KOL_PLANS[kol.id]; return; }
+      KOL_PLANS[kol.id] = {
+        id: kol.id,
+        name: kol.display_name || kol.id,
+        priceMonthly: Number(sub.priceMonthly || SUB_DEFAULT),
+        promoMonthly: Number(sub.promoMonthly || SUB_PROMO),
+        gift: Number(sub.gift || SUB_GIFT),
+        accent: kol.accent || "#5B9DFF",
+      };
+    });
+    emit();
+  }
 
   // ---- Credit packs (USD → credits, bonus on larger packs) ----
   const PACKS = [
@@ -357,7 +372,7 @@
   }
 
   window.RXB = {
-    FREE, PACKS, KOL_PLANS, planFor, RATE, PROVIDERS,
+    FREE, PACKS, KOL_PLANS, planFor, setKolPlans, RATE, PROVIDERS,
     get, commit, reset, onChange, pick,
     setAuth, serverReady, syncFromServer, checkout, applyState, authHeaders,
     model, modelMult, isFreeModel, isByok, pointsFor, typicalCost,

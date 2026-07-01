@@ -175,7 +175,7 @@ export const TOOLS = [
 
 function fmtQuote(q: Quote): string {
   const s = q.change >= 0 ? "+" : "";
-  return `${q.name} (${q.symbol}/${q.market.toUpperCase()}): ${q.price} ${q.currency} ${s}${q.change.toFixed(2)} (${s}${q.changePct.toFixed(2)}%) | O ${q.open} H ${q.high} L ${q.low} prevC ${q.prevClose} | vol ${q.volume} @ ${q.time}`;
+  return `${q.canonicalName || q.name} (${q.symbol}, ${q.assetType.toUpperCase()}/${q.market.toUpperCase()}): ${q.price} ${q.currency} ${s}${q.change.toFixed(2)} (${s}${q.changePct.toFixed(2)}%) | O ${q.open} H ${q.high} L ${q.low} prevC ${q.prevClose} | vol ${q.volume} @ ${q.time}`;
 }
 
 function fmtNews(items: { time: string; title: string; digest?: string; source: string }[]): string {
@@ -356,6 +356,9 @@ export async function executeTool(env: Env, name: string, args: any): Promise<st
       const raw = String(args.symbol || "").trim();
       const q = await resolveSymbolCached(env.CACHE, raw);
       if (!q) return `Unknown symbol "${raw}".`;
+      if (q.assetType !== "equity") {
+        return `${q.canonicalName || q.name} (${q.symbol}) is an ${q.assetType.toUpperCase()}, not an operating company. Company PE, revenue, EPS, market-cap and holder analysis are not applicable; use quote, kline, fund holdings/NAV and constituent analysis instead.`;
+      }
       if (q.market === "cn") {
         const v = await getAshareValuation(env.CACHE, q.code);
         if (!v) return `No financial data for "${raw}".`;
@@ -374,13 +377,17 @@ export async function executeTool(env: Env, name: string, args: any): Promise<st
       }
       const p = await getStockFinancialProfile(env.CACHE, q.code);
       if (!p) return `No financial data for "${raw}".`;
+      const f = (value: unknown, digits = 1) => {
+        const n = Number(value);
+        return Number.isFinite(n) ? n.toFixed(digits) : "n/a";
+      };
       const lines = [
         `${q.name} (${q.symbol}) Financial Profile:`,
-        `PE: ${p.pe.toFixed(1)} | Forward PE: ${p.forwardPe.toFixed(1)} | PEG: ${p.peg.toFixed(2)} | PB: ${p.pb.toFixed(2)}`,
-        `Revenue: ${p.revenue > 1e9 ? (p.revenue / 1e9).toFixed(2) + "B" : (p.revenue / 1e6).toFixed(0) + "M"} (+${p.revenueYoY.toFixed(1)}%) | EPS: ${p.eps.toFixed(2)} (+${p.epsYoY.toFixed(1)}%)`,
-        `ROE: ${p.roe.toFixed(1)}% | Gross: ${p.grossMargin.toFixed(1)}% | Net: ${p.netMargin.toFixed(1)}% | Debt: ${p.debtRatio.toFixed(1)}%`,
+        `PE: ${f(p.pe)} | Forward PE: ${f(p.forwardPe)} | PEG: ${f(p.peg, 2)} | PB: ${f(p.pb, 2)}`,
+        `Revenue: ${Number(p.revenue) > 1e9 ? f(Number(p.revenue) / 1e9, 2) + "B" : f(Number(p.revenue) / 1e6, 0) + "M"} (+${f(p.revenueYoY)}%) | EPS: ${f(p.eps, 2)} (+${f(p.epsYoY)}%)`,
+        `ROE: ${f(p.roe)}% | Gross: ${f(p.grossMargin)}% | Net: ${f(p.netMargin)}% | Debt: ${f(p.debtRatio)}%`,
       ];
-      if (p.targetPrice) lines.push(`Target: ${p.targetPrice} (${p.targetRange}) | ${p.recommendation} | Beta: ${p.beta.toFixed(2)}`);
+      if (p.targetPrice) lines.push(`Target: ${p.targetPrice} (${p.targetRange}) | ${p.recommendation} | Beta: ${f(p.beta, 2)}`);
       if (p.topHolders.length) lines.push(`Top holders: ${p.topHolders.join(", ")}`);
       return lines.join("\n");
     }

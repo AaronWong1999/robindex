@@ -36,6 +36,56 @@ async function awToken(env: Env): Promise<string> {
   return json.token;
 }
 
+async function stableRequestId(seed: string): Promise<string> {
+  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(seed)));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes.slice(0, 16)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+async function awPost(env: Env, path: string, body: Record<string, any>): Promise<any> {
+  const token = await awToken(env);
+  const res = await fetch(`${baseApi(env)}${path}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const json: any = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`airwallex ${path} ${res.status}: ${json?.message || json?.code || "error"}`);
+  return json;
+}
+
+/** Idempotently create the live recurring product/price used by a KOL subscription. */
+export async function provisionKolSubscription(
+  env: Env,
+  opts: { kolId: string; displayName: string; promoCents: number },
+): Promise<{ productId: string; priceId: string }> {
+  const product = await awPost(env, "/api/v1/products/create", {
+    request_id: await stableRequestId(`robindex:kol-product:${opts.kolId}:${awEnv(env)}`),
+    active: true,
+    name: `Robindex · ${opts.displayName}`,
+    description: `Monthly access to the ${opts.displayName} AI persona on Robindex`,
+    unit: "persona",
+    metadata: { kol_id: opts.kolId, product: "robindex_persona" },
+  });
+  if (!product?.id) throw new Error("airwallex product response missing id");
+  const price = await awPost(env, "/api/v1/prices/create", {
+    request_id: await stableRequestId(`robindex:kol-price:${opts.kolId}:${opts.promoCents}:${awEnv(env)}`),
+    active: true,
+    billing_type: "IN_ADVANCE",
+    currency: "USD",
+    pricing_model: "FLAT",
+    flat_amount: Math.round(opts.promoCents) / 100,
+    recurring: { period: 1, period_unit: "MONTH" },
+    description: `${opts.displayName} monthly subscription`,
+    product_id: product.id,
+    metadata: { kol_id: opts.kolId, product: "robindex_persona" },
+  });
+  if (!price?.id) throw new Error("airwallex price response missing id");
+  return { productId: product.id, priceId: price.id };
+}
+
 export interface AwIntent {
   id: string;
   clientSecret: string;

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { request } from "node:https";
+import { createHash } from "node:crypto";
 
 const API_IPS = (process.env.CLOUDFLARE_API_IPS || process.env.CLOUDFLARE_API_IP || "104.18.22.21,104.19.193.29,172.64.154.211")
   .split(",")
@@ -14,7 +15,7 @@ function readJson(path) {
   }
 }
 
-function httpsGet(url, { token, apiKey, email, apiIp, timeout = 15000 } = {}) {
+function httpsGet(url, { token, apiKey, email, apiIp, timeout = 15000, extraHeaders = {} } = {}) {
   return new Promise((resolve) => {
     const u = new URL(url);
     const headers = { "user-agent": "robindex-preflight/1.0" };
@@ -28,7 +29,7 @@ function httpsGet(url, { token, apiKey, email, apiIp, timeout = 15000 } = {}) {
       servername: u.hostname,
       path: `${u.pathname}${u.search}`,
       method: "GET",
-      headers: { ...headers, host: u.hostname },
+      headers: { ...headers, ...extraHeaders, host: u.hostname },
       timeout,
     };
     const req = request(options, (res) => {
@@ -43,6 +44,17 @@ function httpsGet(url, { token, apiKey, email, apiIp, timeout = 15000 } = {}) {
     req.on("error", (error) => resolve({ ok: false, error: String(error) }));
     req.end();
   });
+}
+
+function readEnv(path) {
+  try {
+    return Object.fromEntries(readFileSync(path, "utf8").split(/\r?\n/).flatMap((line) => {
+      const match = line.match(/^([A-Z0-9_]+)=(.*)$/);
+      return match ? [[match[1], match[2].replace(/^['"]|['"]$/g, "")]] : [];
+    }));
+  } catch {
+    return {};
+  }
 }
 
 async function cloudflareGet(url, opts = {}) {
@@ -71,6 +83,7 @@ function summarizeTokenVerify(result) {
 
 const root = new URL("..", import.meta.url).pathname;
 const account = readJson(`${root}../account.guard.json`);
+const localEnv = readEnv(`${root}.env`);
 const tokenCandidate = process.env.CLOUDFLARE_API_TOKEN || account.CLOUDFLARE_API_TOKEN || "";
 const token = tokenCandidate.startsWith("cfat_") ? tokenCandidate : "";
 const apiKey =
@@ -156,6 +169,50 @@ checks.apiKline = {
   candleCount: klineJson?.candles?.length || 0,
   degraded: Boolean(klineJson?.error),
 };
+
+const euvHoldings = await httpsGet("https://robindex.ai/api/etf-holdings?symbol=EUV");
+let euvHoldingsJson = null;
+try {
+  euvHoldingsJson = JSON.parse(euvHoldings.body || "");
+} catch {}
+checks.apiEtfHoldings = {
+  ok:
+    euvHoldings.ok &&
+    euvHoldings.status === 200 &&
+    euvHoldingsJson?.symbol === "EUV" &&
+    Number(euvHoldingsJson?.count || 0) > 0 &&
+    Array.isArray(euvHoldingsJson?.holdings) &&
+    euvHoldingsJson.holdings.length > 0,
+  status: euvHoldings.status,
+  error: euvHoldings.error || null,
+  symbol: euvHoldingsJson?.symbol || null,
+  holdingsCount: euvHoldingsJson?.count || 0,
+  topHolding: euvHoldingsJson?.holdings?.[0]?.symbol || null,
+  asOf: euvHoldingsJson?.asOf || null,
+};
+
+const inviteSeed = process.env.KOL_ONBOARD_INVITE_SECRET || localEnv.KOL_ONBOARD_INVITE_SECRET ||
+  (localEnv.ADMIN_KEY ? createHash("sha256").update(`robindex-kol-invite-v1:${localEnv.ADMIN_KEY}`).digest("hex") : "");
+const hiddenWithoutCookie = await httpsGet("https://app.robindex.ai/api/onboarding/page");
+checks.onboardingHidden = {
+  ok: hiddenWithoutCookie.ok && hiddenWithoutCookie.status === 404,
+  status: hiddenWithoutCookie.status,
+};
+if (inviteSeed) {
+  const bootstrap = await httpsGet(`https://app.robindex.ai/api/onboarding/invite?token=${inviteSeed}`);
+  const cookie = String(bootstrap.headers?.["set-cookie"]?.[0] || "").split(";")[0];
+  const page = cookie
+    ? await httpsGet("https://app.robindex.ai/api/onboarding/page", { extraHeaders: { cookie } })
+    : { ok: false, status: 0, body: "" };
+  checks.onboardingInvite = {
+    ok:
+      bootstrap.ok && bootstrap.status === 302 &&
+      Boolean(cookie) && page.ok && page.status === 200 && page.body.includes("新增一个 KOL"),
+    bootstrapStatus: bootstrap.status,
+    pageStatus: page.status,
+    hasCookie: Boolean(cookie),
+  };
+}
 
 console.log(JSON.stringify(checks, null, 2));
 const failed = Object.values(checks).some((check) => !check.ok);

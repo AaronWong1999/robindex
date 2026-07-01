@@ -6,7 +6,7 @@
       newChat: "新会话", personas: "分身 · PERSONAS", recent: "最近 · RECENT", noChats: "暂无会话",
       proSeat: "PRO 席位", credits: "额度",
       // home
-      homeBadge: "2 位分身在线 · 全量推文已索引",
+      homeBadge: (count) => `${count} 位分身在线 · 全量推文已索引`,
       h1a: "把问题，问给", h1b: "懂行的人",
       ledeA: "选一位金融 KOL 的 AI 分身，用 ta 的判断框架回答你 —— 每个结论都带 ", ledeBold: "原文出处角标", ledeB: "，一点即展开来源推文。模型、算力你自己选。",
       ask: "问", chooseP: "选择分身",
@@ -116,7 +116,7 @@
       brandTag: "AI TRADER TERMINAL",
       newChat: "New chat", personas: "PERSONAS", recent: "RECENT", noChats: "No conversations yet",
       proSeat: "PRO seat", credits: "credits",
-      homeBadge: "2 personas online · full tweet history indexed",
+      homeBadge: (count) => `${count} personas online · full tweet history indexed`,
       h1a: "Ask the people ", h1b: "who actually know",
       ledeA: "Pick a finance KOL's AI persona and get answers through their framework — every claim carries a ", ledeBold: "source-attribution mark", ledeB: " you can expand into the original tweet. You choose the model and the compute.",
       ask: "Ask", chooseP: "Choose a persona",

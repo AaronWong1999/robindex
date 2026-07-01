@@ -36,7 +36,7 @@
     { "binding": "SELF", "service": "robindex" }
   ],
   "triggers": {
-    "crons": ["0 9 * * *", "30 9 * * 1", "* * * * *"]
+    "crons": ["0 9 * * *", "* * * * *"]
   },
   "vars": {
     "GATEWAY_URL": "https://gateway.ai.cloudflare.com/v1/686bee522c90d03e13ba35077f04ff49/robin/openrouter/v1/chat/completions",
