@@ -18,6 +18,10 @@ There is no fine-tuning. The product is retrieval, persona distillation, live ma
 
 The Worker serves both static assets and APIs. API routes are under `/api/*`. App deep links such as `/chat/:id` are served by the Desk SPA on `app.robindex.ai`.
 
+Model routing is intentionally split: user-initiated inference goes through OpenRouter so users can select
+models and use BYOK; system KOL distillation, Persona updates and evaluation call the official DeepSeek API
+with a dedicated Worker secret.
+
 Latest verified production deploy: Cloudflare Worker version `0374984b-4ad5-4af3-8f8f-e48077719ec1` on 2026-07-01.
 
 ## Current Product

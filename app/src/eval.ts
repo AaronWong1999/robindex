@@ -13,7 +13,8 @@
 //   version, never an absolute gate. Citation accuracy is the one absolute signal.
 // - Everything is bounded (case count capped per run) so it fits a Worker invocation.
 import type { Env, KolRow } from "./env";
-import { completeChat, buildMessages, type MarketData } from "./chat";
+import { buildMessages, type MarketData } from "./chat";
+import { completeSystemChat as completeChat, officialSystemModel } from "./system-llm";
 import { retrieve } from "./rag";
 import { logPersonaExperiment } from "./persona-gen";
 
@@ -475,6 +476,7 @@ async function evalAnswerDraft(
   const scope = kol.corpus_id || kol.id;
   const { citations, knowledge } = await retrieve(
     env, kolId, kol.handle, question, [], undefined, env.MODEL_FLASH, mode, scope,
+    { skipLlmRerank: true },
   );
   const messages = buildMessages({
     kol, persona: personaPack, knowledge, citations,
@@ -574,7 +576,7 @@ export async function runEval(
   const personaVersion = opts.personaVersion || kol.persona_version || "unknown";
   // Generate eval responses with flash — it is the production chat default AND fast enough that a batch
   // of cases fits the worker's ~100s execution limit (pro would blow it on the first few cases).
-  const modelVersion = env.MODEL_FLASH;
+  const modelVersion = officialSystemModel(env, "flash");
   const dna = extractExpressionDna(evalPersona);
   const mode = (kol.retrieval_mode === "tagged" ? "tagged" : "query_side") as "tagged" | "query_side";
   const scope = kol.corpus_id || kol.id;

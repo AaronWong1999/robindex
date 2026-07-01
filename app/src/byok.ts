@@ -1,6 +1,7 @@
 // BYOK (Bring Your Own Key) — user-provided LLM API keys and endpoints.
 // When a user selects a BYOK model, calls go directly to their provider, bypassing the system
-// AI Gateway. System models still go through GATEWAY_URL as before. The two paths are mutually exclusive.
+// User-selected models go through the user/OpenRouter path. System KOL distillation uses the separate
+// DeepSeek official client in system-llm.ts and never reads a user's BYOK configuration.
 import type { Env } from "./env";
 
 // ---- Provider configs (built-in) ----

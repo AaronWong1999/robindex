@@ -9,6 +9,8 @@ export interface Env {
   MODEL_PRO: string;
   CFGATEWAYKEY: string;        // Worker secret — AI Gateway auth (cf-aig-authorization)
   OPENROUTER_KEY?: string;     // Worker secret — OpenRouter provider key (Authorization)
+  DEEPSEEK_API_KEY?: string;   // Worker secret — system-only KOL distill/update provider
+  DEEPSEEK_BASE_URL?: string;  // Defaults to https://api.deepseek.com
   GETXAPI_KEY?: string;        // Worker secret (preferred X/Twitter ingest source)
   APIFY_TOKEN?: string;        // Worker secret (for cron ingest)
   ADMIN_KEY?: string;          // Worker secret (for bulk import)

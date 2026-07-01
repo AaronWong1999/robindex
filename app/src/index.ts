@@ -5,6 +5,7 @@ import { retrieve } from "./rag";
 import { planQuery, type QueryPlan } from "./query-plan";
 import { indexTweets, indexRawTweets } from "./tagger";
 import { gatherMarketData, buildMessages, maybeUpdateSummary, resolveToolPhase, type MarketData } from "./chat";
+import { completeSystemChat, officialSystemModel } from "./system-llm";
 import { getStockNews, getMarketNews } from "./marketdata";
 import { runDailyIngest, runWeeklyPersonaRefresh } from "./ingest";
 import { generatePersonaPack, evolvePersona, diagnosePersonaGeneration, logPersonaExperiment, type PersonaJson } from "./persona-gen";
@@ -2927,26 +2928,14 @@ app.get("/api/admin/model-test", async (c) => {
   const debug = await c.env.CACHE.get(`persona_debug:${kolId}`);
   const start = Date.now();
   try {
-    const res = await fetch(c.env.GATEWAY_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "cf-aig-authorization": `Bearer ${c.env.CFGATEWAYKEY}`,
-        ...(c.env.OPENROUTER_KEY ? { Authorization: `Bearer ${c.env.OPENROUTER_KEY}` } : {}),
-        "HTTP-Referer": "https://robindex.ai",
-        "X-Title": "Robindex",
-      },
-      body: JSON.stringify({
-        model: c.env.MODEL_PRO,
-        messages: [{ role: "user", content: "Say hello in exactly 3 words." }],
-        temperature: 0.1,
-        max_tokens: 20,
-      }),
-    });
+    const response = await completeSystemChat(
+      c.env,
+      "pro",
+      [{ role: "user", content: "Say hello in exactly 3 words." }],
+      { temperature: 0.1, maxTokens: 20 },
+    );
     const elapsed = Date.now() - start;
-    if (!res.ok) return c.json({ error: `HTTP ${res.status}`, elapsed });
-    const j: any = await res.json();
-    return c.json({ ok: true, elapsed, model: c.env.MODEL_PRO, response: j?.choices?.[0]?.message?.content || "", persona_debug: debug });
+    return c.json({ ok: true, elapsed, model: officialSystemModel(c.env, "pro"), response, persona_debug: debug });
   } catch (e: any) {
     return c.json({ error: String(e), elapsed: Date.now() - start });
   }

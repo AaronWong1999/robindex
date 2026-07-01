@@ -20,6 +20,7 @@ import {
   type PersonaJson, buildMarkdown, extractPersonaJson, validatePersona, logPersonaExperiment,
   rankMentalModels,
 } from "./persona-gen";
+import { deepseekChatUrl, officialSystemModel } from "./system-llm";
 
 const DISTILL_PROMPT_VERSION = "topic-coverage-v2";
 
@@ -32,15 +33,12 @@ async function llmJson(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs);
   try {
-    const res = await fetch(env.GATEWAY_URL, {
+    if (!env.DEEPSEEK_API_KEY) throw new Error("DEEPSEEK_API_KEY is not configured");
+    const res = await fetch(deepseekChatUrl(env), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "cf-aig-authorization": `Bearer ${env.CFGATEWAYKEY}`,
-        "cf-aig-request-timeout": String(opts.timeoutMs),
-        ...(env.OPENROUTER_KEY ? { Authorization: `Bearer ${env.OPENROUTER_KEY}` } : {}),
-        "HTTP-Referer": "https://robindex.ai",
-        "X-Title": "Robindex",
+        Authorization: `Bearer ${env.DEEPSEEK_API_KEY}`,
       },
       // Disable the model's chain-of-thought. deepseek-v4 (flash+pro) are reasoning models whose CoT
       // tokens SHARE the max_tokens budget: at our low map/reduce caps the reasoning consumes the whole
@@ -48,7 +46,14 @@ async function llmJson(
       // a single partial). Map/reduce are structured JSON-extraction/merge tasks — the verbatim-quote gate
       // and triple gate provide the rigor, not CoT — so disabling reasoning makes them emit content
       // directly: non-empty AND fast (well under the ~100s worker limit).
-      body: JSON.stringify({ model, messages, temperature: opts.temperature ?? 0.2, max_tokens: opts.maxTokens, reasoning: { enabled: false } }),
+      body: JSON.stringify({
+        model: officialSystemModel(env, model),
+        messages,
+        temperature: opts.temperature ?? 0.2,
+        max_tokens: opts.maxTokens,
+        thinking: { type: "disabled" },
+        response_format: { type: "json_object" },
+      }),
       signal: controller.signal,
     });
     if (!res.ok) { console.warn(`llmJson HTTP ${res.status} model=${model}: ${(await res.text().catch(() => "")).slice(0, 300)}`); return ""; }

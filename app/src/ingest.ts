@@ -1,5 +1,5 @@
 import type { Env } from "./env";
-import { completeChat } from "./chat";
+import { completeSystemChat as completeChat } from "./system-llm";
 import { evolvePersona, logPersonaExperiment } from "./persona-gen";
 import { evalAndMaybeRollback } from "./eval";
 import { distillPersonaIncremental, loadMergedFacts, personaCoverageGate } from "./persona-distill";

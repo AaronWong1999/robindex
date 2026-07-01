@@ -1,5 +1,5 @@
 import type { Env } from "./env";
-import { completeChat } from "./chat";
+import { completeSystemChat as completeChat } from "./system-llm";
 
 // Offline / write-time search-field generation.
 //

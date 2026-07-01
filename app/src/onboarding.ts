@@ -1,7 +1,7 @@
 import type { Env } from "./env";
 import { archiveRawToR2, insertTweets, mapApifyTweet, mapGetxTweet } from "./ingest";
 import { indexRawTweets } from "./tagger";
-import { completeChat } from "./chat";
+import { completeSystemChat as completeChat } from "./system-llm";
 import type { PersonaJson } from "./persona-gen";
 
 const GETX_BASE = "https://api.getxapi.com";

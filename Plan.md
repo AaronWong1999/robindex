@@ -111,4 +111,5 @@ Before shipping backend/chat changes:
 - [x] 发布门禁加入 65% 单题通过率和 stance/专项检查
 - [x] 质量失败不再自动重做
 - [x] 增加任务、步骤和 map chunk 成本上限
+- [x] 用户模型流量走 OpenRouter，系统 Persona/蒸馏/评测走 DeepSeek 官方 API
 - [ ] 以受控全新账号执行一次生产 canary

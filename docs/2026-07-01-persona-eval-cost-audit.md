@@ -83,3 +83,12 @@ Persona map/reduce/eval 任务。分钟 Cron 随后持续推进任务，导致 O
 4. 任何自动 Cron 默认不得调用付费模型。
 5. 新的定时模型任务必须有显式开关、单任务预算和全局预算后才能上线。
 
+## 模型路由边界
+
+- 用户发起：聊天、query planner、在线 reranker、追问建议、用户选择模型和 BYOK 统一走
+  Cloudflare AI Gateway → OpenRouter。
+- 系统发起：KOL map/reduce、Persona 生成/更新、profile、eval 和离线标签统一走
+  Cloudflare Worker → DeepSeek 官方 API。
+- DeepSeek key 只保存在 Worker secret `DEEPSEEK_API_KEY`；仓库不保存密钥。
+- 系统调用固定使用 `deepseek-v4-flash` / `deepseek-v4-pro`，默认关闭 thinking；质量与费用不再受
+  OpenRouter 上游供应商漂移影响。

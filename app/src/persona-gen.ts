@@ -2,7 +2,7 @@
 // using a single structured LLM call (nuwa-skill multi-dimensional framework, adapted for Workers).
 // Also handles incremental evolution (colleague-skill pattern) and quality validation.
 import type { Env } from "./env";
-import { completeChat } from "./chat";
+import { completeSystemChat as completeChat, deepseekChatUrl, officialSystemModel } from "./system-llm";
 
 // ---------- Persona-gen LLM primitives ----------
 
@@ -89,17 +89,21 @@ export async function callPersonaLLM(
 
   try {
     await debug(`BEFORE_FETCH: max_tokens=${maxTokens} timeout=${timeoutMs}ms at ${new Date().toISOString()}`);
-    const res = await fetch(env.GATEWAY_URL, {
+    if (!env.DEEPSEEK_API_KEY) throw new PersonaGenError("http_error", "DEEPSEEK_API_KEY is not configured");
+    const res = await fetch(deepseekChatUrl(env), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "cf-aig-authorization": `Bearer ${env.CFGATEWAYKEY}`,
-        "cf-aig-request-timeout": String(timeoutMs),
-        ...(env.OPENROUTER_KEY ? { Authorization: `Bearer ${env.OPENROUTER_KEY}` } : {}),
-        "HTTP-Referer": "https://robindex.ai",
-        "X-Title": "Robindex",
+        Authorization: `Bearer ${env.DEEPSEEK_API_KEY}`,
       },
-      body: JSON.stringify({ model: env.MODEL_PRO, messages: finalMessages, temperature: 0.2, max_tokens: maxTokens }),
+      body: JSON.stringify({
+        model: officialSystemModel(env, "pro"),
+        messages: finalMessages,
+        temperature: 0.2,
+        max_tokens: maxTokens,
+        thinking: { type: "disabled" },
+        response_format: { type: "json_object" },
+      }),
       signal: controller.signal,
     });
     await debug(`FETCH_RETURNED: status=${res.status} at ${new Date().toISOString()}`);
